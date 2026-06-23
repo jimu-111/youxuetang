@@ -262,13 +262,14 @@
         </div>
         <div class="nav-buttons" style="display:flex; gap:8px; flex-wrap:wrap;">
             <button class="nav-btn" data-nav="dashboard">📊 仪表盘</button>
-            <button class="nav-btn" data-nav="frontend">👥 新人管理</button>
+            <button class="nav-btn" data-nav="frontend">👥 新人进度</button>
             <button class="nav-btn" data-nav="admin">⚙️ 管理后台</button>
             <button class="nav-btn" data-nav="dataAnalysis">📊 数据分析中心</button>
             <button class="nav-btn" data-nav="caseLibrary">📚 培训案例收集库</button>
             <button class="nav-btn" data-nav="questionBank">📝 题库</button>
             <!-- 失误数据分析模块已移除 -->
             <button class="nav-btn" data-nav="examSystem">📋 考试系统</button>
+            <span id="syncStatus" style="background:rgba(255,255,255,0.1);padding:4px 10px;border-radius:12px;font-size:0.75rem;color:#4fc3f7;display:inline-flex;align-items:center;gap:4px;margin-left:4px;border:1px solid rgba(255,255,255,0.15);" title="云端同步状态">☁️ 同步中</span>
             <button class="nav-btn" data-nav="knowledgeBase">📖 知识库</button>
         </div>
     </div>
@@ -1260,106 +1261,6 @@
         else if (accOk) lines.push(`4. 准确率已<span style="color:#27ae60;font-weight:600;">达标</span>，继续保持`);
         else lines.push('4. 需持续关注');
         return lines.join('；\n');
-    }
-
-    // ==================== 学堂课程数据 ====================
-    const COURSE_GROUPS = [
-        { id:'cg1', name:'初入转转-入职阶段', chapters:[
-            { id:'cc1', name:'基本流程办理', url:'https://wxdaxue.zhuanspirit.com/#/new/task/detail/8030?pushRecordId=126442' }
-        ]},
-        { id:'cg2', name:'公司文化及业务介绍', chapters:[
-            { id:'cc2', name:'企业文化', url:'https://wxdaxue.zhuanspirit.com/#/new/course/detail/4095?preview=0&page=1&trainingId=8031&pushRecordId=126443' }
-        ]},
-        { id:'cg3', name:'上门业务介绍', chapters:[
-            { id:'cc3', name:'上门业务介绍', url:'https://wxdaxue.zhuanspirit.com/#/new/course/detail/4098?preview=0&page=1&trainingId=8031&pushRecordId=126443' },
-            { id:'cc4', name:'上门全业务', url:'https://wxdaxue.zhuanspirit.com/#/new/course/detail/4645?preview=0&page=2&trainingId=8031&pushRecordId=126443' },
-            { id:'cc5', name:'上门回收业务', url:'https://wxdaxue.zhuanspirit.com/#/new/course/detail/4721?preview=0&page=2&trainingId=8031&pushRecordId=126443' },
-            { id:'cc6', name:'上门售后业务', url:'https://wxdaxue.zhuanspirit.com/#/new/course/detail/3629?preview=0&page=2&trainingId=8031&pushRecordId=126443' },
-            { id:'cc7', name:'以旧换新业务', url:'https://wxdaxue.zhuanspirit.com/#/new/course/detail/4527?preview=0&page=1&trainingId=8031&pushRecordId=126443' }
-        ]},
-        { id:'cg4', name:'组织架构', chapters:[
-            { id:'cc8', name:'曼哈顿部门介绍', url:'https://wxdaxue.zhuanspirit.com/#/new/course/detail/4097?preview=0&page=1&trainingId=8031&pushRecordId=126443' },
-            { id:'cc9', name:'复核组架构', url:'https://wxdaxue.zhuanspirit.com/#/new/course/detail/4821?preview=0&page=1&trainingId=8031&pushRecordId=126443' }
-        ]},
-        { id:'cg5', name:'工作展望', chapters:[
-            { id:'cc10', name:'工作展望', url:'https://wxdaxue.zhuanspirit.com/#/new/course/detail/4823?preview=0&page=1&trainingId=8031&pushRecordId=126443' }
-        ]}
-    ];
-    const COURSE_TOTAL = (function() { var n=0; COURSE_GROUPS.forEach(function(g) { n+=g.chapters.length; }); return n; })();
-    const COURSE_STORAGE = 'courseProgressData';
-    function getCourseProgress() {
-        try { return JSON.parse(localStorage.getItem(COURSE_STORAGE) || '{}'); } catch(e) { return {}; }
-    }
-    function saveCourseProgress(data) { localStorage.setItem(COURSE_STORAGE, JSON.stringify(data)); }
-    function getStudentCourseProgress(studentName) {
-        var all = getCourseProgress();
-        return all[studentName] || {};
-    }
-    function setStudentCourseProgress(studentName, chapterId, completed) {
-        var all = getCourseProgress();
-        if (!all[studentName]) all[studentName] = {};
-        all[studentName][chapterId] = completed ? true : false;
-        saveCourseProgress(all);
-    }
-    function countCompleted(studentName) {
-        var p = getStudentCourseProgress(studentName);
-        var count = 0;
-        COURSE_GROUPS.forEach(function(g) {
-            g.chapters.forEach(function(c) { if (p[c.id]) count++; });
-        });
-        return count;
-    }
-
-    function renderCourseSectionHtml(studentName) {
-        var progress = getStudentCourseProgress(studentName);
-        var completed = countCompleted(studentName);
-        var pct = Math.round(completed / COURSE_TOTAL * 100);
-        var barColor = pct >= 100 ? '#27ae60' : pct >= 50 ? '#f39c12' : '#c0392b';
-        var secId = 'course_' + studentName.replace(/[^a-zA-Z0-9一-龥]/g, '_');
-
-        var groupsHtml = '';
-        COURSE_GROUPS.forEach(function(g) {
-            var gDone = 0;
-            var chHtml = '';
-            g.chapters.forEach(function(c) {
-                var done = progress[c.id] === true;
-                if (done) gDone++;
-                var icon = done ? '✅' : '⏳';
-                var color = done ? 'color:#27ae60;' : 'color:#94a3b8;';
-                chHtml += '<div style="display:flex;align-items:center;gap:6px;padding:3px 0;font-size:0.75rem;' + color + '">' +
-                    '<span style="cursor:pointer;" onclick="event.stopPropagation();toggleCourseChapter(\'' + escapeHtml(studentName) + '\',\'' + c.id + '\',' + (done ? 'true' : 'false') + ')" title="点击切换完成状态">' + icon + '</span>' +
-                    '<span style="flex:1;">' + escapeHtml(c.name) + '</span>' +
-                    '<a href="' + escapeHtml(c.url) + '" target="_blank" onclick="event.stopPropagation();" style="font-size:0.65rem;color:#2a5298;text-decoration:none;" title="在新标签页打开学习">📖</a>' +
-                    '</div>';
-            });
-            var gAllDone = gDone === g.chapters.length;
-            groupsHtml += '<div style="margin-bottom:2px;">' +
-                '<div style="font-size:0.73rem;font-weight:600;color:' + (gAllDone ? '#27ae60' : '#5e6f8d') + ';padding:3px 0;">' +
-                (gAllDone ? '✅ ' : '📁 ') + escapeHtml(g.name) + ' (' + gDone + '/' + g.chapters.length + ')' +
-                '</div>' + chHtml + '</div>';
-        });
-
-        return '<div class="nc-course-section" style="margin-top:10px;border-top:1px solid #eef2f6;padding-top:8px;">' +
-            '<div style="display:flex;justify-content:space-between;align-items:center;cursor:pointer;margin-bottom:6px;" onclick="var el=document.getElementById(\'' + secId + '\');el.style.display=el.style.display===\'none\'?\'block\':\'none\';">' +
-            '<span style="font-weight:700;font-size:0.82rem;color:#1f3a6b;">📖 学堂课程 (' + completed + '/' + COURSE_TOTAL + ')</span>' +
-            '<span style="font-size:0.7rem;color:#94a3b8;">▼</span></div>' +
-            '<div style="margin-bottom:6px;"><div style="background:#eef2f6;border-radius:6px;height:6px;overflow:hidden;">' +
-            '<div style="background:' + barColor + ';height:100%;width:' + pct + '%;border-radius:6px;"></div></div>' +
-            '<div style="font-size:0.65rem;color:#94a3b8;text-align:right;">' + pct + '%</div></div>' +
-            '<div id="' + secId + '" style="max-height:260px;overflow-y:auto;">' + groupsHtml +
-            '<div style="font-size:0.65rem;color:#94a3b8;margin-top:4px;">💡 点击 ✅/⏳ 切换完成状态 | 📖 打开学习</div></div></div>';
-    }
-
-    function toggleCourseChapter(studentName, chapterId, currentDone) {
-        setStudentCourseProgress(studentName, chapterId, !currentDone);
-        // 重新渲染当前内容
-        var container = document.querySelector('.nc-person-card[data-ncname="' + studentName + '"]');
-        if (container) {
-            var courseSec = container.querySelector('.nc-course-section');
-            if (courseSec) {
-                courseSec.outerHTML = renderCourseSectionHtml(studentName);
-            }
-        }
     }
 
     // 模块3固定的初审人员名单（始终显示）
@@ -11322,16 +11223,67 @@ URL.revokeObjectURL(url);
             localStorage.setItem('reviewerAccRateData', JSON.stringify(existing));
         } catch(e) {}
     })();
-    // 抽检量/判责量保留（识别确认后持久化，不需要重新识别）
-    document.querySelectorAll('.nav-btn[data-nav]').forEach(el => { el.addEventListener('click', () => switchNav(el.dataset.nav)); });
-    // 检测URL参数：独立考试模式（不显示管理后台）
-    const initParams = new URLSearchParams(window.location.search);
-    const initExam = initParams.get('exam');
-    if (initExam) {
-        startStandaloneExam(initExam);
-    } else {
-        switchNav('dashboard');
+    // ==================== Supabase 云同步 ====================
+    const SUPABASE_URL = 'https://zfxwnixlvdxawoylhgxj.supabase.co';
+    const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InpmeHduaXhsdmR4YXdveWxoZ3hqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODIyMDEyNzIsImV4cCI6MjA5Nzc3NzI3Mn0.aPfO4Ry_LzoOColCVx64JQPF-BWga-_J2fX9hg-E4G8';
+    const _realLS = window.localStorage;
+    let _syncQueue = {};
+    let _syncTimer = null;
+
+    function _syncFlush() {
+        var keys = Object.keys(_syncQueue);
+        if (keys.length === 0) return;
+        var batch = keys.map(function(k) { return { key: k, value: String(_syncQueue[k]), updated_at: new Date().toISOString() }; });
+        _syncQueue = {};
+        fetch(SUPABASE_URL + '/rest/v1/app_data', {
+            method: 'POST',
+            headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY, 'Content-Type': 'application/json', 'Prefer': 'resolution=merge-duplicates' },
+            body: JSON.stringify(batch)
+        }).then(function(){ var s=document.getElementById("syncStatus"); if(s){ s.textContent="☁️ 已同步"; s.style.color="#27ae60"; s.style.borderColor="rgba(39,174,96,0.3)"; } }).catch(function(){ var s=document.getElementById("syncStatus"); if(s){ s.textContent="☁️ 同步失败"; s.style.color="#c0392b"; s.style.borderColor="rgba(192,57,43,0.3)"; } });
     }
+
+    function _syncSetItem(key, value) {
+        _realLS.setItem(key, value);
+        if (key && !key.startsWith('_')) {
+            _syncQueue[key] = value;
+            if (_syncTimer) clearTimeout(_syncTimer);
+            _syncTimer = setTimeout(_syncFlush, 2000);
+        }
+    }
+
+    function _syncPullAll() {
+        return fetch(SUPABASE_URL + '/rest/v1/app_data?select=*&order=updated_at.desc', {
+            headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY }
+        }).then(function(r) { return r.json(); }).then(function(rows) {
+            if (Array.isArray(rows)) {
+                rows.forEach(function(row) {
+                    if (row.key && row.value !== null) _realLS.setItem(row.key, row.value);
+                });
+            }
+            return rows ? rows.length : 0;
+        }).then(function(n){ var s=document.getElementById("syncStatus"); if(s){ s.textContent="☁️ 已同步"; s.style.color="#27ae60"; s.style.borderColor="rgba(39,174,96,0.3)"; } return n || 0; }).catch(function(){ var s=document.getElementById("syncStatus"); if(s){ s.textContent="☁️ 拉取中"; s.style.color="#f39c12"; s.style.borderColor="rgba(243,156,18,0.3)"; } return 0; });
+    }
+
+    // 替换 localStorage 的 setItem 为带同步的版本
+    var _lsProxy = {
+        getItem: function(k) { return _realLS.getItem(k); },
+        setItem: function(k, v) { _syncSetItem(k, v); },
+        removeItem: function(k) { _realLS.removeItem(k); },
+        clear: function() { _realLS.clear(); },
+        get length() { return _realLS.length; },
+        key: function(i) { return _realLS.key(i); }
+    };
+    try { Object.defineProperty(window, 'localStorage', { value: _lsProxy, writable: false, configurable: false }); } catch(e) {}
+
+    // 启动：先从云端拉数据，再初始化应用
+    document.querySelectorAll('.nav-btn[data-nav]').forEach(function(el) { el.addEventListener('click', function() { switchNav(el.dataset.nav); }); });
+    _syncPullAll().then(function(count) {
+        if (count > 0) { try { loadData(); } catch(e) {} }
+        var initParams = new URLSearchParams(window.location.search);
+        var initExam = initParams.get('exam');
+        if (initExam) { startStandaloneExam(initExam); }
+        else { switchNav('dashboard'); }
+    });
     // 永久删除雍彬彬的数据 + 修正旧版名字（从localStorage清理）+ 迁移旧数据到扁平按周期存储
     (function() {
         try {
