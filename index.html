@@ -10974,29 +10974,30 @@ URL.revokeObjectURL(url);
     const ERROR_DASHBOARD_PAGE_SIZE = 30;
     let errorDashboardFilter = { period: 'day', site: 'all', category: 'all', reviewer: 'all' };
 
-    // 飞书API请求 — 通过Supabase Edge Function代理（避免CORS）
+    // 飞书API请求 — 通过Supabase Edge Function代理（原始body转发）
     const FEISHU_PROXY_URL = 'https://zfxwnixlvdxawoylhgxj.supabase.co/functions/v1/feishu-proxy';
     const FEISHU_SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InpmeHduaXhsdmR4YXdveWxoZ3hqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODIyMDEyNzIsImV4cCI6MjA5Nzc3NzI3Mn0.aPfO4Ry_LzoOColCVx64JQPF-BWga-_J2fX9hg-E4G8';
     async function feishuApiFetch(url, options) {
         options = options || {};
-        var proxyBody = {
-            url: url,
-            method: options.method || 'GET',
-            headers: options.headers || {}
+        var proxyHeaders = {
+            'Authorization': 'Bearer ' + FEISHU_SUPABASE_KEY,
+            'x-target-url': url,
+            'x-target-method': options.method || 'GET'
         };
-        if (options.body) proxyBody.body = options.body;
+        if (options.headers && options.headers['Authorization']) {
+            proxyHeaders['x-target-auth'] = options.headers['Authorization'];
+        }
+        if (options.headers && options.headers['Content-Type']) {
+            proxyHeaders['x-target-content-type'] = options.headers['Content-Type'];
+        }
         var resp = await fetch(FEISHU_PROXY_URL, {
             method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'Authorization': 'Bearer ' + FEISHU_SUPABASE_KEY
-            },
-            body: JSON.stringify(proxyBody)
+            headers: proxyHeaders,
+            body: options.body || undefined
         });
         if (!resp.ok) throw new Error('代理请求失败: ' + resp.status);
         var data = await resp.json();
         if (data.error) throw new Error(data.error);
-        // 包装成类Response对象以便调用.json()
         return { ok: true, json: function() { return Promise.resolve(data); } };
     }
 
