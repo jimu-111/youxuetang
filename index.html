@@ -11849,7 +11849,14 @@ URL.revokeObjectURL(url);
         });
     }
 
+    var _searchTimer = null;
     function searchPortrait(val) {
+        clearTimeout(_searchTimer);
+        _searchTimer = setTimeout(function() {
+            _doSearchPortrait(val);
+        }, 300);
+    }
+    function _doSearchPortrait(val) {
         var v = (val || '').toLowerCase().trim();
         var items = document.querySelectorAll('.portrait-row');
         var found = 0;
@@ -12099,7 +12106,7 @@ URL.revokeObjectURL(url);
                                 '<td style="text-align:center;padding:6px 4px;white-space:nowrap;"><span style="font-size:0.7rem;">' + lightIcon + '</span> <span class="clickable-tag" onclick="showErrorDetailPopup(\'reviewer\',\'' + r.name.replace(/'/g, "\\'") + '\')" style="font-weight:600;background:' + r.color + ';color:#2d3748;padding:2px 6px;border-radius:8px;cursor:pointer;font-size:0.7rem;" title="点击查看详情">' + escapeHtml(r.name) + '</span></td>' +
                                 '<td style="text-align:center;padding:6px 4px;font-size:0.7rem;color:#5e6f8d;white-space:nowrap;">' + escapeHtml(r.sites) + '</td>' +
                                 '<td style="text-align:center;padding:6px 4px;font-size:0.7rem;color:#5e6f8d;white-space:nowrap;">' + r.count + '次</td>' +
-                                '<td style="text-align:center;padding:6px 4px;font-size:0.7rem;color:#5e6f8d;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="' + escapeHtml(r.cats || '-') + '">' + (r.cats || '-') + '</td>' +
+                                '<td style="text-align:center;padding:6px 4px;font-size:0.7rem;color:#5e6f8d;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:1px;" title="' + escapeHtml(r.cats || '-') + '">' + (r.cats || '-') + '</td>' +
                                 (hasAnyActions ? '<td style="text-align:center;padding:6px 4px;white-space:nowrap;"><div style="display:flex;gap:3px;justify-content:center;">' + (r.actions||'') + '</div></td>' : '') +
                             '</tr>';
                         }).join('');
