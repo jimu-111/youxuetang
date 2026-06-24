@@ -12003,13 +12003,13 @@ URL.revokeObjectURL(url);
         var html = '<div class="error-dashboard">' +
             '<div class="report-box" style="margin-bottom:20px;">' +
                 '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;margin-bottom:16px;">' +
-                    '<div class="report-title" style="margin-bottom:0;padding-bottom:0;border:none;">📋 失误分析看板  <span style="font-size:0.7rem;color:#94a3b8;">① 数据概览</span></div>' +
+                    '<div class="report-title" style="margin-bottom:0;padding-bottom:0;border:none;">📋 失误分析看板</div>' +
                     '<div class="refresh-info">' +
                         '<span>' + refreshStr + '</span>' +
                         '<button onclick="refreshErrorDashboardData(true)" style="background:#2a5298;color:white;border:none;padding:6px 14px;border-radius:16px;cursor:pointer;font-size:0.75rem;">🔄 刷新</button>' +
                     '</div>' +
                 '</div>' +
-                '<div class="sheet-status">' + statusDots + '<span style="margin-left:12px;font-size:0.75rem;color:#1f3a6b;font-weight:600;">总失误数（' + errorDashboardData.length + '条）</span></div>' +
+                '<div class="sheet-status">' + statusDots + '<span style="margin-left:12px;font-size:0.75rem;color:#5e6f8d;">总失误数（' + errorDashboardData.length + '条）</span></div>' +
                 // ② 筛选看板 + 人员画像（置顶）
                 (function() {
                     var top5People = sortedReviewers.slice(0, 5);
@@ -12066,30 +12066,48 @@ URL.revokeObjectURL(url);
                     }
                     window._portraitHtml = personHtml;
                     window._portraitExpandLink = expandLink;
-                    return '<div class="report-box" style="margin-bottom:16px;">' +
-                            '<div style="font-weight:700;color:#1f3a6b;margin-bottom:8px;font-size:0.85rem;">② 🔍 筛选看板</div>' +
-                            '<div style="display:flex;gap:16px;flex-wrap:wrap;">' +
-                                '<div style="flex:1;min-width:250px;"><span style="font-size:0.8rem;font-weight:600;color:#1f3a6b;">⏱️ 时间</span><div class="filter-bar" style="gap:4px;">' +
-                                    '<button class="filter-btn' + (f.period === 'day' ? ' active' : '') + '" onclick="errorDashboardFilter.period=\'day\';errorDashboardPage=1;renderErrorDashboardContent();">📅 日度</button>' +
-                                    '<button class="filter-btn' + (f.period === 'week' ? ' active' : '') + '" onclick="showPeriodPopup(\'week\')">📊 周度</button>' +
-                                    '<button class="filter-btn' + (f.period === 'month' ? ' active' : '') + '" onclick="showPeriodPopup(\'month\')">📈 月度</button>' +
-                                    '<button class="filter-btn' + (f.period === 'custom' ? ' active' : '') + '" onclick="showCustomDatePopup()">📆 自定义</button>' +
-                                '</div></div>' +
-                                '<div style="flex:1;min-width:250px;"><span style="font-size:0.8rem;font-weight:600;color:#1f3a6b;">📍 站点</span><div class="filter-bar" style="gap:4px;">' + siteBtns + '</div></div>' +
-                                '<div style="flex:1;min-width:250px;"><span style="font-size:0.8rem;font-weight:600;color:#1f3a6b;">🚦 按灯预警</span><div style="margin-top:4px;">' + (function() {
-                                    var allPeople2 = sortedReviewers;
-                                    var reds = allPeople2.filter(function(e){return e[1]>10;});
-                                    var yellows = allPeople2.filter(function(e){return e[1]>=6&&e[1]<=10;});
-                                    var greens = allPeople2.filter(function(e){return e[1]<=5;});
-                                    window._lightData = { reds: reds, yellows: yellows, greens: greens };
-                                    function lightBtn(list,color,bg,icon,key) {
-                                        if (list.length === 0) return '<span style=\"display:inline-block;padding:4px 10px;margin:2px;border-radius:8px;font-size:0.7rem;background:#f1f5f9;color:#94a3b8;\">'+icon+' 0人</span>';
-                                        return '<span onclick=\"showLightPeoplePopup(\''+key+'\')\" style=\"display:inline-block;padding:4px 10px;margin:2px;border-radius:8px;font-size:0.7rem;background:'+bg+';color:'+color+';cursor:pointer;font-weight:600;\">'+icon+' '+list.length+'人</span>';
-                                    }
-                                    return lightBtn(reds,'#991b1b','#fecaca','🔴','reds') + lightBtn(yellows,'#854d0e','#fef08a','🟡','yellows') + lightBtn(greens,'#166534','#d4edda','🟢','greens');
-                                })() + '</div></div>' +
+                    // 城市图标映射
+                    function siteIcon(s) { var m={青岛:'🌊',成都:'🐼',深圳:'🏙️',北京:'🏛️',上海:'🌃',广州:'🏗️',杭州:'🛶',武汉:'🌉',重庆:'🏔️',西安:'🏯'}; return (m[s]||'📍')+' '; }
+                    return '<div style="display:flex;gap:12px;margin-bottom:16px;">' +
+                        // 时间维度筛选
+                        '<div class="report-box" style="flex:1;margin-bottom:0;text-align:center;padding:12px 14px;">' +
+                            '<div style="font-weight:700;color:#1f3a6b;margin-bottom:8px;font-size:0.85rem;">⏱️ 时间维度筛选</div>' +
+                            '<div class="filter-bar" style="justify-content:center;gap:4px;">' +
+                                '<button class="filter-btn' + (f.period === 'day' ? ' active' : '') + '" onclick="errorDashboardFilter.period=\'day\';errorDashboardPage=1;renderErrorDashboardContent();">📅 日度</button>' +
+                                '<button class="filter-btn' + (f.period === 'week' ? ' active' : '') + '" onclick="showPeriodPopup(\'week\')">📊 周度</button>' +
+                                '<button class="filter-btn' + (f.period === 'month' ? ' active' : '') + '" onclick="showPeriodPopup(\'month\')">📈 月度</button>' +
+                                '<button class="filter-btn' + (f.period === 'custom' ? ' active' : '') + '" onclick="showCustomDatePopup()">📆 自定义</button>' +
                             '</div>' +
-                        '</div>';
+                        '</div>' +
+                        // 站点选择
+                        '<div class="report-box" style="flex:1;margin-bottom:0;text-align:center;padding:12px 14px;">' +
+                            '<div style="font-weight:700;color:#1f3a6b;margin-bottom:8px;font-size:0.85rem;">📍 站点选择</div>' +
+                            '<div class="filter-bar" style="justify-content:center;gap:4px;">' + (function(){
+                                return '<button class="filter-btn'+(f.site==='all'?' active':'')+'" onclick="errorDashboardFilter.site=\'all\';errorDashboardPage=1;renderErrorDashboardContent();">🌐 全部</button>' +
+                                    sortedSites.map(function(s){
+                                        var cnt=siteStats[s]||0; var isA=f.site===s;
+                                        var st=isA?'':'background:#f8fafc;';
+                                        return '<button class="filter-btn'+(isA?' active':'')+'" style="'+st+'" onclick="errorDashboardFilter.site=\''+s+'\';errorDashboardPage=1;renderErrorDashboardContent();">'+siteIcon(s)+escapeHtml(s)+'('+cnt+')</button>';
+                                    }).join('');
+                            })() + '</div>' +
+                        '</div>' +
+                        // 亮灯预警
+                        '<div class="report-box" style="flex:1;margin-bottom:0;text-align:center;padding:12px 14px;">' +
+                            '<div style="font-weight:700;color:#1f3a6b;margin-bottom:8px;font-size:0.85rem;">🚦 亮灯预警</div>' +
+                            '<div style="display:flex;gap:6px;justify-content:center;">' + (function() {
+                                var allPeople2 = sortedReviewers;
+                                var reds = allPeople2.filter(function(e){return e[1]>10;});
+                                var yellows = allPeople2.filter(function(e){return e[1]>=6&&e[1]<=10;});
+                                var greens = allPeople2.filter(function(e){return e[1]<=5;});
+                                window._lightData = { reds: reds, yellows: yellows, greens: greens };
+                                function lightBtn(list,color,bg,icon,key) {
+                                    if (list.length === 0) return '<span style=\"flex:1;padding:6px 8px;border-radius:10px;font-size:0.72rem;background:#f1f5f9;color:#94a3b8;\">'+icon+' 0人</span>';
+                                    return '<span onclick=\"showLightPeoplePopup(\''+key+'\')\" style=\"flex:1;padding:6px 8px;border-radius:10px;font-size:0.72rem;background:'+bg+';color:'+color+';cursor:pointer;font-weight:600;\">'+icon+' '+list.length+'人</span>';
+                                }
+                                return lightBtn(reds,'#991b1b','#fecaca','🔴','reds') + lightBtn(yellows,'#854d0e','#fef08a','🟡','yellows') + lightBtn(greens,'#166534','#d4edda','🟢','greens');
+                            })() + '</div>' +
+                        '</div>' +
+                    '</div>';
                 })() +
             '</div>' +
             // 统计概览
