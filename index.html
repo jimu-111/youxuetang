@@ -11246,7 +11246,7 @@ URL.revokeObjectURL(url);
                     '<button ' + (pg >= totalPages ? 'disabled' : '') + ' onclick="window._popupGoPage(' + (pg + 1) + ')">下一页</button>' +
                 '</div>';
             }
-            return '<table class="error-table"><thead><tr><th>日期</th><th>来源</th><th>初审人（站点）</th><th>失误备注</th><th>质检码</th></tr></thead><tbody>' + rows + '</tbody></table>' + pagHtml;
+            return '<table class="error-table" style="width:100%;table-layout:auto;"><thead><tr><th style="width:90px;">日期</th><th style="width:55px;">来源</th><th>初审人（站点）</th><th>失误备注</th><th style="width:80px;">质检码</th></tr></thead><tbody>' + rows + '</tbody></table>' + pagHtml;
         }
 
         window._popupGoPage = function(pg) {
@@ -11269,6 +11269,108 @@ URL.revokeObjectURL(url);
         document.body.appendChild(overlay);
         overlay.querySelector('#popupCloseBtn').onclick = function() { overlay.remove(); window._popupGoPage = null; };
         overlay.onclick = function(e) { if (e.target === overlay) { overlay.remove(); window._popupGoPage = null; } };
+    }
+
+    // 按失误类别比例出卷（30题）
+    function generateExamFromErrors() {
+        var filtered = getFilteredErrors();
+        if (filtered.length === 0) { showAlert('当前筛选条件下无失误记录', '⚠️'); return; }
+        var qb = getQuestionBank();
+        var allQuestions = qb.questions || [];
+        if (allQuestions.length === 0) { showAlert('题库为空，请先在题库模块中添加题目', '⚠️'); return; }
+
+        // 统计失误类别数量
+        var catCounts = {};
+        filtered.forEach(function(e) {
+            catCounts[e.category] = (catCounts[e.category] || 0) + 1;
+        });
+        var totalErrors = filtered.length;
+        var TOTAL_QUESTIONS = 30;
+
+        // 按比例分配题目数（每个类别至少1题）
+        var categories = Object.entries(catCounts).sort(function(a, b) { return b[1] - a[1]; });
+        var catQuestions = {};
+        var assignedCount = 0;
+        categories.forEach(function(entry, i) {
+            var cat = entry[0];
+            var ratio = entry[1] / totalErrors;
+            var count = Math.max(1, Math.round(ratio * TOTAL_QUESTIONS));
+            catQuestions[cat] = count;
+            assignedCount += count;
+        });
+        // 调整总数到30
+        var diff = TOTAL_QUESTIONS - assignedCount;
+        if (diff !== 0) {
+            for (var i = 0; i < Math.abs(diff); i++) {
+                var idx = i % categories.length;
+                if (diff > 0) catQuestions[categories[idx][0]]++;
+                else if (catQuestions[categories[idx][0]] > 1) catQuestions[categories[idx][0]]--;
+            }
+        }
+
+        // 按类别匹配题目
+        var selectedQuestions = [];
+        var usedIds = {};
+        categories.forEach(function(entry) {
+            var cat = entry[0];
+            var needed = catQuestions[cat] || 0;
+            var catLower = cat.toLowerCase();
+            var matched = allQuestions.filter(function(q) {
+                if (usedIds[q.id]) return false;
+                var qCat = (q.category || '').toLowerCase();
+                return qCat.includes(catLower) || catLower.includes(qCat);
+            });
+            // 不够则补随机题
+            if (matched.length < needed) {
+                var remaining = allQuestions.filter(function(q) { return !usedIds[q.id] && !matched.find(function(m) { return m.id === q.id; }); });
+                var shuffled = remaining.sort(function() { return Math.random() - 0.5; });
+                matched = matched.concat(shuffled.slice(0, needed - matched.length));
+            }
+            var shuffledMatched = matched.sort(function() { return Math.random() - 0.5; });
+            var picked = shuffledMatched.slice(0, needed);
+            picked.forEach(function(q) { usedIds[q.id] = true; });
+            selectedQuestions = selectedQuestions.concat(picked);
+        });
+
+        if (selectedQuestions.length < 5) { showAlert('匹配到的题目不足5题，请扩充题库', '⚠️'); return; }
+
+        // 生成考试
+        var examData = getExamHistory();
+        var examId = 'exam_' + Date.now();
+        var examCode = generateExamCode();
+        var examRecord = {
+            id: examId, examCode, reviewerName: '通用（按失误类别）',
+            questions: selectedQuestions, generatedAt: new Date().toISOString(),
+            source: '失误分析看板',
+            mistakeCategories: categories.map(function(e) { return e[0]; }),
+            status: 'pending', attempts: 0, records: [],
+            timeLimit: 30, maxAttempts: 2, wrongAnswers: []
+        };
+        examData[examId] = examRecord;
+        saveExamHistory(examData);
+
+        // 弹窗显示考试码
+        var baseUrl = window.location.href.split('?')[0];
+        var examUrl = baseUrl + '?exam=' + examCode;
+        var overlay = document.createElement('div');
+        overlay.className = 'modal-overlay';
+        overlay.style.zIndex = '2000';
+        overlay.innerHTML = '<div class="modal-container" style="max-width:550px;">' +
+            '<div class="modal-header">📝 试卷已生成<button class="modal-close-btn" id="genExamClose">✕</button></div>' +
+            '<div class="modal-body" style="text-align:center;">' +
+                '<div style="font-size:1.4rem;font-weight:700;color:#1f3a6b;margin-bottom:4px;">考试码</div>' +
+                '<div style="font-size:2.5rem;font-weight:700;color:#c0392b;margin-bottom:12px;">' + examCode + '</div>' +
+                '<div style="font-size:0.85rem;color:#5e6f8d;">共 ' + selectedQuestions.length + ' 题 | 100分制 | ⏱️30分钟 | 支持补考</div>' +
+                '<div style="font-size:0.75rem;color:#94a3b8;margin-top:8px;">类别分布：' + categories.slice(0, 5).map(function(e) { return e[0] + '(' + (catQuestions[e[0]] || 0) + '题)'; }).join(' / ') + '</div>' +
+                '<div style="margin-top:16px;display:flex;gap:10px;justify-content:center;">' +
+                    '<button onclick="navigator.clipboard.writeText(\'' + examCode + '\');alert(\'考试码已复制\')" style="background:#2a5298;color:white;border:none;padding:10px 20px;border-radius:20px;cursor:pointer;">📋 复制考试码</button>' +
+                    '<button onclick="this.closest(\'.modal-overlay\').remove();switchNav(\'examSystem\');" style="background:#27ae60;color:white;border:none;padding:10px 20px;border-radius:20px;cursor:pointer;">📋 前往考试系统</button>' +
+                '</div>' +
+            '</div>' +
+        '</div>';
+        document.body.appendChild(overlay);
+        overlay.querySelector('#genExamClose').onclick = function() { overlay.remove(); };
+        overlay.onclick = function(e) { if (e.target === overlay) overlay.remove(); };
     }
 
     function renderErrorDashboard() {
@@ -11328,52 +11430,78 @@ URL.revokeObjectURL(url);
 
         var refreshStr = errorDashboardLastRefresh ? '上次刷新：' + errorDashboardLastRefresh.toLocaleTimeString('zh-CN') : '';
 
-        // 热力渐变色（数字越大越红 → 越小越白）
-        function heatColor(idx, total, alpha) {
+        // 热力渐变色（数字越大越红 → 越小越白，相同数量同色）
+        function heatColorByRank(rank, totalRanks, alpha) {
             alpha = alpha || 0.8;
-            var ratio = total <= 1 ? 0 : idx / (total - 1);
-            // hue: 0(红)→30(橙)→55(黄)→100(绿)→120(淡)
+            var ratio = totalRanks <= 1 ? 0 : rank / (totalRanks - 1);
             var h = Math.round(ratio * 120);
-            // saturation: 高饱和→低饱和, lightness: 适中→偏白
             var s = Math.round(85 - 45 * ratio);
             var l = Math.round(48 + 37 * ratio);
             return 'hsla(' + h + ', ' + s + '%, ' + l + '%, ' + alpha + ')';
         }
-        // Top类别标签（最多10个，红橙黄渐变，可点击弹窗）
-        var topCats = allCategories.slice(0, 10).map(function(c, i) {
-            var color = heatColor(i, Math.min(allCategories.length, 10), 0.8);
+
+        // 按唯一值排序建索引，相同数量共用同一个颜色rank
+        function buildRankMap(stats, sortedKeys) {
+            var uniqueValues = [];
+            var seen = {};
+            sortedKeys.forEach(function(k) {
+                var v = stats[k];
+                if (!seen[v]) { uniqueValues.push(v); seen[v] = true; }
+            });
+            var rankMap = {};
+            sortedKeys.forEach(function(k) {
+                var v = stats[k];
+                rankMap[k] = uniqueValues.indexOf(v);
+            });
+            return { rankMap: rankMap, totalRanks: uniqueValues.length };
+        }
+
+        var catRankInfo = buildRankMap(catStats, allCategories);
+        var topCats = allCategories.slice(0, 10).map(function(c) {
+            var rank = catRankInfo.rankMap[c] || 0;
+            var color = heatColorByRank(rank, catRankInfo.totalRanks, 0.8);
             return '<span class="clickable-tag" onclick="showErrorDetailPopup(\'category\',\'' + c.replace(/'/g, "\\'") + '\')" style="background:' + color + ';color:white;padding:2px 10px;border-radius:10px;font-size:0.72rem;margin:2px;cursor:pointer;display:inline-block;font-weight:500;" title="点击查看详情">' + escapeHtml(c) + ' (' + catStats[c] + ')</span>';
         }).join('');
-        var topReviewers = allReviewers.slice(0, 10).map(function(r, i) {
-            var color = heatColor(i, Math.min(allReviewers.length, 10), 0.8);
+
+        var revRankInfo = buildRankMap(reviewerStats, allReviewers);
+        var topReviewers = allReviewers.slice(0, 10).map(function(r) {
+            var rank = revRankInfo.rankMap[r] || 0;
+            var color = heatColorByRank(rank, revRankInfo.totalRanks, 0.8);
             return '<span class="clickable-tag" onclick="showErrorDetailPopup(\'reviewer\',\'' + r.replace(/'/g, "\\'") + '\')" style="background:' + color + ';color:white;padding:2px 10px;border-radius:10px;font-size:0.72rem;margin:2px;cursor:pointer;display:inline-block;font-weight:500;" title="点击查看详情">' + escapeHtml(r) + ' (' + reviewerStats[r] + ')</span>';
         }).join('');
 
-        // 站点筛选项（渐变底色）
+        // 站点筛选项（渐变底色，同数量同色，按数量排序）
+        var sortedSites = Object.keys(siteStats).sort(function(a, b) { return siteStats[b] - siteStats[a]; });
+        var siteRankInfo = buildRankMap(siteStats, sortedSites);
         var siteBtns = '<button class="filter-btn' + (f.site === 'all' ? ' active' : '') + '" onclick="errorDashboardFilter.site=\'all\';errorDashboardPage=1;renderErrorDashboardContent();">📍 全部</button>';
-        allSites.forEach(function(s, i) {
+        sortedSites.forEach(function(s) {
             var sc = siteStats[s] || 0;
-            var color = heatColor(i, allSites.length, 0.7);
+            var rank = siteRankInfo.rankMap[s] || 0;
+            var color = heatColorByRank(rank, siteRankInfo.totalRanks, 0.7);
             var isActive = f.site === s;
             var style = isActive ? '' : ('background:' + color + ';color:white;border-color:' + color + ';');
             siteBtns += '<button class="filter-btn' + (isActive ? ' active' : '') + '" style="' + style + '" onclick="errorDashboardFilter.site=\'' + s + '\';errorDashboardPage=1;renderErrorDashboardContent();">' + escapeHtml(s) + ' (' + sc + ')</button>';
         });
 
-        // 类别筛选项（渐变底色）
+        // 类别筛选项（渐变底色，同数量同色）
+        var catFilterRankInfo = buildRankMap(catStats, allCategories);
         var catBtns = '<button class="filter-btn' + (f.category === 'all' ? ' active' : '') + '" onclick="errorDashboardFilter.category=\'all\';errorDashboardPage=1;renderErrorDashboardContent();">🏷️ 全部</button>';
-        allCategories.forEach(function(c, i) {
+        allCategories.forEach(function(c) {
             var cc = catStats[c] || 0;
-            var color = heatColor(i, allCategories.length, 0.7);
+            var rank = catFilterRankInfo.rankMap[c] || 0;
+            var color = heatColorByRank(rank, catFilterRankInfo.totalRanks, 0.7);
             var isActive = f.category === c;
             var style = isActive ? '' : ('background:' + color + ';color:white;border-color:' + color + ';');
             catBtns += '<button class="filter-btn' + (isActive ? ' active' : '') + '" style="' + style + '" onclick="errorDashboardFilter.category=\'' + c.replace(/'/g, "\\'") + '\';errorDashboardPage=1;renderErrorDashboardContent();">' + escapeHtml(c) + ' (' + cc + ')</button>';
         });
 
-        // 人员筛选项（渐变底色）
+        // 人员筛选项（渐变底色，同数量同色）
+        var revFilterRankInfo = buildRankMap(reviewerStats, allReviewers);
         var reviewerBtns = '<button class="filter-btn' + (f.reviewer === 'all' ? ' active' : '') + '" onclick="errorDashboardFilter.reviewer=\'all\';errorDashboardPage=1;renderErrorDashboardContent();">👤 全部</button>';
-        allReviewers.forEach(function(r, i) {
+        allReviewers.forEach(function(r) {
             var rc = reviewerStats[r] || 0;
-            var color = heatColor(i, allReviewers.length, 0.7);
+            var rank = revFilterRankInfo.rankMap[r] || 0;
+            var color = heatColorByRank(rank, revFilterRankInfo.totalRanks, 0.7);
             var isActive = f.reviewer === r;
             var style = isActive ? '' : ('background:' + color + ';color:white;border-color:' + color + ';');
             reviewerBtns += '<button class="filter-btn' + (isActive ? ' active' : '') + '" style="' + style + '" onclick="errorDashboardFilter.reviewer=\'' + r.replace(/'/g, "\\'") + '\';errorDashboardPage=1;renderErrorDashboardContent();">' + escapeHtml(r) + ' (' + rc + ')</button>';
@@ -11396,10 +11524,19 @@ URL.revokeObjectURL(url);
                     '<div class="stat-mini"><div class="val">' + allReviewers.length + '</div><div class="lbl">👤 涉及人员</div></div>' +
                     '<div class="stat-mini"><div class="val">' + errorDashboardData.length + '</div><div class="lbl">📊 总失误数</div></div>' +
                 '</div>' +
-                // Top 类别和人员
-                '<div style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:12px;font-size:0.8rem;">' +
-                    '<div style="flex:1;min-width:200px;"><strong>🏷️ Top 类别：</strong>' + (topCats || '-') + '</div>' +
-                    '<div style="flex:1;min-width:200px;"><strong>👤 Top 人员：</strong>' + (topReviewers || '-') + '</div>' +
+                // Top 5 模块 + 出卷联动
+                '<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:12px;">' +
+                    '<div style="background:#fafcff;border-radius:16px;padding:12px 16px;border:1px solid #eef2f6;">' +
+                        '<div style="font-weight:700;color:#1f3a6b;margin-bottom:8px;font-size:0.85rem;">🏷️ Top 失误类别</div>' +
+                        '<div style="display:flex;flex-wrap:wrap;gap:4px;">' + (topCats || '<span style="color:#94a3b8;font-size:0.75rem;">-</span>') + '</div>' +
+                    '</div>' +
+                    '<div style="background:#fafcff;border-radius:16px;padding:12px 16px;border:1px solid #eef2f6;">' +
+                        '<div style="font-weight:700;color:#1f3a6b;margin-bottom:8px;font-size:0.85rem;">👤 Top 失误人员</div>' +
+                        '<div style="display:flex;flex-wrap:wrap;gap:4px;">' + (topReviewers || '<span style="color:#94a3b8;font-size:0.75rem;">-</span>') + '</div>' +
+                    '</div>' +
+                '</div>' +
+                '<div style="text-align:right;margin-bottom:12px;">' +
+                    '<button onclick="generateExamFromErrors()" style="background:#c0392b;color:white;border:none;padding:8px 20px;border-radius:20px;cursor:pointer;font-size:0.85rem;font-weight:600;">📝 按失误比例出卷（30题）</button>' +
                 '</div>' +
             '</div>' +
             // 筛选栏
@@ -11410,9 +11547,11 @@ URL.revokeObjectURL(url);
                     '<button class="filter-btn' + (f.period === 'week' ? ' active' : '') + '" onclick="errorDashboardFilter.period=\'week\';errorDashboardPage=1;renderErrorDashboardContent();">📊 周度</button>' +
                     '<button class="filter-btn' + (f.period === 'month' ? ' active' : '') + '" onclick="errorDashboardFilter.period=\'month\';errorDashboardPage=1;renderErrorDashboardContent();">📈 月度</button>' +
                     '<button class="filter-btn' + (f.period === 'custom' ? ' active' : '') + '" onclick="errorDashboardFilter.period=\'custom\';errorDashboardPage=1;renderErrorDashboardContent();">📆 自定义</button>' +
+                    '<span id="customDateRange" style="display:' + (f.period === 'custom' ? 'inline' : 'none') + ';">' +
                     '<input type="date" class="date-input" value="' + (f.customStart || '') + '" onchange="errorDashboardFilter.customStart=this.value;errorDashboardFilter.period=\'custom\';errorDashboardPage=1;renderErrorDashboardContent();" style="width:130px;" title="开始日期">' +
                     '<span style="color:#94a3b8;">至</span>' +
                     '<input type="date" class="date-input" value="' + (f.customEnd || '') + '" onchange="errorDashboardFilter.customEnd=this.value;errorDashboardFilter.period=\'custom\';errorDashboardPage=1;renderErrorDashboardContent();" style="width:130px;" title="结束日期">' +
+                    '</span>' +
                 '</div>' +
                 '<div style="font-weight:700;color:#1f3a6b;margin:12px 0 8px;">📍 站点</div>' +
                 '<div class="filter-bar">' + siteBtns + '</div>' +
