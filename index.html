@@ -287,6 +287,7 @@
         .error-dashboard .error-table-wrapper { background:white; border-radius:20px; overflow:hidden; box-shadow:0 2px 8px rgba(0,0,0,0.04); border:1px solid #eef2f6; }
         .error-dashboard .error-table { width:100%; border-collapse:collapse; font-size:0.82rem; }
         .error-dashboard .error-table th { background:#f8fafc; font-weight:600; padding:10px 10px; text-align:center; border-bottom:1px solid #e2e8f0; white-space:nowrap; }
+        .error-table td { padding:8px 10px; text-align:center; border:1px solid #e9edf2; }
         .error-dashboard .error-table td { padding:8px 10px; text-align:center; border:1px solid #e9edf2; }
         .error-dashboard .error-table tbody tr:hover { background:#f8fafd; }
         .error-dashboard .source-tag { display:inline-block; padding:2px 8px; border-radius:10px; font-size:0.65rem; font-weight:500; }
@@ -11495,11 +11496,11 @@ URL.revokeObjectURL(url);
         var sources = Object.entries(sourceMap).sort(function(a, b) { return b[1] - a[1]; });
         function renderDistCols(entries, totalCount) {
             if (entries.length === 0) return '<span style="color:#94a3b8;">-</span>';
-            return '<div style="display:flex;gap:10px;">' + entries.map(function(p) {
+            return entries.map(function(p) {
                 var pct = Math.round(p[1] / totalCount * 100);
                 var color = barHeatColor(pct);
                 return '<div style="flex:1;text-align:center;padding:14px 10px;background:linear-gradient(180deg,' + color + '22 0%,#fff 100%);border-radius:14px;border:2px solid ' + color + '55;box-shadow:0 1px 3px rgba(0,0,0,0.04);"><div style="font-size:1.4rem;font-weight:600;color:#2d3748;">' + p[1] + '</div><div style="font-size:0.75rem;color:#5e6f8d;margin:4px 0;">' + p[0] + '</div><div style="height:10px;background:#eef2f6;border-radius:5px;"><div style="width:' + pct + '%;height:100%;background:' + color + ';border-radius:5px;"></div></div><div style="font-size:0.7rem;color:#5e6f8d;margin-top:3px;">' + pct + '%</div></div>';
-            }).join('') + '</div>';
+            }).join('');
         }
         var sourceCols = renderDistCols(sources, total);
 
@@ -11848,6 +11849,27 @@ URL.revokeObjectURL(url);
         });
     }
 
+    function searchPortrait(val) {
+        var v = (val || '').toLowerCase().trim();
+        var items = document.querySelectorAll('.portrait-row');
+        var found = 0;
+        items.forEach(function(el) {
+            var match = v ? el.textContent.toLowerCase().indexOf(v) >= 0 : true;
+            el.style.display = match ? '' : 'none';
+            if (match) found++;
+        });
+        var msg = document.getElementById('portraitSearchMsg');
+        if (!msg) return;
+        if (v && found === 0) {
+            var f = errorDashboardFilter;
+            var inAll = errorDashboardData.some(function(e) { return e.reviewer.toLowerCase().indexOf(v) >= 0; });
+            msg.textContent = inAll ? '该初审不在当前站点筛选维度，请重新选择站点' : '本期维度无此初审失误信息';
+            msg.style.display = 'block';
+        } else {
+            msg.style.display = 'none';
+        }
+    }
+
     function renderErrorDashboard() {
         document.getElementById('mainContent').innerHTML = '<div class="error-dashboard"><div style="text-align:center;padding:60px;color:#94a3b8;">⏳ 正在加载飞书数据...</div></div>';
         refreshErrorDashboardData();
@@ -12061,20 +12083,14 @@ URL.revokeObjectURL(url);
                             rowsData.push({ name:name, count:count, rank:rank, color:color, cats:cats, sites:sites, actions:actions, hasAct:hasAct });
                         });
                         // 根据是否有E列使用不同列宽
-                        var colA, colB, colC, colD, colE;
-                        if (hasAnyActions) {
-                            colA='16%'; colB='10%'; colC='10%'; colD='38%'; colE='26%';
-                        } else {
-                            colA='22%'; colB='14%'; colC='12%'; colD='52%'; colE='0';
-                        }
                         personHtml = rowsData.map(function(r) {
                             var lightIcon = r.count > 10 ? '🔴' : (r.count >= 6 ? '🟡' : '🟢');
                             return '<tr class="portrait-row" style="border-bottom:1px solid #f1f5f9;">' +
-                                '<td style="text-align:center;padding:6px 3px;width:'+colA+';"><span style="font-size:0.7rem;">' + lightIcon + '</span> <span class="clickable-tag" onclick="showErrorDetailPopup(\'reviewer\',\'' + r.name.replace(/'/g, "\\'") + '\')" style="font-weight:600;background:' + r.color + ';color:#2d3748;padding:2px 6px;border-radius:8px;cursor:pointer;font-size:0.7rem;" title="点击查看详情">' + escapeHtml(r.name) + '</span></td>' +
-                                '<td style="text-align:center;padding:6px 3px;width:'+colB+';font-size:0.7rem;color:#5e6f8d;">' + escapeHtml(r.sites) + '</td>' +
-                                '<td style="text-align:center;padding:6px 3px;width:'+colC+';font-size:0.7rem;color:#5e6f8d;">' + r.count + '次</td>' +
-                                '<td style="text-align:center;padding:6px 3px;width:'+colD+';font-size:0.7rem;color:#5e6f8d;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:0;" title="' + escapeHtml(r.cats || '-') + '">' + (r.cats || '-') + '</td>' +
-                                (hasAnyActions ? '<td style="text-align:center;padding:6px 3px;width:'+colE+';"><div style="display:flex;gap:3px;justify-content:center;flex-wrap:nowrap;">' + (r.actions||'') + '</div></td>' : '') +
+                                '<td style="text-align:center;padding:6px 4px;white-space:nowrap;"><span style="font-size:0.7rem;">' + lightIcon + '</span> <span class="clickable-tag" onclick="showErrorDetailPopup(\'reviewer\',\'' + r.name.replace(/'/g, "\\'") + '\')" style="font-weight:600;background:' + r.color + ';color:#2d3748;padding:2px 6px;border-radius:8px;cursor:pointer;font-size:0.7rem;" title="点击查看详情">' + escapeHtml(r.name) + '</span></td>' +
+                                '<td style="text-align:center;padding:6px 4px;font-size:0.7rem;color:#5e6f8d;white-space:nowrap;">' + escapeHtml(r.sites) + '</td>' +
+                                '<td style="text-align:center;padding:6px 4px;font-size:0.7rem;color:#5e6f8d;white-space:nowrap;">' + r.count + '次</td>' +
+                                '<td style="text-align:center;padding:6px 4px;font-size:0.7rem;color:#5e6f8d;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="' + escapeHtml(r.cats || '-') + '">' + (r.cats || '-') + '</td>' +
+                                (hasAnyActions ? '<td style="text-align:center;padding:6px 4px;white-space:nowrap;"><div style="display:flex;gap:3px;justify-content:center;">' + (r.actions||'') + '</div></td>' : '') +
                             '</tr>';
                         }).join('');
                     }
@@ -12178,25 +12194,25 @@ URL.revokeObjectURL(url);
                         allRows += '<tr><td>' + e.dateStr + '</td><td>' + escapeHtml(e.site) + '</td><td><span class="source-tag ' + srcTag + '">' + e.source + '</span></td><td>' + escapeHtml(e.category) + '</td><td>' + escapeHtml(e.reviewer) + '</td><td style="text-align:center;max-width:300px;font-size:0.78rem;">' + escapeHtml(e.note) + '</td><td style="font-size:0.7rem;">' + escapeHtml(e.qcCode) + '</td></tr>';
                     });
                     var pgHtml = allPages > 1 ? '<div class="pagination"><button ' + (pg <= 1 ? 'disabled' : '') + ' onclick="errorDashboardPage=' + (pg - 1) + ';renderErrorDashboardContent();">上一页</button><span style="font-size:0.8rem;">' + pg + '/' + allPages + '</span><button ' + (pg >= allPages ? 'disabled' : '') + ' onclick="errorDashboardPage=' + (pg + 1) + ';renderErrorDashboardContent();">下一页</button></div>' : '';
-                    tableBlock = '<div class="error-table-wrapper"><table class="error-table"><thead><tr><th>日期</th><th>站点</th><th>来源</th><th>失误类别</th><th>初审人</th><th>失误备注</th><th>质检码</th></tr></thead><tbody>' + allRows + '</tbody></table>' + pgHtml + '</div>' + expandBtn;
+                    tableBlock = '<div style="flex:1;overflow:auto;min-height:0;"><div class="error-table-wrapper"><table class="error-table"><thead><tr><th>日期</th><th>站点</th><th>来源</th><th>失误类别</th><th>初审人</th><th>失误备注</th><th>质检码</th></tr></thead><tbody>' + allRows + '</tbody></table>' + pgHtml + '</div></div><div style="margin-top:auto;padding-top:8px;">' + expandBtn + '</div>';
                 } else {
-                    tableBlock = '<div class="error-table-wrapper" style="max-height:400px;overflow-y:auto;"><table class="error-table"><thead><tr><th>日期</th><th>站点</th><th>来源</th><th>失误类别</th><th>初审人</th><th>失误备注</th><th>质检码</th></tr></thead><tbody>' + initHtml + '</tbody></table></div>' + expandBtn;
+                    tableBlock = '<div style="flex:1;overflow:auto;min-height:0;"><div class="error-table-wrapper" style="max-height:400px;overflow-y:auto;"><table class="error-table"><thead><tr><th>日期</th><th>站点</th><th>来源</th><th>失误类别</th><th>初审人</th><th>失误备注</th><th>质检码</th></tr></thead><tbody>' + initHtml + '</tbody></table></div></div><div style="margin-top:auto;padding-top:8px;">' + expandBtn + '</div>';
                 }
-                return '<div style="display:flex;gap:16px;">' +
-                    '<div class="report-box" style="flex:3;min-width:0;margin-bottom:0;">' +
+                return '<div style="display:flex;gap:16px;align-items:stretch;">' +
+                    '<div class="report-box" style="flex:3;min-width:0;margin-bottom:0;display:flex;flex-direction:column;">' +
                         '<div style="font-weight:700;color:#1f3a6b;margin-bottom:8px;font-size:0.85rem;">📋 失误列表</div>' +
                         tableBlock +
                     '</div>';
             })() +
-                '<div class="report-box" style="flex:2;min-width:0;margin-bottom:0;">' +
+                '<div class="report-box" style="flex:2;min-width:0;margin-bottom:0;display:flex;flex-direction:column;">' +
                     '<div style="font-weight:700;color:#1f3a6b;margin-bottom:6px;font-size:0.85rem;">🎯 初审画像</div>' +
-                    '<input type="text" id="portraitSearch" placeholder="🔍 搜索..." oninput="var v=this.value.toLowerCase().trim();var items=this.parentElement.querySelectorAll(\'.portrait-row\');var found=0;items.forEach(function(el){var match=v?el.textContent.toLowerCase().indexOf(v)>=0:true;el.style.display=match?\'\':\'none\';if(match)found++;});var msg=this.parentElement.querySelector(\'.search-no-result\');if(msg){if(v&&found===0){var f=errorDashboardFilter;var inPeriod=errorDashboardData.filter(function(e){var d=e.date;if(f.period===\"day\"){var t=new Date();return d.getTime()===new Date(t.getFullYear(),t.getMonth(),t.getDate()).getTime();}return true;});var inPeriodAndPerson=inPeriod.some(function(e){return e.reviewer.toLowerCase().indexOf(v)>=0;});if(inPeriodAndPerson&&f.site!==\'all\'){msg.textContent=\'该初审不在当前站点筛选维度，请重新选择站点\';}else if(inPeriodAndPerson){msg.textContent=\'该初审存在但不在当前筛选维度\';}else{msg.textContent=\'本期维度无此初审失误信息\';}msg.style.display=\'block\';}else{msg.style.display=\'none\';}}" style="width:100%;padding:5px 10px;border:1px solid #e2e8f0;border-radius:14px;font-size:0.72rem;margin-bottom:6px;">' +
-                    '<div class="search-no-result" style="display:none;text-align:center;padding:12px;color:#94a3b8;font-size:0.75rem;"></div>' +
-                    '<div style="max-height:55vh;overflow-y:auto;">' +
-                    '<table style="width:100%;table-layout:fixed;border-collapse:collapse;">' +
+                    '<input type="text" id="portraitSearch" placeholder="🔍 搜索..." oninput="searchPortrait(this.value)" style="width:100%;padding:5px 10px;border:1px solid #e2e8f0;border-radius:14px;font-size:0.72rem;margin-bottom:6px;">' +
+                    '<div id="portraitSearchMsg" style="display:none;text-align:center;padding:12px;color:#94a3b8;font-size:0.75rem;"></div>' +
+                    '<div style="flex:1;overflow:auto;min-height:0;">' +
+                    '<table style="width:100%;table-layout:auto;border-collapse:collapse;">' +
                     (window._portraitHtml || '<tr><td colspan="5" style="color:#94a3b8;font-size:0.78rem;text-align:center;padding:20px;">暂无数据</td></tr>') +
                     '</table>' +
-                    '</div>' + (window._portraitExpandLink || '') +
+                    '</div><div style="margin-top:auto;padding-top:8px;">' + (window._portraitExpandLink || '') + '</div>' +
                 '</div>' +
             '</div>' +
         '</div>';
