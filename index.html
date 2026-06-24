@@ -11034,8 +11034,14 @@ URL.revokeObjectURL(url);
             var token = getErrorDashboardToken();
             if (!token) token = await feishuRefreshToken();
             if (!token) {
-                // 需要重新授权
-                document.getElementById('mainContent').innerHTML = '<div class="panorama-card" style="text-align:center;padding:40px;"><div style="font-size:1.5rem;margin-bottom:16px;">🔐 需要飞书授权</div><p style="color:#5e6f8d;margin-bottom:16px;">点击下方按钮，在飞书页面点授权后自动返回</p><a href="https://open.feishu.cn/open-apis/authen/v1/authorize?app_id=' + FEISHU_CONFIG.appId + '&redirect_uri=https%3A%2F%2Fjimu-111.github.io%2Fyouxuetang%2F&scope=sheets:spreadsheet:readonly%20drive:drive:readonly%20wiki:wiki:readonly" style="display:inline-block;background:#1f3a6b;color:white;padding:12px 24px;border-radius:30px;text-decoration:none;">🔗 前往飞书授权</a></div>';
+                // 需要重新授权 — 检查是否是已授权但token过期
+                var storedToken = null;
+                try { storedToken = JSON.parse(localStorage.getItem('_feishu_token') || 'null'); } catch(e) {}
+                var reason = '';
+                if (!storedToken) reason = '<p style="color:#94a3b8;font-size:0.8rem;">未检测到已保存的授权，请点击下方按钮授权</p>';
+                else if (storedToken.expiresAt <= Date.now()) reason = '<p style="color:#e67e22;font-size:0.8rem;">授权已过期，请重新授权</p>';
+                else reason = '<p style="color:#94a3b8;font-size:0.8rem;">授权信息异常，请重新授权</p>';
+                document.getElementById('mainContent').innerHTML = '<div class="panorama-card" style="text-align:center;padding:40px;"><div style="font-size:1.5rem;margin-bottom:16px;">🔐 需要飞书授权</div>' + reason + '<a href="https://open.feishu.cn/open-apis/authen/v1/authorize?app_id=' + FEISHU_CONFIG.appId + '&redirect_uri=https%3A%2F%2Fjimu-111.github.io%2Fyouxuetang%2F&scope=sheets:spreadsheet:readonly%20drive:drive:readonly%20wiki:wiki:readonly" style="display:inline-block;background:#1f3a6b;color:white;padding:12px 24px;border-radius:30px;text-decoration:none;">🔗 前往飞书授权</a></div>';
                 errorDashboardRefreshing = false;
                 return;
             }
@@ -11808,8 +11814,13 @@ URL.revokeObjectURL(url);
                     saveErrorDashboardToken(tokenData.data.access_token, tokenData.data.refresh_token, tokenData.data.expires_in);
                     _initOauthDone = true;
                     window.history.replaceState({}, '', window.location.pathname);
+                    showToast('✅ 飞书授权成功，正在加载数据...', 'success');
+                } else {
+                    showToast('❌ 授权失败：' + (tokenData.msg || '未知错误'), 'error');
                 }
-            } catch(e) {}
+            } catch(e) {
+                showToast('❌ 网络请求失败：' + e.message, 'error');
+            }
         }
 
         // 监听storage变化：如果其他标签页保存了飞书token，自动感知
