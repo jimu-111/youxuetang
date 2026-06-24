@@ -11190,6 +11190,8 @@ URL.revokeObjectURL(url);
                         }
                         var category = (row[sh.colCategory] || '').toString().trim();
                         var reviewer = (row[sh.colReviewer] || '').toString().trim();
+                        // 统一初审人：去掉"解答失误"后缀
+                        reviewer = reviewer.replace(/解答失误$/g, '').trim();
                         var note = (row[sh.colNote] || '').toString().trim();
                         var site = (row[sh.colSite] || '').toString().trim();
                         var qcCode = (row[sh.colQcCode] || '').toString().trim();
@@ -11365,39 +11367,78 @@ URL.revokeObjectURL(url);
         var health = Math.max(60, Math.round(100 - (total / Math.max(1, avgErrors)) * 40));
         var hColor = healthBarColor(health);
 
-        // 失误来源 — 横向均分
-        var sourceMap = {};
-        filtered.forEach(function(e) { sourceMap[e.source] = (sourceMap[e.source] || 0) + 1; });
-        var sources = Object.entries(sourceMap).sort(function(a, b) { return b[1] - a[1]; });
-        var sourceCols = sources.map(function(p) {
-            var pct = Math.round(p[1] / total * 100);
-            return '<div style="flex:1;text-align:center;padding:8px;"><div style="font-size:1.2rem;font-weight:700;">' + p[1] + '</div><div style="font-size:0.7rem;color:#5e6f8d;">' + p[0] + '</div><div style="height:6px;background:#eef2f6;border-radius:3px;margin-top:4px;"><div style="width:' + pct + '%;height:100%;background:' + barHeatColor(pct) + ';border-radius:3px;"></div></div><div style="font-size:0.65rem;color:#94a3b8;">' + pct + '%</div></div>';
-        }).join('');
-
-        // 失误详细聚合（同detail跨类别合并）
-        var detailGroups = {};
+        // 失误来源 + 站点分布 — 横向均分
+        var sourceMap = {}, siteMap = {};
         filtered.forEach(function(e) {
-            var noteKey = (e.note || '').trim() || '(无备注)';
-            if (!detailGroups[noteKey]) detailGroups[noteKey] = { note: noteKey, count: 0, cats: {}, qcCodes: [], sources: {} };
-            detailGroups[noteKey].count++;
-            detailGroups[noteKey].cats[e.category] = (detailGroups[noteKey].cats[e.category] || 0) + 1;
-            if (e.qcCode && detailGroups[noteKey].qcCodes.indexOf(e.qcCode) < 0) detailGroups[noteKey].qcCodes.push(e.qcCode);
-            detailGroups[noteKey].sources[e.source] = (detailGroups[noteKey].sources[e.source] || 0) + 1;
+            sourceMap[e.source] = (sourceMap[e.source] || 0) + 1;
+            if (e.site) siteMap[e.site] = (siteMap[e.site] || 0) + 1;
         });
-        var allDetails = Object.values(detailGroups).sort(function(a, b) { return b.count - a.count; });
-        var notePageSize = 15, noteTotalPages = Math.ceil(allDetails.length / notePageSize) || 1;
+        var sources = Object.entries(sourceMap).sort(function(a, b) { return b[1] - a[1]; });
+        var sites = Object.entries(siteMap).sort(function(a, b) { return b[1] - a[1]; });
+        function renderDistCols(entries, totalCount) {
+            return entries.map(function(p) {
+                var pct = Math.round(p[1] / totalCount * 100);
+                return '<div style="flex:1;text-align:center;padding:8px;"><div style="font-size:1.1rem;font-weight:700;">' + p[1] + '</div><div style="font-size:0.7rem;color:#5e6f8d;">' + p[0] + '</div><div style="height:6px;background:#eef2f6;border-radius:3px;margin-top:4px;"><div style="width:' + pct + '%;height:100%;background:' + barHeatColor(pct) + ';border-radius:3px;"></div></div><div style="font-size:0.65rem;color:#94a3b8;">' + pct + '%</div></div>';
+            }).join('');
+        }
+        var sourceCols = renderDistCols(sources, total);
+        var siteCols = renderDistCols(sites, total);
 
-        function renderNotePage(pg) {
-            var start = (pg - 1) * notePageSize;
-            var pData = allDetails.slice(start, start + notePageSize);
-            var rows = pData.length === 0 ? '<tr><td colspan="5" style="padding:20px;color:#94a3b8;">暂无记录</td></tr>' :
-                pData.map(function(g) {
-                    var pct = Math.round(g.count / total * 100);
-                    var catsStr = Object.entries(g.cats).sort(function(a, b) { return b[1] - a[1]; }).map(function(p) { return p[0] + '(' + p[1] + ')'; }).join(' / ');
-                    return '<tr><td style="text-align:center;">' + g.count + '</td><td style="text-align:center;">' + pct + '%</td><td style="text-align:center;"><div style="display:inline-block;width:80px;height:8px;background:#eef2f6;border-radius:4px;vertical-align:middle;"><div style="width:' + pct + '%;height:100%;background:' + barHeatColor(pct) + ';border-radius:4px;"></div></div></td><td style="text-align:center;max-width:320px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="' + escapeHtml(g.note) + '">' + escapeHtml(g.note) + (g.count > 1 ? ' <b style="color:#c0392b;">×' + g.count + '</b>' : '') + '</td><td style="text-align:center;font-size:0.68rem;color:#5e6f8d;max-width:120px;">' + escapeHtml(catsStr) + '</td><td style="text-align:center;font-size:0.7rem;">' + g.qcCodes.join(', ') + '</td></tr>';
-                }).join('');
-            var pag = noteTotalPages > 1 ? '<div class="pagination"><button ' + (pg <= 1 ? 'disabled' : '') + ' onclick="window._noteGoPage(' + (pg - 1) + ')">上一页</button><span>' + pg + '/' + noteTotalPages + '</span><button ' + (pg >= noteTotalPages ? 'disabled' : '') + ' onclick="window._noteGoPage(' + (pg + 1) + ')">下一页</button></div>' : '';
-            return '<table class="error-table" style="width:100%;"><thead><tr><th>个数</th><th>占比</th><th>占比条</th><th>失误详细</th><th>关联类别</th><th>质检码</th></tr></thead><tbody>' + rows + '</tbody></table>' + pag;
+        // 按类别→详细聚合（类别合并行）
+        var catGroups = {};
+        filtered.forEach(function(e) {
+            var cat = e.category || '(未分类)';
+            var note = (e.note || '').trim() || '(无备注)';
+            if (!catGroups[cat]) catGroups[cat] = { cat: cat, total: 0, details: {} };
+            catGroups[cat].total++;
+            if (!catGroups[cat].details[note]) catGroups[cat].details[note] = { note: note, count: 0, qcCodes: [] };
+            catGroups[cat].details[note].count++;
+            if (e.qcCode && catGroups[cat].details[note].qcCodes.indexOf(e.qcCode) < 0) catGroups[cat].details[note].qcCodes.push(e.qcCode);
+        });
+        var catList = Object.values(catGroups).sort(function(a, b) { return b.total - a.total; });
+
+        window._showAllCats = false;
+        window._showAllNotes = false;
+        window._renderNoteTable = null;
+
+        function renderNoteTable() {
+            var showAllCats = window._showAllCats;
+            var showAllNotes = window._showAllNotes;
+            var visibleCats = showAllCats ? catList : catList.slice(0, 5);
+            var rows_arr = [];
+            var noteRowCount = 0;
+            visibleCats.forEach(function(cg) {
+                var catPct = Math.round(cg.total / total * 100);
+                var details = Object.values(cg.details).sort(function(a, b) { return b.count - a.count; });
+                var rowspan = details.length;
+                details.forEach(function(d, di) {
+                    noteRowCount++;
+                    if (!showAllNotes && noteRowCount > 20) return;
+                    var row = [];
+                    if (di === 0) {
+                        row.push('<td rowspan="' + rowspan + '" style="text-align:center;vertical-align:middle;font-weight:600;">' + escapeHtml(cg.cat) + '</td>');
+                        row.push('<td rowspan="' + rowspan + '" style="text-align:center;vertical-align:middle;">' + cg.total + '</td>');
+                        row.push('<td rowspan="' + rowspan + '" style="text-align:center;vertical-align:middle;"><div style="display:inline-block;width:60px;height:8px;background:#eef2f6;border-radius:4px;vertical-align:middle;"><div style="width:' + catPct + '%;height:100%;background:' + barHeatColor(catPct) + ';border-radius:4px;"></div></div><span style="font-size:0.7rem;margin-left:4px;">' + catPct + '%</span></td>');
+                    }
+                    row.push('<td style="text-align:center;">' + escapeHtml(d.note) + (d.count > 1 ? ' <b style="color:#c0392b;">×' + d.count + '</b>' : '') + '</td>');
+                    row.push('<td style="text-align:center;font-size:0.7rem;">' + d.qcCodes.join(', ') + '</td>');
+                    rows_arr.push('<tr>' + row.join('') + '</tr>');
+                });
+            });
+            var html = '<table class="error-table" style="width:100%;"><thead><tr><th style="width:12%;">失误类别</th><th style="width:6%;">个数</th><th style="width:14%;">占比</th><th>失误详细</th><th style="width:12%;">质检码</th></tr></thead><tbody>';
+            if (rows_arr.length === 0) html += '<tr><td colspan="5" style="padding:20px;color:#94a3b8;">暂无记录</td></tr>';
+            else html += rows_arr.join('');
+            html += '</tbody></table>';
+            var totalCatCount = catList.length;
+            var totalNoteRows = 0;
+            catList.forEach(function(cg) { totalNoteRows += Object.keys(cg.details).length; });
+            if (totalCatCount > 5) {
+                html += '<div style="text-align:center;margin-top:6px;"><span onclick="window._showAllCats=' + (!showAllCats) + ';document.getElementById(\'popupNoteArea\').innerHTML=window._renderNoteTable();" style="color:#2a5298;cursor:pointer;font-size:0.75rem;text-decoration:underline;">' + (showAllCats ? '收起类别▲' : '展开全部类别(' + totalCatCount + ')▼') + '</span></div>';
+            }
+            if (totalNoteRows > 20) {
+                html += '<div style="text-align:center;margin-top:2px;"><span onclick="window._showAllNotes=' + (!showAllNotes) + ';document.getElementById(\'popupNoteArea\').innerHTML=window._renderNoteTable();" style="color:#2a5298;cursor:pointer;font-size:0.75rem;text-decoration:underline;">' + (showAllNotes ? '收起详细▲' : '展开全部详细(' + totalNoteRows + ')▼') + '</span></div>';
+            }
+            return html;
         }
 
         var overlay = document.createElement('div');
@@ -11409,19 +11450,17 @@ URL.revokeObjectURL(url);
                 '<button class="modal-close-btn" id="popupCloseBtn">✕</button>' +
             '</div>' +
             '<div class="modal-body">' +
-                '<div style="font-weight:700;color:#1f3a6b;margin-bottom:6px;">📊 失误来源</div>' +
-                '<div style="background:#f8fafc;padding:8px;border-radius:12px;margin-bottom:14px;display:flex;gap:8px;">' + (sourceCols || '<span style="color:#94a3b8;">-</span>') + '</div>' +
+                '<div style="font-weight:700;color:#1f3a6b;margin-bottom:6px;">📊 失误来源与站点</div>' +
+                '<div style="background:#f8fafc;padding:8px;border-radius:12px;margin-bottom:6px;display:flex;gap:8px;">' + (sourceCols || '<span style="color:#94a3b8;">-</span>') + '</div>' +
+                '<div style="background:#f8fafc;padding:8px;border-radius:12px;margin-bottom:14px;display:flex;gap:8px;">' + (siteCols || '<span style="color:#94a3b8;">-</span>') + '</div>' +
                 '<div style="font-weight:700;color:#1f3a6b;margin-bottom:6px;">📋 失误详细分析</div>' +
-                '<div id="popupNoteArea">' + renderNotePage(1) + '</div>' +
+                '<div id="popupNoteArea" style="max-height:50vh;overflow-y:auto;">' + renderNoteTable() + '</div>' +
             '</div>' +
         '</div>';
+        window._renderNoteTable = renderNoteTable;
         document.body.appendChild(overlay);
-        window._noteGoPage = function(pg) {
-            var a = document.getElementById('popupNoteArea');
-            if (a) a.innerHTML = renderNotePage(pg);
-        };
-        overlay.querySelector('#popupCloseBtn').onclick = function() { overlay.remove(); };
-        overlay.onclick = function(e) { if (e.target === overlay) { overlay.remove(); } };
+        overlay.querySelector('#popupCloseBtn').onclick = function() { overlay.remove(); window._renderNoteTable = null; };
+        overlay.onclick = function(e) { if (e.target === overlay) { overlay.remove(); window._renderNoteTable = null; } };
     }
 
     // 按失误类别比例出卷（30题）
