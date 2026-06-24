@@ -11896,6 +11896,7 @@ URL.revokeObjectURL(url);
         var revFilterRankInfo = buildRankMap(reviewerStats, allReviewers);
         var reviewerBtns = expandableFilterBtns(allReviewers, reviewerStats, revFilterRankInfo, 'reviewer', '👤 全部', 'rev', false);
 
+        var sortedReviewers = Object.entries(reviewerStats).sort(function(a, b) { return b[1] - a[1]; });
         var html = '<div class="error-dashboard">' +
             '<div class="report-box" style="margin-bottom:20px;">' +
                 '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;margin-bottom:16px;">' +
@@ -11908,7 +11909,6 @@ URL.revokeObjectURL(url);
                 '<div class="sheet-status">' + statusDots + '<span style="margin-left:12px;font-size:0.75rem;color:#1f3a6b;font-weight:600;">总失误数（' + errorDashboardData.length + '条）</span></div>' +
                 // ② 筛选看板 + 人员画像（置顶）
                 (function() {
-                    var sortedReviewers = Object.entries(reviewerStats).sort(function(a, b) { return b[1] - a[1]; });
                     var top5People = sortedReviewers.slice(0, 5);
                     function getPersonCats(name) {
                         var cats = {};
@@ -11947,14 +11947,12 @@ URL.revokeObjectURL(url);
                             var cats = getPersonCats(name);
                             var sites = getPersonSites(name);
                             var actions = getPersonActions(name, count);
-                            return '<div class="portrait-row" style="display:flex;align-items:center;gap:4px;padding:6px 0;border-bottom:1px solid #f1f5f9;font-size:0.76rem;">' +
-                                '<span style="font-size:0.7rem;min-width:16px;color:#94a3b8;">' + (i + 1) + '</span>' +
-                                '<span class="clickable-tag" onclick="showErrorDetailPopup(\'reviewer\',\'' + name.replace(/'/g, "\\'") + '\')" style="font-weight:600;background:' + color + ';color:#2d3748;padding:2px 8px;border-radius:8px;cursor:pointer;min-width:45px;text-align:center;" title="点击查看详情">' + escapeHtml(name) + '</span>' +
-                                '<span style="color:#5e6f8d;min-width:30px;font-size:0.7rem;">' + count + '次</span>' +
-                                '<span style="color:#94a3b8;font-size:0.62rem;">' + escapeHtml(sites) + '</span>' +
-                                '<span style="color:#94a3b8;font-size:0.65rem;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + (cats || '-') + '</span>' +
-                                actions +
-                            '</div>';
+                            return '<tr class="portrait-row" style="border-bottom:1px solid #f1f5f9;">' +
+                                '<td style="text-align:center;padding:4px 4px;width:25%;"><span class="clickable-tag" onclick="showErrorDetailPopup(\'reviewer\',\'' + name.replace(/'/g, "\\'") + '\')" style="font-weight:600;background:' + color + ';color:#2d3748;padding:2px 8px;border-radius:8px;cursor:pointer;font-size:0.75rem;" title="点击查看详情">' + escapeHtml(name) + '</span></td>' +
+                                '<td style="text-align:center;padding:4px 4px;width:25%;font-size:0.72rem;color:#5e6f8d;">' + escapeHtml(sites) + '</td>' +
+                                '<td style="text-align:center;padding:4px 4px;width:25%;font-size:0.72rem;color:#5e6f8d;">' + count + '次</td>' +
+                                '<td style="text-align:center;padding:4px 4px;width:25%;font-size:0.7rem;color:#94a3b8;max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + (cats || '-') + '</td>' +
+                            '</tr>';
                         }).join('');
                     }
                     var expandLink = '';
@@ -11964,42 +11962,30 @@ URL.revokeObjectURL(url);
                     window._portraitHtml = personHtml;
                     window._portraitExpandLink = expandLink;
                     return '<div class="report-box" style="margin-bottom:16px;">' +
-                            '<div style="font-weight:700;color:#1f3a6b;margin-bottom:10px;font-size:0.85rem;">② 🔍 筛选看板</div>' +
-                            '<div style="font-weight:700;color:#1f3a6b;margin:8px 0 6px;font-size:0.75rem;">⏱️ 时间</div>' +
-                            '<div class="filter-bar">' +
-                                '<button class="filter-btn' + (f.period === 'day' ? ' active' : '') + '" onclick="errorDashboardFilter.period=\'day\';errorDashboardPage=1;renderErrorDashboardContent();">📅 日度</button>' +
-                                '<button class="filter-btn' + (f.period === 'week' ? ' active' : '') + '" onclick="errorDashboardFilter.period=\'week\';errorDashboardPage=1;renderErrorDashboardContent();">📊 周度</button>' +
-                                '<button class="filter-btn' + (f.period === 'month' ? ' active' : '') + '" onclick="errorDashboardFilter.period=\'month\';errorDashboardPage=1;renderErrorDashboardContent();">📈 月度</button>' +
-                                '<button class="filter-btn' + (f.period === 'custom' ? ' active' : '') + '" onclick="showCustomDatePopup()">📆 自定义' + (f.period === 'custom' && f.customStart ? ' ' + formatShortDate(new Date(f.customStart)) + '~' + formatShortDate(new Date(f.customEnd)) : '') + '</button>' +
+                            '<div style="font-weight:700;color:#1f3a6b;margin-bottom:8px;font-size:0.85rem;">② 🔍 筛选看板</div>' +
+                            '<div style="display:flex;gap:16px;flex-wrap:wrap;">' +
+                                '<div style="flex:1;min-width:200px;"><span style="font-size:0.75rem;font-weight:600;color:#1f3a6b;">⏱️ 时间</span><div class="filter-bar">' +
+                                    '<button class="filter-btn' + (f.period === 'day' ? ' active' : '') + '" onclick="errorDashboardFilter.period=\'day\';errorDashboardPage=1;renderErrorDashboardContent();">📅 日度</button>' +
+                                    '<button class="filter-btn' + (f.period === 'week' ? ' active' : '') + '" onclick="errorDashboardFilter.period=\'week\';errorDashboardPage=1;renderErrorDashboardContent();">📊 周度</button>' +
+                                    '<button class="filter-btn' + (f.period === 'month' ? ' active' : '') + '" onclick="errorDashboardFilter.period=\'month\';errorDashboardPage=1;renderErrorDashboardContent();">📈 月度</button>' +
+                                    '<button class="filter-btn' + (f.period === 'custom' ? ' active' : '') + '" onclick="showCustomDatePopup()">📆 自定义' + (f.period === 'custom' && f.customStart ? ' ' + formatShortDate(new Date(f.customStart)) + '~' + formatShortDate(new Date(f.customEnd)) : '') + '</button>' +
+                                '</div></div>' +
+                                '<div style="flex:1;min-width:200px;"><span style="font-size:0.75rem;font-weight:600;color:#1f3a6b;">📍 站点</span><div class="filter-bar">' + siteBtns + '</div></div>' +
                             '</div>' +
-                            '<div style="font-weight:700;color:#1f3a6b;margin:8px 0 6px;font-size:0.75rem;">📍 站点</div>' +
-                            '<div class="filter-bar">' + siteBtns + '</div>' +
-                            // 按灯模块（仅周度）
-                            (f.period === 'week' ? (function() {
-                                var lightPeople = sortedReviewers.filter(function(e) { return e[1] >= 6; });
-                                function lightColor(count) {
-                                    if (count >= 15) return { color: '#fecaca', text: '#991b1b', label: '🔴', tag: '15+' };
-                                    if (count >= 10) return { color: '#fed7aa', text: '#9a3412', label: '🟠', tag: '10-14' };
-                                    return { color: '#fef08a', text: '#854d0e', label: '🟡', tag: '6-9' };
-                                }
-                                return '<div style="background:#fffbeb;border-radius:10px;padding:8px 10px;margin-top:10px;border:1px solid #fde68a;">' +
-                                    '<div style="font-weight:700;color:#92400e;margin-bottom:4px;font-size:0.75rem;">🚦 按灯预警</div>' +
-                                    lightPeople.map(function(entry) {
-                                        var name = entry[0], count = entry[1];
-                                        var lc = lightColor(count);
-                                        return '<span class="portrait-row" style="display:inline-flex;align-items:center;gap:3px;margin:2px 4px 2px 0;font-size:0.7rem;background:' + lc.color + ';color:' + lc.text + ';padding:2px 8px;border-radius:10px;">' + lc.label + ' ' + escapeHtml(name) + '(' + count + ')</span>';
-                                    }).join('') +
-                                '</div>';
-                            })() : '') +
                         '</div>';
                 })() +
             '</div>' +
             // 统计概览
             '<div class="report-box" style="margin-bottom:16px;">' +
-                '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:12px;">' +
+                '<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:12px;">' +
                     '<div class="stat-mini"><div class="val">' + totalErrors + '</div><div class="lbl">📋 筛选结果</div></div>' +
                     '<div class="stat-mini"><div class="val">' + allCategories.length + '</div><div class="lbl">🏷️ 失误类别</div></div>' +
                     '<div class="stat-mini"><div class="val">' + allReviewers.length + '</div><div class="lbl">👤 涉及人员</div></div>' +
+                    '<div class="stat-mini"><div class="val" style="font-size:1rem;">🚦</div><div class="lbl">按灯预警</div><div style="margin-top:4px;">' + (function() {
+                        var lp = sortedReviewers.filter(function(e) { return e[1] >= 6; });
+                        var h = lp.length > 0 ? lp.slice(0,5).map(function(e){var c=e[1];var l=c>=15?'🔴':(c>=10?'🟠':'🟡');var cl=c>=15?'#fecaca':(c>=10?'#fed7aa':'#fef08a');var ct=c>=15?'#991b1b':(c>=10?'#9a3412':'#854d0e');return '<span style=\"display:inline-block;background:'+cl+';color:'+ct+';padding:1px 6px;border-radius:6px;margin:1px;font-size:0.65rem;\">'+l+' '+escapeHtml(e[0])+'('+c+')</span>';}).join('') : '<span style=\"color:#94a3b8;font-size:0.65rem;\">暂无预警</span>';
+                        return h;
+                    })() + '</div></div>' +
                 '</div>' +
                 '<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">' +
                     '<div style="background:#fafcff;border-radius:16px;padding:12px 16px;border:1px solid #eef2f6;">' +
@@ -12046,7 +12032,7 @@ URL.revokeObjectURL(url);
                     tableBlock = '<div class="error-table-wrapper" style="max-height:400px;overflow-y:auto;"><table class="error-table"><thead><tr><th>日期</th><th>站点</th><th>来源</th><th>失误类别</th><th>初审人</th><th>失误备注</th><th>质检码</th></tr></thead><tbody>' + initHtml + '</tbody></table></div>' + expandBtn;
                 }
                 return '<div style="display:flex;gap:16px;">' +
-                    '<div style="flex:3;min-width:0;">' +
+                    '<div class="report-box" style="flex:3;min-width:0;margin-bottom:0;">' +
                         '<div style="font-weight:700;color:#1f3a6b;margin-bottom:8px;font-size:0.85rem;">📋 失误列表</div>' +
                         tableBlock +
                     '</div>';
@@ -12055,7 +12041,9 @@ URL.revokeObjectURL(url);
                     '<div style="font-weight:700;color:#1f3a6b;margin-bottom:6px;font-size:0.85rem;">🎯 初审画像</div>' +
                     '<input type="text" id="portraitSearch" placeholder="🔍 搜索..." oninput="var v=this.value.toLowerCase();var items=this.parentElement.querySelectorAll(\'.portrait-row\');items.forEach(function(el){el.style.display=v?(el.textContent.toLowerCase().indexOf(v)>=0?\'\':\'none\'):\'\';});" style="width:100%;padding:5px 10px;border:1px solid #e2e8f0;border-radius:14px;font-size:0.72rem;margin-bottom:6px;">' +
                     '<div style="max-height:55vh;overflow-y:auto;">' +
-                    (window._portraitHtml || '<div style="color:#94a3b8;font-size:0.78rem;text-align:center;padding:20px;">暂无数据</div>') +
+                    '<table style="width:100%;table-layout:fixed;border-collapse:collapse;">' +
+                    (window._portraitHtml || '<tr><td colspan="4" style="color:#94a3b8;font-size:0.78rem;text-align:center;padding:20px;">暂无数据</td></tr>') +
+                    '</table>' +
                     '</div>' + (window._portraitExpandLink || '') +
                 '</div>' +
             '</div>' +
