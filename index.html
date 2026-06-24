@@ -10995,9 +10995,12 @@ URL.revokeObjectURL(url);
             headers: proxyHeaders,
             body: options.body || undefined
         });
-        if (!resp.ok) throw new Error('代理请求失败: ' + resp.status);
+        if (!resp.ok) {
+            var errText = await resp.text();
+            throw new Error('代理请求失败: ' + resp.status + ' ' + errText);
+        }
         var data = await resp.json();
-        if (data.error) throw new Error(data.error);
+        if (data.error) throw new Error(data.error + (data.stack ? '\n' + data.stack : ''));
         return { ok: true, json: function() { return Promise.resolve(data); } };
     }
 
@@ -11832,11 +11835,11 @@ URL.revokeObjectURL(url);
         var oauthCode = initParams.get('code');
         if (oauthCode) {
             try {
-                var formBody = 'app_id=' + encodeURIComponent(FEISHU_CONFIG.appId) + '&app_secret=' + encodeURIComponent(FEISHU_CONFIG.appSecret) + '&grant_type=authorization_code&code=' + encodeURIComponent(oauthCode);
+                var tokenBody = JSON.stringify({ app_id: FEISHU_CONFIG.appId, app_secret: FEISHU_CONFIG.appSecret, grant_type: 'authorization_code', code: oauthCode });
                 var tokenResp = await feishuApiFetch('https://open.feishu.cn/open-apis/authen/v1/access_token', {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-                    body: formBody
+                    headers: { 'Content-Type': 'application/json' },
+                    body: tokenBody
                 });
                 var tokenData = await tokenResp.json();
                 if (tokenData.code === 0 && tokenData.data) {
