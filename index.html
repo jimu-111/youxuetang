@@ -11133,6 +11133,61 @@ URL.revokeObjectURL(url);
         return String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
     }
 
+    // 周度/月度选择弹窗
+    function showPeriodPopup(type) {
+        var now = new Date();
+        var today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+        var options = [];
+        if (type === 'week') {
+            var dow = today.getDay();
+            var thisMonday = new Date(today);
+            thisMonday.setDate(today.getDate() - (dow === 0 ? 6 : dow - 1));
+            // 生成最近4周选项
+            for (var w = 0; w < 4; w++) {
+                var monday = new Date(thisMonday);
+                monday.setDate(thisMonday.getDate() - w * 7);
+                var sunday = new Date(monday);
+                sunday.setDate(monday.getDate() + 6);
+                // 计算第几周：周一的日期/7取整
+                var weekNum = Math.ceil(monday.getDate() / 7);
+                if (weekNum > 4) weekNum = 4;
+                var label = (monday.getMonth() + 1) + '月第' + weekNum + '周（' + formatShortDate(monday) + '~' + formatShortDate(sunday) + '）';
+                options.push({ label: label, start: monday, end: sunday });
+            }
+        } else if (type === 'month') {
+            // 本月定义：上月27到本月26
+            var thisStart, thisEnd;
+            if (today.getDate() >= 27) {
+                thisStart = new Date(today.getFullYear(), today.getMonth(), 27);
+                thisEnd = new Date(today.getFullYear(), today.getMonth() + 1, 26);
+            } else {
+                thisStart = new Date(today.getFullYear(), today.getMonth() - 1, 27);
+                thisEnd = new Date(today.getFullYear(), today.getMonth(), 26);
+            }
+            // 生成最近3月选项
+            for (var m = 0; m < 3; m++) {
+                var ms = new Date(thisStart.getFullYear(), thisStart.getMonth() - m, 27);
+                var me = new Date(ms.getFullYear(), ms.getMonth() + 1, 26);
+                var label = (me.getMonth() + 1) + '月（' + formatShortDate(ms) + '~' + formatShortDate(me) + '）';
+                options.push({ label: label, start: ms, end: me });
+            }
+        }
+        var overlay = document.createElement('div');
+        overlay.className = 'modal-overlay'; overlay.style.zIndex = '2000';
+        overlay.innerHTML = '<div class="modal-container" style="max-width:380px;">' +
+            '<div class="modal-header">📅 选择' + (type === 'week' ? '周度' : '月度') + '范围<button class="modal-close-btn" id="periodClose">✕</button></div>' +
+            '<div class="modal-body" style="text-align:center;padding:20px;">' +
+                options.map(function(o, i) {
+                    return '<button style="display:block;width:100%;padding:12px;margin-bottom:8px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:12px;cursor:pointer;font-size:0.9rem;text-align:left;" onclick="errorDashboardFilter.period=\'' + type + '\';errorDashboardFilter.customStart=\'' + formatDate(o.start) + '\';errorDashboardFilter.customEnd=\'' + formatDate(o.end) + '\';errorDashboardPage=1;this.closest(\'.modal-overlay\').remove();renderErrorDashboardContent();">' + (i === 0 ? '📌 ' : '📅 ') + o.label + '</button>';
+                }).join('') +
+                '<button style="display:block;width:100%;padding:10px;margin-top:4px;background:transparent;border:1px solid #cbd5e1;border-radius:12px;cursor:pointer;font-size:0.85rem;color:#5e6f8d;" onclick="this.closest(\'.modal-overlay\').remove();">取消</button>' +
+            '</div>' +
+        '</div>';
+        document.body.appendChild(overlay);
+        overlay.querySelector('#periodClose').onclick = function() { overlay.remove(); };
+        overlay.onclick = function(e) { if (e.target === overlay) overlay.remove(); };
+    }
+
     // 自定义日期弹窗
     function showCustomDatePopup() {
         var f = errorDashboardFilter;
@@ -11296,6 +11351,16 @@ URL.revokeObjectURL(url);
             var ce = new Date(f.customEnd);
             ce.setHours(23, 59, 59, 999);
             data = data.filter(function(e) { return e.date >= cs && e.date <= ce; });
+        } else if (f.period === 'week' && f.customStart && f.customEnd) {
+            var ws = new Date(f.customStart);
+            var we = new Date(f.customEnd);
+            we.setHours(23, 59, 59, 999);
+            data = data.filter(function(e) { return e.date >= ws && e.date <= we; });
+        } else if (f.period === 'month' && f.customStart && f.customEnd) {
+            var ms = new Date(f.customStart);
+            var me = new Date(f.customEnd);
+            me.setHours(23, 59, 59, 999);
+            data = data.filter(function(e) { return e.date >= ms && e.date <= me; });
         } else if (f.period === 'day') {
             data = data.filter(function(e) { return e.date.getTime() === today.getTime(); });
         } else if (f.period === 'week') {
@@ -11306,7 +11371,6 @@ URL.revokeObjectURL(url);
             sunday.setDate(monday.getDate() + 6);
             data = data.filter(function(e) { return e.date >= monday && e.date <= sunday; });
         } else if (f.period === 'month') {
-            // 上月27日到本月26日
             var monthEnd, monthStart;
             if (today.getDate() >= 27) {
                 monthStart = new Date(today.getFullYear(), today.getMonth(), 27);
@@ -11742,6 +11806,32 @@ URL.revokeObjectURL(url);
         }, 200);
     }
 
+    // 按灯弹窗
+    function showLightPeoplePopup(key) {
+        var people = (window._lightData && window._lightData[key]) || [];
+        var icons = { reds: '🔴', yellows: '🟡', greens: '🟢' };
+        var labels = { reds: '红色预警（>10次）', yellows: '黄色预警（6-10次）', greens: '绿色正常（0-5次）' };
+        var overlay = document.createElement('div');
+        overlay.className = 'modal-overlay'; overlay.style.zIndex = '2000';
+        var rows = people.map(function(p){
+            return '<tr><td style=\"text-align:center;\">' + (icons[key]||'') + '</td><td style=\"text-align:center;\"><span class=\"clickable-tag light-person-name\" data-name=\"' + escapeHtml(p[0]) + '\" style=\"cursor:pointer;font-weight:600;\">' + escapeHtml(p[0]) + '</span></td><td style=\"text-align:center;\">' + p[1] + '次</td></tr>';
+        }).join('');
+        overlay.innerHTML = '<div class="modal-container" style="max-width:450px;">' +
+            '<div class="modal-header">' + (labels[key]||'按灯详情') + '（' + people.length + '人）<button class="modal-close-btn" id="lightClose">✕</button></div>' +
+            '<div class="modal-body"><table class="error-table" style="width:100%;"><thead><tr><th>灯</th><th>姓名</th><th>失误</th></tr></thead><tbody>' + (rows || '<tr><td colspan=\"3\" style=\"padding:20px;color:#94a3b8;\">暂无人员</td></tr>') + '</tbody></table></div>' +
+        '</div>';
+        document.body.appendChild(overlay);
+        overlay.querySelector('#lightClose').onclick = function(){overlay.remove();};
+        overlay.onclick = function(e){if(e.target===overlay)overlay.remove();};
+        overlay.querySelectorAll('.light-person-name').forEach(function(el){
+            el.addEventListener('click', function(){
+                var n = this.dataset.name;
+                overlay.remove();
+                showErrorDetailPopup('reviewer', n);
+            });
+        });
+    }
+
     function renderErrorDashboard() {
         document.getElementById('mainContent').innerHTML = '<div class="error-dashboard"><div style="text-align:center;padding:60px;color:#94a3b8;">⏳ 正在加载飞书数据...</div></div>';
         refreshErrorDashboardData();
@@ -11948,10 +12038,10 @@ URL.revokeObjectURL(url);
                             var sites = getPersonSites(name);
                             var actions = getPersonActions(name, count);
                             return '<tr class="portrait-row" style="border-bottom:1px solid #f1f5f9;">' +
-                                '<td style="text-align:center;padding:4px 4px;width:25%;"><span class="clickable-tag" onclick="showErrorDetailPopup(\'reviewer\',\'' + name.replace(/'/g, "\\'") + '\')" style="font-weight:600;background:' + color + ';color:#2d3748;padding:2px 8px;border-radius:8px;cursor:pointer;font-size:0.75rem;" title="点击查看详情">' + escapeHtml(name) + '</span></td>' +
-                                '<td style="text-align:center;padding:4px 4px;width:25%;font-size:0.72rem;color:#5e6f8d;">' + escapeHtml(sites) + '</td>' +
-                                '<td style="text-align:center;padding:4px 4px;width:25%;font-size:0.72rem;color:#5e6f8d;">' + count + '次</td>' +
-                                '<td style="text-align:center;padding:4px 4px;width:25%;font-size:0.7rem;color:#94a3b8;max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + (cats || '-') + '</td>' +
+                                '<td style="text-align:center;padding:4px 2px;width:18%;"><span class="clickable-tag" onclick="showErrorDetailPopup(\'reviewer\',\'' + name.replace(/'/g, "\\'") + '\')" style="font-weight:600;background:' + color + ';color:#2d3748;padding:2px 6px;border-radius:8px;cursor:pointer;font-size:0.7rem;" title="点击查看详情">' + escapeHtml(name) + '</span></td>' +
+                                '<td style="text-align:center;padding:4px 2px;width:12%;font-size:0.68rem;color:#5e6f8d;">' + escapeHtml(sites) + '</td>' +
+                                '<td style="text-align:center;padding:4px 2px;width:15%;font-size:0.7rem;color:#5e6f8d;">' + count + '次</td>' +
+                                '<td style="text-align:center;padding:4px 4px;width:55%;font-size:0.7rem;color:#5e6f8d;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + (cats || '-') + '</td>' +
                             '</tr>';
                         }).join('');
                     }
@@ -11963,14 +12053,14 @@ URL.revokeObjectURL(url);
                     window._portraitExpandLink = expandLink;
                     return '<div class="report-box" style="margin-bottom:16px;">' +
                             '<div style="font-weight:700;color:#1f3a6b;margin-bottom:8px;font-size:0.85rem;">② 🔍 筛选看板</div>' +
-                            '<div style="display:flex;gap:16px;flex-wrap:wrap;">' +
-                                '<div style="flex:1;min-width:200px;"><span style="font-size:0.75rem;font-weight:600;color:#1f3a6b;">⏱️ 时间</span><div class="filter-bar">' +
+                            '<div style="display:flex;gap:20px;flex-wrap:wrap;">' +
+                                '<div style="flex:1;min-width:280px;"><span style="font-size:0.8rem;font-weight:600;color:#1f3a6b;">⏱️ 时间</span><div class="filter-bar" style="gap:6px;">' +
                                     '<button class="filter-btn' + (f.period === 'day' ? ' active' : '') + '" onclick="errorDashboardFilter.period=\'day\';errorDashboardPage=1;renderErrorDashboardContent();">📅 日度</button>' +
-                                    '<button class="filter-btn' + (f.period === 'week' ? ' active' : '') + '" onclick="errorDashboardFilter.period=\'week\';errorDashboardPage=1;renderErrorDashboardContent();">📊 周度</button>' +
-                                    '<button class="filter-btn' + (f.period === 'month' ? ' active' : '') + '" onclick="errorDashboardFilter.period=\'month\';errorDashboardPage=1;renderErrorDashboardContent();">📈 月度</button>' +
+                                    '<button class="filter-btn' + (f.period === 'week' ? ' active' : '') + '" onclick="showPeriodPopup(\'week\')">📊 周度</button>' +
+                                    '<button class="filter-btn' + (f.period === 'month' ? ' active' : '') + '" onclick="showPeriodPopup(\'month\')">📈 月度</button>' +
                                     '<button class="filter-btn' + (f.period === 'custom' ? ' active' : '') + '" onclick="showCustomDatePopup()">📆 自定义' + (f.period === 'custom' && f.customStart ? ' ' + formatShortDate(new Date(f.customStart)) + '~' + formatShortDate(new Date(f.customEnd)) : '') + '</button>' +
                                 '</div></div>' +
-                                '<div style="flex:1;min-width:200px;"><span style="font-size:0.75rem;font-weight:600;color:#1f3a6b;">📍 站点</span><div class="filter-bar">' + siteBtns + '</div></div>' +
+                                '<div style="flex:1;min-width:280px;"><span style="font-size:0.8rem;font-weight:600;color:#1f3a6b;">📍 站点</span><div class="filter-bar" style="gap:6px;">' + siteBtns + '</div></div>' +
                             '</div>' +
                         '</div>';
                 })() +
@@ -11982,9 +12072,16 @@ URL.revokeObjectURL(url);
                     '<div class="stat-mini"><div class="val">' + allCategories.length + '</div><div class="lbl">🏷️ 失误类别</div></div>' +
                     '<div class="stat-mini"><div class="val">' + allReviewers.length + '</div><div class="lbl">👤 涉及人员</div></div>' +
                     '<div class="stat-mini"><div class="val" style="font-size:1rem;">🚦</div><div class="lbl">按灯预警</div><div style="margin-top:4px;">' + (function() {
-                        var lp = sortedReviewers.filter(function(e) { return e[1] >= 6; });
-                        var h = lp.length > 0 ? lp.slice(0,5).map(function(e){var c=e[1];var l=c>=15?'🔴':(c>=10?'🟠':'🟡');var cl=c>=15?'#fecaca':(c>=10?'#fed7aa':'#fef08a');var ct=c>=15?'#991b1b':(c>=10?'#9a3412':'#854d0e');return '<span style=\"display:inline-block;background:'+cl+';color:'+ct+';padding:1px 6px;border-radius:6px;margin:1px;font-size:0.65rem;\">'+l+' '+escapeHtml(e[0])+'('+c+')</span>';}).join('') : '<span style=\"color:#94a3b8;font-size:0.65rem;\">暂无预警</span>';
-                        return h;
+                        var allPeople2 = sortedReviewers;
+                        var reds = allPeople2.filter(function(e){return e[1]>10;});
+                        var yellows = allPeople2.filter(function(e){return e[1]>=6&&e[1]<=10;});
+                        var greens = allPeople2.filter(function(e){return e[1]<=5;});
+                        window._lightData = { reds: reds, yellows: yellows, greens: greens };
+                        function lightBtn(list,color,bg,icon,key) {
+                            if (list.length === 0) return '<span style=\"display:inline-block;padding:3px 8px;margin:2px;border-radius:8px;font-size:0.65rem;background:#f1f5f9;color:#94a3b8;\">'+icon+' 0人</span>';
+                            return '<span onclick=\"showLightPeoplePopup(\''+key+'\')\" style=\"display:inline-block;padding:3px 8px;margin:2px;border-radius:8px;font-size:0.65rem;background:'+bg+';color:'+color+';cursor:pointer;font-weight:600;\">'+icon+' '+list.length+'人</span>';
+                        }
+                        return lightBtn(reds,'#991b1b','#fecaca','🔴','reds') + lightBtn(yellows,'#854d0e','#fef08a','🟡','yellows') + lightBtn(greens,'#166534','#d4edda','🟢','greens');
                     })() + '</div></div>' +
                 '</div>' +
                 '<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">' +
