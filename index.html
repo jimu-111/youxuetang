@@ -11341,13 +11341,11 @@ URL.revokeObjectURL(url);
         overlay.onclick = function(e) { if (e.target === overlay) { overlay.remove(); } };
     }
 
-    // 占比条热力色（越大越红）
+    // 占比条热力色（越大越红→越小越黄，淡色）
     function barHeatColor(pct) {
         var ratio = pct / 100;
-        var h = Math.round(50 - 50 * ratio); // 0→50: red→yellow
-        var s = 85;
-        var l = 48 - 10 * ratio;
-        return 'hsl(' + h + ', ' + s + '%, ' + l + '%)';
+        var h = Math.round(50 * (1 - ratio));
+        return 'hsl(' + h + ', 55%, 68%)';
     }
     // 健康度色（低红→高绿，最低60分）
     function healthBarColor(score) {
@@ -11743,13 +11741,13 @@ URL.revokeObjectURL(url);
 
         var refreshStr = errorDashboardLastRefresh ? '上次刷新：' + errorDashboardLastRefresh.toLocaleTimeString('zh-CN') : '';
 
-        // 热力渐变色（越大越红 → 越小越绿，0为绿色）
+        // 热力渐变色（越大越红 → 越小越黄，淡色柔和）
         function heatColorByRank(rank, totalRanks, alpha) {
             alpha = alpha || 0.8;
             var ratio = totalRanks <= 1 ? 0 : rank / (totalRanks - 1);
-            var h = Math.round(120 * ratio); // 0(红)→60(橙黄)→120(绿)
-            var s = 85;
-            var l = Math.round(45 + 10 * ratio);
+            var h = Math.round(50 * ratio); // 0(红)→25(橙)→50(黄)
+            var s = 55; // 低饱和度
+            var l = 72; // 高亮度=淡色
             return 'hsla(' + h + ', ' + s + '%, ' + l + '%, ' + alpha + ')';
         }
 
@@ -11782,9 +11780,9 @@ URL.revokeObjectURL(url);
                     color = '#f1f5f9';
                 } else {
                     var ratio3 = totalRanks <= 1 ? 0 : Math.round(rank / (totalRanks - 1) * 2);
-                    color = 'hsl(' + [0, 30, 50][ratio3] + ', 85%, 45%)';
+                    color = 'hsl(' + [0, 30, 50][ratio3] + ', 55%, 72%)';
                 }
-                var txtCol = color === '#f1f5f9' ? '#5e6f8d' : 'white';
+                var txtCol = '#5e6f8d';
                 return '<span class="clickable-tag" onclick="showErrorDetailPopup(\'' + typePrefix + '\',\'' + k.replace(/'/g, "\\'") + '\')" style="background:' + color + ';color:' + txtCol + ';padding:2px 10px;border-radius:10px;font-size:0.72rem;margin:2px;cursor:pointer;display:inline-block;font-weight:500;" title="点击查看详情">' + escapeHtml(k) + ' (' + stats[k] + ')</span>';
             }).join('');
             if (list.length > defaultShow) {
@@ -11810,7 +11808,7 @@ URL.revokeObjectURL(url);
                 var color;
                 if (isSite) {
                     // 站点：红橙黄渐变，0=绿色
-                    if (cnt === 0) { color = '#27ae60'; }
+                    if (cnt === 0) { color = '#d4edda'; }
                     else { color = heatColorByRank(rank, totalRanks, 0.7); }
                 } else {
                     // 类别/人员：≤3个无色，>3个红橙黄三色
@@ -11819,10 +11817,10 @@ URL.revokeObjectURL(url);
                         // 压缩到3个色阶：红(0) 橙(1) 黄(2)
                         var ratio3 = totalRanks <= 1 ? 0 : Math.round(rank / (totalRanks - 1) * 2);
                         var h3 = [0, 30, 50][ratio3]; // 红→橙→黄
-                        color = 'hsl(' + h3 + ', 85%, 45%)';
+                        color = 'hsl(' + h3 + ', 55%, 72%)';
                     }
                 }
-                var txtCol = (color === '#f1f5f9') ? '#5e6f8d' : 'white';
+                var txtCol = '#5e6f8d';
                 var isA = f[filterKey] === k;
                 var st = isA ? '' : ('background:' + color + ';color:' + txtCol + ';border-color:' + color + ';');
                 html += '<button class="filter-btn' + (isA ? ' active' : '') + '" style="' + st + '" onclick="errorDashboardFilter.' + filterKey + '=\'' + k.replace(/'/g, "\\'") + '\';errorDashboardPage=1;renderErrorDashboardContent();">' + escapeHtml(k) + ' (' + cnt + ')</button>';
