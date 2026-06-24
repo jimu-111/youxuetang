@@ -11866,11 +11866,14 @@ URL.revokeObjectURL(url);
                     }
                     // 智能按钮：0-5无操作, 6-10出卷, 10-15学习+考试, 15+培训+学习+考试
                     function getPersonActions(name, count) {
-                        if (errorDashboardFilter.period !== 'week') return '';
                         var btns = '';
-                        if (count >= 6) btns += '<button onclick="generatePrecisionExam(\'' + name.replace(/'/g, "\\'") + '\')" style="background:#c0392b;color:white;border:none;padding:2px 8px;border-radius:8px;cursor:pointer;font-size:0.65rem;white-space:nowrap;">📝 出卷</button>';
-                        if (count >= 10) btns += '<button style="background:#e67e22;color:white;border:none;padding:2px 8px;border-radius:8px;cursor:pointer;font-size:0.65rem;white-space:nowrap;margin-left:3px;" title="学习地图推送（待配置）">🗺️ 学习</button>';
-                        if (count >= 15) btns += '<button style="background:#8e44ad;color:white;border:none;padding:2px 8px;border-radius:8px;cursor:pointer;font-size:0.65rem;white-space:nowrap;margin-left:3px;" title="培训推送（待配置）">📖 培训</button>';
+                        if (errorDashboardFilter.period === 'week') {
+                            if (count >= 6) btns += '<button onclick="generatePrecisionExam(\'' + name.replace(/'/g, "\\'") + '\')" style="background:#c0392b;color:white;border:none;padding:2px 8px;border-radius:8px;cursor:pointer;font-size:0.65rem;white-space:nowrap;">📝 出卷</button>';
+                            if (count >= 10) btns += '<button style="background:#e67e22;color:white;border:none;padding:2px 8px;border-radius:8px;cursor:pointer;font-size:0.65rem;white-space:nowrap;margin-left:3px;" title="学习地图推送（待配置）">🗺️ 学习</button>';
+                            if (count >= 15) btns += '<button style="background:#8e44ad;color:white;border:none;padding:2px 8px;border-radius:8px;cursor:pointer;font-size:0.65rem;white-space:nowrap;margin-left:3px;" title="培训推送（待配置）">📖 培训</button>';
+                        } else {
+                            btns += '<span style="font-size:0.6rem;color:#94a3b8;">[' + errorDashboardFilter.period + ']</span>';
+                        }
                         return btns;
                     }
                     var allPeople = sortedReviewers;
