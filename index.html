@@ -6472,6 +6472,7 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
                 <div style="background:#fafcfd;border:1px solid #eef2f6;border-radius:16px;padding:16px;margin-bottom:12px;">
                     <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:8px;">
                         <div style="font-weight:700;color:#1f3a6b;">🔖 ${escapeHtml(c.qcCode)}</div>
+                        <button class="editManualCaseBtn" data-idx="${idx}" style="background:#eef2ff;border:none;padding:4px 12px;border-radius:20px;cursor:pointer;font-size:0.75rem;color:#2a5298;margin-right:4px;">✏️ 编辑</button>
                         <button class="deleteManualCaseBtn" data-idx="${idx}" style="background:#fef2f2;border:none;padding:4px 12px;border-radius:20px;cursor:pointer;font-size:0.75rem;color:#c0392b;">🗑️ 删除</button>
                     </div>
                     ${c.errorCategory ? `<span style="display:inline-block;background:#fff3e0;color:#e67e22;padding:2px 10px;border-radius:10px;font-size:0.7rem;font-weight:500;margin-bottom:6px;">🏷️ ${escapeHtml(c.errorCategory)}</span>` : ''}
@@ -6485,7 +6486,7 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
         }
 
         content.innerHTML = `
-        <div class="report-box" style="margin-bottom:16px;">
+        <div class="report-box" style="margin-bottom:16px;" id="manualEntryForm">
             <div class="report-title" style="font-size:0.95rem;">✍️ 手动录入新案例</div>
             <div style="margin-bottom:12px;">
                 <label style="font-weight:600;color:#1f3a6b;">质检码 <span style="color:#c0392b;">*</span></label>
@@ -6586,7 +6587,22 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
                 dirPhotos = await readFilesAsDataURLs(dirPhotosInput.files);
             }
             const cases = getManualCases();
-            cases.unshift({ qcCode, errorCategory, issueDesc, issuePhotos, correctDir, dirPhotos, createTime: Date.now() });
+            const editIdx = parseInt(document.getElementById('saveManualCaseBtn').dataset.editIdx);
+            if (!isNaN(editIdx) && cases[editIdx]) {
+                // 编辑模式：保留原创建时间和照片（如未重新选择）
+                const old = cases[editIdx];
+                cases[editIdx] = {
+                    qcCode, errorCategory, issueDesc, correctDir,
+                    issuePhotos: issuePhotos.length > 0 ? issuePhotos : (old.issuePhotos || []),
+                    dirPhotos: dirPhotos.length > 0 ? dirPhotos : (old.dirPhotos || []),
+                    createTime: old.createTime,
+                    updateTime: Date.now()
+                };
+                document.getElementById('saveManualCaseBtn').textContent = '💾 保存案例';
+                document.getElementById('saveManualCaseBtn').removeAttribute('data-edit-idx');
+            } else {
+                cases.unshift({ qcCode, errorCategory, issueDesc, issuePhotos, correctDir, dirPhotos, createTime: Date.now() });
+            }
             saveManualCases(cases);
             document.getElementById('manualQcCode').value = '';
             document.getElementById('manualErrorCategory').value = '';
@@ -6597,6 +6613,23 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
             document.getElementById('manualIssuePhotosPreview').innerHTML = '';
             document.getElementById('manualDirPhotosPreview').innerHTML = '';
             renderManualTab();
+        });
+
+        // 编辑按钮
+        content.querySelectorAll('.editManualCaseBtn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const idx = parseInt(btn.dataset.idx);
+                const cases = getManualCases();
+                const c = cases[idx];
+                if (!c) return;
+                document.getElementById('manualQcCode').value = c.qcCode || '';
+                document.getElementById('manualErrorCategory').value = c.errorCategory || '';
+                document.getElementById('manualIssueDesc').value = c.issueDesc || '';
+                document.getElementById('manualCorrectDir').value = c.correctDir || '';
+                document.getElementById('saveManualCaseBtn').textContent = '💾 更新案例';
+                document.getElementById('saveManualCaseBtn').dataset.editIdx = idx;
+                document.getElementById('manualEntryForm').scrollIntoView({ behavior: 'smooth' });
+            });
         });
 
         // 删除按钮
@@ -11794,7 +11827,7 @@ URL.revokeObjectURL(url);
 
         // Top标签渲染（默认3个，可展开，≤3无色，>3红橙黄）
         function renderTopTags(list, stats, rankInfo, typePrefix) {
-            var defaultShow = 3;
+            var defaultShow = 5;
             var showAll = (window['_expand_' + typePrefix] === true);
             var visible = showAll ? list : list.slice(0, defaultShow);
             var html = visible.map(function(k) {
@@ -11894,7 +11927,7 @@ URL.revokeObjectURL(url);
                     // 智能按钮：0-5无操作, 6-10出卷, 10-15学习+考试, 15+培训+学习+考试
                     function getPersonActions(name, count) {
                         var btns = '';
-                        if (errorDashboardFilter.period === 'week' || errorDashboardFilter.period === 'custom') {
+                        if (errorDashboardFilter.period === 'week' || errorDashboardFilter.period === 'month' || errorDashboardFilter.period === 'custom') {
                             if (count >= 6) btns += '<button onclick="generatePrecisionExam(\'' + name.replace(/'/g, "\\'") + '\')" style="background:#c0392b;color:white;border:none;padding:2px 8px;border-radius:8px;cursor:pointer;font-size:0.65rem;white-space:nowrap;">📝 出卷</button>';
                             if (count >= 10) btns += '<button style="background:#e67e22;color:white;border:none;padding:2px 8px;border-radius:8px;cursor:pointer;font-size:0.65rem;white-space:nowrap;margin-left:3px;" title="学习地图推送（待配置）">🗺️ 学习</button>';
                             if (count >= 15) btns += '<button style="background:#8e44ad;color:white;border:none;padding:2px 8px;border-radius:8px;cursor:pointer;font-size:0.65rem;white-space:nowrap;margin-left:3px;" title="培训推送（待配置）">📖 培训</button>';
@@ -11940,16 +11973,11 @@ URL.revokeObjectURL(url);
                             '</div>' +
                             '<div style="font-weight:700;color:#1f3a6b;margin:8px 0 6px;font-size:0.75rem;">📍 站点</div>' +
                             '<div class="filter-bar">' + siteBtns + '</div>' +
-                            '<div style="font-weight:700;color:#1f3a6b;margin:8px 0 6px;font-size:0.75rem;">🏷️ 类别</div>' +
-                            '<div class="filter-bar">' + catBtns + '</div>' +
-                            '<div style="font-weight:700;color:#1f3a6b;margin:8px 0 6px;font-size:0.75rem;">👤 人员</div>' +
-                            '<div class="filter-bar">' + reviewerBtns + '</div>' +
                         '</div>' +
                         '<div class="report-box" style="flex:1;margin-bottom:0;">' +
                             // 按灯模块（仅周度，画像上方）
                             (f.period === 'week' ? (function() {
                                 var lightPeople = sortedReviewers.filter(function(e) { return e[1] >= 6; });
-                                if (lightPeople.length === 0) return '';
                                 function lightColor(count) {
                                     if (count >= 15) return { color: '#fecaca', text: '#991b1b', label: '🔴', tag: '15+' };
                                     if (count >= 10) return { color: '#fed7aa', text: '#9a3412', label: '🟠', tag: '10-14' };
