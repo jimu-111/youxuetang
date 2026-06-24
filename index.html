@@ -287,7 +287,7 @@
         .error-dashboard .error-table-wrapper { background:white; border-radius:20px; overflow:hidden; box-shadow:0 2px 8px rgba(0,0,0,0.04); border:1px solid #eef2f6; }
         .error-dashboard .error-table { width:100%; border-collapse:collapse; font-size:0.82rem; }
         .error-dashboard .error-table th { background:#f8fafc; font-weight:600; padding:10px 10px; text-align:center; border-bottom:1px solid #e2e8f0; white-space:nowrap; }
-        .error-dashboard .error-table td { padding:8px 10px; text-align:center; border-bottom:1px solid #f1f5f9; }
+        .error-dashboard .error-table td { padding:8px 10px; text-align:center; border:1px solid #e9edf2; }
         .error-dashboard .error-table tbody tr:hover { background:#f8fafd; }
         .error-dashboard .source-tag { display:inline-block; padding:2px 8px; border-radius:10px; font-size:0.65rem; font-weight:500; }
         .error-dashboard .source-tag.cs { background:#e8f5e9; color:#2e7d32; }
@@ -12073,7 +12073,7 @@ URL.revokeObjectURL(url);
                                 '<td style="text-align:center;padding:6px 3px;width:'+colA+';"><span style="font-size:0.7rem;">' + lightIcon + '</span> <span class="clickable-tag" onclick="showErrorDetailPopup(\'reviewer\',\'' + r.name.replace(/'/g, "\\'") + '\')" style="font-weight:600;background:' + r.color + ';color:#2d3748;padding:2px 6px;border-radius:8px;cursor:pointer;font-size:0.7rem;" title="点击查看详情">' + escapeHtml(r.name) + '</span></td>' +
                                 '<td style="text-align:center;padding:6px 3px;width:'+colB+';font-size:0.7rem;color:#5e6f8d;">' + escapeHtml(r.sites) + '</td>' +
                                 '<td style="text-align:center;padding:6px 3px;width:'+colC+';font-size:0.7rem;color:#5e6f8d;">' + r.count + '次</td>' +
-                                '<td style="text-align:center;padding:6px 3px;width:'+colD+';font-size:0.7rem;color:#5e6f8d;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + (r.cats || '-') + '</td>' +
+                                '<td style="text-align:center;padding:6px 3px;width:'+colD+';font-size:0.7rem;color:#5e6f8d;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:0;" title="' + escapeHtml(r.cats || '-') + '">' + (r.cats || '-') + '</td>' +
                                 (hasAnyActions ? '<td style="text-align:center;padding:6px 3px;width:'+colE+';"><div style="display:flex;gap:3px;justify-content:center;flex-wrap:nowrap;">' + (r.actions||'') + '</div></td>' : '') +
                             '</tr>';
                         }).join('');
@@ -12190,7 +12190,8 @@ URL.revokeObjectURL(url);
             })() +
                 '<div class="report-box" style="flex:2;min-width:0;margin-bottom:0;">' +
                     '<div style="font-weight:700;color:#1f3a6b;margin-bottom:6px;font-size:0.85rem;">🎯 初审画像</div>' +
-                    '<input type="text" id="portraitSearch" placeholder="🔍 搜索..." oninput="var v=this.value.toLowerCase();var items=this.parentElement.querySelectorAll(\'.portrait-row\');items.forEach(function(el){el.style.display=v?(el.textContent.toLowerCase().indexOf(v)>=0?\'\':\'none\'):\'\';});" style="width:100%;padding:5px 10px;border:1px solid #e2e8f0;border-radius:14px;font-size:0.72rem;margin-bottom:6px;">' +
+                    '<input type="text" id="portraitSearch" placeholder="🔍 搜索..." oninput="var v=this.value.toLowerCase().trim();var items=this.parentElement.querySelectorAll(\'.portrait-row\');var found=0;items.forEach(function(el){var match=v?el.textContent.toLowerCase().indexOf(v)>=0:true;el.style.display=match?\'\':\'none\';if(match)found++;});var msg=this.parentElement.querySelector(\'.search-no-result\');if(msg){if(v&&found===0){var f=errorDashboardFilter;var inPeriod=errorDashboardData.filter(function(e){var d=e.date;if(f.period===\"day\"){var t=new Date();return d.getTime()===new Date(t.getFullYear(),t.getMonth(),t.getDate()).getTime();}return true;});var inPeriodAndPerson=inPeriod.some(function(e){return e.reviewer.toLowerCase().indexOf(v)>=0;});if(inPeriodAndPerson&&f.site!==\'all\'){msg.textContent=\'该初审不在当前站点筛选维度，请重新选择站点\';}else if(inPeriodAndPerson){msg.textContent=\'该初审存在但不在当前筛选维度\';}else{msg.textContent=\'本期维度无此初审失误信息\';}msg.style.display=\'block\';}else{msg.style.display=\'none\';}}" style="width:100%;padding:5px 10px;border:1px solid #e2e8f0;border-radius:14px;font-size:0.72rem;margin-bottom:6px;">' +
+                    '<div class="search-no-result" style="display:none;text-align:center;padding:12px;color:#94a3b8;font-size:0.75rem;"></div>' +
                     '<div style="max-height:55vh;overflow-y:auto;">' +
                     '<table style="width:100%;table-layout:fixed;border-collapse:collapse;">' +
                     (window._portraitHtml || '<tr><td colspan="5" style="color:#94a3b8;font-size:0.78rem;text-align:center;padding:20px;">暂无数据</td></tr>') +
