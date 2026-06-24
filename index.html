@@ -11444,28 +11444,43 @@ URL.revokeObjectURL(url);
         examData[examId] = examRecord;
         saveExamHistory(examData);
 
-        // 弹窗显示考试码
+        // 弹窗显示考试码+链接+二维码
         var baseUrl = window.location.href.split('?')[0];
         var examUrl = baseUrl + '?exam=' + examCode;
         var overlay = document.createElement('div');
         overlay.className = 'modal-overlay';
         overlay.style.zIndex = '2000';
-        overlay.innerHTML = '<div class="modal-container" style="max-width:550px;">' +
-            '<div class="modal-header">📝 试卷已生成<button class="modal-close-btn" id="genExamClose">✕</button></div>' +
+        overlay.innerHTML = '<div class="modal-container" style="max-width:650px;">' +
+            '<div class="modal-header">📝 按失误比例出卷<button class="modal-close-btn" id="genExamClose">✕</button></div>' +
             '<div class="modal-body" style="text-align:center;">' +
-                '<div style="font-size:1.4rem;font-weight:700;color:#1f3a6b;margin-bottom:4px;">考试码</div>' +
-                '<div style="font-size:2.5rem;font-weight:700;color:#c0392b;margin-bottom:12px;">' + examCode + '</div>' +
-                '<div style="font-size:0.85rem;color:#5e6f8d;">共 ' + selectedQuestions.length + ' 题 | 100分制 | ⏱️30分钟 | 支持补考</div>' +
-                '<div style="font-size:0.75rem;color:#94a3b8;margin-top:8px;">类别分布：' + categories.slice(0, 5).map(function(e) { return e[0] + '(' + (catQuestions[e[0]] || 0) + '题)'; }).join(' / ') + '</div>' +
-                '<div style="margin-top:16px;display:flex;gap:10px;justify-content:center;">' +
-                    '<button onclick="navigator.clipboard.writeText(\'' + examCode + '\');alert(\'考试码已复制\')" style="background:#2a5298;color:white;border:none;padding:10px 20px;border-radius:20px;cursor:pointer;">📋 复制考试码</button>' +
-                    '<button onclick="this.closest(\'.modal-overlay\').remove();switchNav(\'examSystem\');" style="background:#27ae60;color:white;border:none;padding:10px 20px;border-radius:20px;cursor:pointer;">📋 前往考试系统</button>' +
+                '<div style="font-size:1.3rem;font-weight:700;color:#1f3a6b;">考试码：<span style="color:#c0392b;font-size:1.8rem;">' + examCode + '</span></div>' +
+                '<div style="font-size:0.85rem;color:#5e6f8d;margin-top:4px;">共 ' + selectedQuestions.length + ' 题 | 100分制 | ⏱️30分钟 | 支持补考</div>' +
+                '<div style="font-size:0.75rem;color:#94a3b8;margin-top:4px;">' + categories.slice(0, 5).map(function(e) { return e[0] + '(' + (catQuestions[e[0]] || 0) + '题)'; }).join(' / ') + '</div>' +
+                '<div style="display:flex;gap:16px;flex-wrap:wrap;margin-top:12px;text-align:center;">' +
+                    '<div style="flex:1;min-width:200px;background:#f8fafc;border-radius:14px;padding:14px;border:1px solid #eef2f6;">' +
+                        '<div style="font-weight:700;color:#1f3a6b;margin-bottom:8px;font-size:0.85rem;">🔗 方式一：网页链接</div>' +
+                        '<div style="background:white;border:1px solid #eef2f6;border-radius:8px;padding:6px;font-size:0.65rem;word-break:break-all;color:#5e6f8d;margin-bottom:6px;">' + examUrl + '</div>' +
+                        '<button onclick="navigator.clipboard.writeText(\'' + examUrl.replace(/'/g, "\\'") + '\');this.textContent=\'✅ 已复制\';setTimeout(function(){this.textContent=\'📋 复制链接\'}.bind(this),1500)" style="background:#2a5298;color:white;border:none;padding:6px 14px;border-radius:16px;cursor:pointer;font-size:0.75rem;">📋 复制链接</button>' +
+                    '</div>' +
+                    '<div style="flex:1;min-width:200px;background:#f8fafc;border-radius:14px;padding:14px;border:1px solid #eef2f6;">' +
+                        '<div style="font-weight:700;color:#1f3a6b;margin-bottom:8px;font-size:0.85rem;">📱 方式二：扫码进入</div>' +
+                        '<div id="genExamQRCode" style="display:inline-block;"></div>' +
+                        '<div style="font-size:0.7rem;color:#94a3b8;margin-top:4px;">微信/飞书扫码考试</div>' +
+                    '</div>' +
                 '</div>' +
+                '<button class="generate-btn" style="width:100%;margin-top:12px;" onclick="this.closest(\'.modal-overlay\').remove();switchNav(\'examSystem\');">📋 前往考试系统</button>' +
             '</div>' +
         '</div>';
         document.body.appendChild(overlay);
         overlay.querySelector('#genExamClose').onclick = function() { overlay.remove(); };
         overlay.onclick = function(e) { if (e.target === overlay) overlay.remove(); };
+        setTimeout(function() {
+            var qrContainer = document.getElementById('genExamQRCode');
+            if (qrContainer && typeof QRCode !== 'undefined') {
+                qrContainer.innerHTML = '';
+                new QRCode(qrContainer, { text: examUrl, width: 130, height: 130, colorDark: '#1f3a6b', colorLight: '#ffffff', correctLevel: QRCode.CorrectLevel.M });
+            }
+        }, 200);
     }
 
     // 精准出卷：根据某人失误画像匹配题目
@@ -11539,26 +11554,43 @@ URL.revokeObjectURL(url);
         examData[examId] = examRecord;
         saveExamHistory(examData);
 
-        var overlay = document.createElement('div');
-        overlay.className = 'modal-overlay';
-        overlay.style.zIndex = '2000';
-        overlay.innerHTML = '<div class="modal-container" style="max-width:500px;">' +
-            '<div class="modal-header">🎯 精准试卷<button class="modal-close-btn" id="pexamClose">✕</button></div>' +
+        var baseUrl = window.location.href.split('?')[0];
+        var examUrl = baseUrl + '?exam=' + examCode;
+        var modal = document.createElement('div');
+        modal.className = 'modal-overlay';
+        modal.style.zIndex = '2000';
+        modal.innerHTML = '<div class="modal-container" style="max-width:650px;">' +
+            '<div class="modal-header">🎯 ' + escapeHtml(reviewerName) + ' · 精准试卷<button class="modal-close-btn" id="pexamClose">✕</button></div>' +
             '<div class="modal-body" style="text-align:center;">' +
-                '<div style="font-size:0.9rem;color:#5e6f8d;margin-bottom:8px;">' + escapeHtml(reviewerName) + ' · 失误画像</div>' +
-                '<div style="font-size:1.2rem;font-weight:700;color:#1f3a6b;">考试码</div>' +
-                '<div style="font-size:2.5rem;font-weight:700;color:#c0392b;margin:8px 0;">' + examCode + '</div>' +
-                '<div style="font-size:0.8rem;color:#5e6f8d;">' + selected.length + '题 | 100分制 | ⏱️30分钟</div>' +
-                '<div style="font-size:0.7rem;color:#94a3b8;margin-top:6px;">' + categories.map(function(e) { return e[0] + '(' + (catQuestions[e[0]] || 0) + '题)'; }).join(' / ') + '</div>' +
-                '<div style="margin-top:16px;display:flex;gap:10px;justify-content:center;">' +
-                    '<button onclick="navigator.clipboard.writeText(\'' + examCode + '\');alert(\'考试码已复制\')" style="background:#2a5298;color:white;border:none;padding:10px 20px;border-radius:20px;cursor:pointer;">📋 复制考试码</button>' +
-                    '<button onclick="this.closest(\'.modal-overlay\').remove();switchNav(\'examSystem\');" style="background:#27ae60;color:white;border:none;padding:10px 20px;border-radius:20px;cursor:pointer;">📋 前往考试</button>' +
+                '<div style="font-size:1.3rem;font-weight:700;color:#1f3a6b;">考试码：<span style="color:#c0392b;font-size:1.8rem;">' + examCode + '</span></div>' +
+                '<div style="font-size:0.85rem;color:#5e6f8d;margin-top:4px;">' + selected.length + '题 | 100分制 | ⏱️30分钟 | 支持补考</div>' +
+                '<div style="font-size:0.7rem;color:#94a3b8;margin-top:4px;">' + categories.map(function(e) { return e[0] + '(' + (catQuestions[e[0]] || 0) + '题)'; }).join(' / ') + '</div>' +
+                '<div style="display:flex;gap:16px;flex-wrap:wrap;margin-top:12px;text-align:center;">' +
+                    '<div style="flex:1;min-width:200px;background:#f8fafc;border-radius:14px;padding:14px;border:1px solid #eef2f6;">' +
+                        '<div style="font-weight:700;color:#1f3a6b;margin-bottom:8px;font-size:0.85rem;">🔗 方式一：网页链接</div>' +
+                        '<div style="background:white;border:1px solid #eef2f6;border-radius:8px;padding:6px;font-size:0.65rem;word-break:break-all;color:#5e6f8d;margin-bottom:6px;">' + examUrl + '</div>' +
+                        '<button onclick="navigator.clipboard.writeText(\'' + examUrl.replace(/'/g, "\\'") + '\');this.textContent=\'✅ 已复制\';setTimeout(function(){this.textContent=\'📋 复制链接\'}.bind(this),1500)" style="background:#2a5298;color:white;border:none;padding:6px 14px;border-radius:16px;cursor:pointer;font-size:0.75rem;">📋 复制链接</button>' +
+                    '</div>' +
+                    '<div style="flex:1;min-width:200px;background:#f8fafc;border-radius:14px;padding:14px;border:1px solid #eef2f6;">' +
+                        '<div style="font-weight:700;color:#1f3a6b;margin-bottom:8px;font-size:0.85rem;">📱 方式二：扫码进入</div>' +
+                        '<div id="pexamQRCode" style="display:inline-block;"></div>' +
+                        '<div style="font-size:0.7rem;color:#94a3b8;margin-top:4px;">微信/飞书扫码考试</div>' +
+                    '</div>' +
                 '</div>' +
+                '<button class="generate-btn" style="width:100%;margin-top:12px;" onclick="this.closest(\'.modal-overlay\').remove();switchNav(\'examSystem\');">📋 前往考试系统</button>' +
             '</div>' +
         '</div>';
-        document.body.appendChild(overlay);
-        overlay.querySelector('#pexamClose').onclick = function() { overlay.remove(); };
-        overlay.onclick = function(e) { if (e.target === overlay) overlay.remove(); };
+        document.body.appendChild(modal);
+        modal.querySelector('#pexamClose').onclick = function() { modal.remove(); };
+        modal.onclick = function(e) { if (e.target === modal) modal.remove(); };
+        // 生成二维码
+        setTimeout(function() {
+            var qrContainer = document.getElementById('pexamQRCode');
+            if (qrContainer && typeof QRCode !== 'undefined') {
+                qrContainer.innerHTML = '';
+                new QRCode(qrContainer, { text: examUrl, width: 130, height: 130, colorDark: '#1f3a6b', colorLight: '#ffffff', correctLevel: QRCode.CorrectLevel.M });
+            }
+        }, 200);
     }
 
     function renderErrorDashboard() {
@@ -11723,7 +11755,7 @@ URL.revokeObjectURL(url);
                         '<div style="display:flex;flex-wrap:wrap;gap:4px;">' + (topReviewers || '<span style="color:#94a3b8;font-size:0.75rem;">-</span>') + '</div>' +
                     '</div>' +
                 '</div>' +
-                // ② 时间维度 + Top5人员画像（并排）
+                // ② 时间维度+筛选 + Top5人员画像（并排）
                 (function() {
                     var sortedReviewers = Object.entries(reviewerStats).sort(function(a, b) { return b[1] - a[1]; });
                     var top5People = sortedReviewers.slice(0, 5);
@@ -11734,6 +11766,13 @@ URL.revokeObjectURL(url);
                         });
                         return Object.entries(cats).sort(function(a, b) { return b[1] - a[1]; }).slice(0, 3).map(function(p) { return p[0] + '(' + p[1] + ')'; }).join(' / ');
                     }
+                    function getPersonSites(name) {
+                        var sites = {};
+                        filtered.forEach(function(e) {
+                            if (e.reviewer === name && e.site) sites[e.site] = (sites[e.site] || 0) + 1;
+                        });
+                        return Object.entries(sites).sort(function(a, b) { return b[1] - a[1]; }).map(function(p) { return p[0]; }).join('/');
+                    }
                     var personHtml = '';
                     if (top5People.length > 0) {
                         var rankInfo = buildRankMap(reviewerStats, top5People.map(function(e) { return e[0]; }));
@@ -11741,43 +11780,43 @@ URL.revokeObjectURL(url);
                             var name = entry[0], count = entry[1];
                             var color = heatColorByRank(rankInfo.rankMap[name], rankInfo.totalRanks, 0.7);
                             var cats = getPersonCats(name);
-                            return '<div style="display:flex;align-items:center;gap:6px;padding:6px 0;border-bottom:1px solid #f1f5f9;font-size:0.78rem;">' +
-                                '<span style="font-weight:600;background:' + color + ';color:white;padding:2px 8px;border-radius:8px;min-width:50px;text-align:center;">' + escapeHtml(name) + '</span>' +
-                                '<span style="color:#5e6f8d;">' + count + '次</span>' +
+                            var sites = getPersonSites(name);
+                            return '<div style="display:flex;align-items:center;gap:6px;padding:8px 0;border-bottom:1px solid #f1f5f9;font-size:0.78rem;">' +
+                                '<span style="font-size:0.8rem;min-width:18px;">' + (i + 1) + '</span>' +
+                                '<span class="clickable-tag" onclick="showErrorDetailPopup(\'reviewer\',\'' + name.replace(/'/g, "\\'") + '\')" style="font-weight:600;background:' + color + ';color:white;padding:3px 10px;border-radius:10px;cursor:pointer;min-width:50px;text-align:center;" title="点击查看详情">' + escapeHtml(name) + '</span>' +
+                                '<span style="color:#5e6f8d;min-width:35px;">' + count + '次</span>' +
+                                '<span style="color:#94a3b8;font-size:0.65rem;">' + escapeHtml(sites) + '</span>' +
                                 '<span style="color:#94a3b8;font-size:0.68rem;flex:1;">' + (cats || '-') + '</span>' +
-                                '<button onclick="generatePrecisionExam(\'' + name.replace(/'/g, "\\'") + '\')" style="background:#2a5298;color:white;border:none;padding:3px 10px;border-radius:10px;cursor:pointer;font-size:0.68rem;">📝 出卷</button>' +
+                                '<button onclick="generatePrecisionExam(\'' + name.replace(/'/g, "\\'") + '\')" style="background:#2a5298;color:white;border:none;padding:3px 10px;border-radius:10px;cursor:pointer;font-size:0.68rem;white-space:nowrap;">📝 出卷</button>' +
                             '</div>';
                         }).join('');
                     }
                     return '<div style="display:flex;gap:16px;margin-bottom:16px;">' +
                         '<div class="report-box" style="flex:1;margin-bottom:0;">' +
-                            '<div style="font-weight:700;color:#1f3a6b;margin-bottom:8px;font-size:0.85rem;">② ⏱️ 时间维度</div>' +
+                            '<div style="font-weight:700;color:#1f3a6b;margin-bottom:10px;font-size:0.85rem;">② 🔍 筛选看板</div>' +
+                            '<div style="font-weight:700;color:#1f3a6b;margin:8px 0 6px;font-size:0.75rem;">⏱️ 时间</div>' +
                             '<div class="filter-bar">' +
                                 '<button class="filter-btn' + (f.period === 'day' ? ' active' : '') + '" onclick="errorDashboardFilter.period=\'day\';errorDashboardPage=1;renderErrorDashboardContent();">📅 日度</button>' +
                                 '<button class="filter-btn' + (f.period === 'week' ? ' active' : '') + '" onclick="errorDashboardFilter.period=\'week\';errorDashboardPage=1;renderErrorDashboardContent();">📊 周度</button>' +
                                 '<button class="filter-btn' + (f.period === 'month' ? ' active' : '') + '" onclick="errorDashboardFilter.period=\'month\';errorDashboardPage=1;renderErrorDashboardContent();">📈 月度</button>' +
-                                '<button class="filter-btn' + (f.period === 'custom' ? ' active' : '') + '" onclick="showCustomDatePopup()">📆 自定义' + (f.period === 'custom' && f.customStart ? ' (' + formatShortDate(new Date(f.customStart)) + '~' + formatShortDate(new Date(f.customEnd)) + ')' : '') + '</button>' +
+                                '<button class="filter-btn' + (f.period === 'custom' ? ' active' : '') + '" onclick="showCustomDatePopup()">📆 自定义' + (f.period === 'custom' && f.customStart ? ' ' + formatShortDate(new Date(f.customStart)) + '~' + formatShortDate(new Date(f.customEnd)) : '') + '</button>' +
                             '</div>' +
+                            '<div style="font-weight:700;color:#1f3a6b;margin:8px 0 6px;font-size:0.75rem;">📍 站点</div>' +
+                            '<div class="filter-bar">' + siteBtns + '</div>' +
+                            '<div style="font-weight:700;color:#1f3a6b;margin:8px 0 6px;font-size:0.75rem;">🏷️ 类别</div>' +
+                            '<div class="filter-bar">' + catBtns + '</div>' +
+                            '<div style="font-weight:700;color:#1f3a6b;margin:8px 0 6px;font-size:0.75rem;">👤 人员</div>' +
+                            '<div class="filter-bar">' + reviewerBtns + '</div>' +
                         '</div>' +
                         '<div class="report-box" style="flex:1;margin-bottom:0;">' +
-                            '<div style="font-weight:700;color:#1f3a6b;margin-bottom:8px;font-size:0.85rem;">🎯 失误Top5人员画像</div>' +
+                            '<div style="font-weight:700;color:#1f3a6b;margin-bottom:10px;font-size:0.85rem;">🎯 失误Top5人员画像</div>' +
                             (personHtml || '<div style="color:#94a3b8;font-size:0.78rem;text-align:center;padding:20px;">暂无数据</div>') +
                         '</div>' +
                     '</div>';
                 })() +
             '</div>' +
-            // ③ 筛选栏
-            '<div class="report-box" style="margin-bottom:16px;">' +
-                '<div style="font-weight:700;color:#1f3a6b;margin-bottom:10px;font-size:0.85rem;">③ 🔍 筛选条件</div>' +
-                '<div style="font-weight:700;color:#1f3a6b;margin:8px 0 6px;font-size:0.8rem;">📍 站点</div>' +
-                '<div class="filter-bar">' + siteBtns + '</div>' +
-                '<div style="font-weight:700;color:#1f3a6b;margin:8px 0 6px;font-size:0.8rem;">🏷️ 失误类别</div>' +
-                '<div class="filter-bar">' + catBtns + '</div>' +
-                '<div style="font-weight:700;color:#1f3a6b;margin:8px 0 6px;font-size:0.8rem;">👤 初审人员</div>' +
-                '<div class="filter-bar">' + reviewerBtns + '</div>' +
-            '</div>' +
             // 数据表格
-            '<div style="font-weight:700;color:#1f3a6b;margin-bottom:8px;font-size:0.85rem;">④ 📋 失误列表</div>' +
+            '<div style="font-weight:700;color:#1f3a6b;margin-bottom:8px;font-size:0.85rem;">③ 📋 失误列表</div>' +
             '<div class="error-table-wrapper">' +
                 '<table class="error-table">' +
                     '<thead><tr><th>日期</th><th>站点</th><th>来源</th><th>失误类别</th><th>初审人</th><th>失误备注</th><th>质检码</th></tr></thead>' +
