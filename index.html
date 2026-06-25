@@ -6211,6 +6211,23 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
     // ==================== 培训案例收集库（总入口） ====================
     let currentCaseHubTab = 'collection'; // collection | library | materials | exam
 
+    function showImageViewer(src) {
+        var overlay = document.createElement('div');
+        overlay.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.85);z-index:99999;display:flex;align-items:center;justify-content:center;';
+        var img = document.createElement('img');
+        img.src = src;
+        img.style.cssText = 'max-width:90vw;max-height:90vh;object-fit:contain;cursor:zoom-in;transition:transform 0.2s;';
+        var scale = 1;
+        img.onclick = function() {
+            scale = scale >= 3 ? 1 : scale + 0.5;
+            img.style.transform = 'scale(' + scale + ')';
+            img.style.cursor = scale > 1 ? 'zoom-out' : 'zoom-in';
+        };
+        overlay.appendChild(img);
+        overlay.onclick = function(e) { if (e.target === overlay) overlay.remove(); };
+        document.body.appendChild(overlay);
+    }
+
     function renderCaseLibraryHub() {
         const container = document.getElementById('mainContent');
         const tabs = [
@@ -6322,7 +6339,7 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
                 const url = URL.createObjectURL(file);
                 img.onload = function() {
                     URL.revokeObjectURL(url);
-                    const MAX_W = 300;
+                    const MAX_W = 800;
                     let w = img.width, h = img.height;
                     if (w > MAX_W) { h = Math.round(h * MAX_W / w); w = MAX_W; }
                     const canvas = document.createElement('canvas');
@@ -6504,9 +6521,9 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
                     </div>
                     ${c.errorCategory ? `<span style="display:inline-block;background:#fff3e0;color:#e67e22;padding:2px 10px;border-radius:10px;font-size:0.7rem;font-weight:500;margin-bottom:6px;">🏷️ ${escapeHtml(c.errorCategory)}</span>` : ''}
                     <div style="font-size:0.85rem;color:#4a5568;margin-bottom:8px;">📝 ${escapeHtml(c.issueDesc || '无描述')}</div>
-                    ${c.issuePhotos && c.issuePhotos.length > 0 ? `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px;">${c.issuePhotos.map(p => `<img src="${p}" class="photo-preview-thumb" style="max-width:80px;max-height:80px;border-radius:8px;border:1px solid #e2e8f0;object-fit:cover;cursor:pointer;" onclick="window.open('${p}','_blank')">`).join('')}</div>` : ''}
+                    ${c.issuePhotos && c.issuePhotos.length > 0 ? `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px;">${c.issuePhotos.map(p => `<img src="${p}" class="photo-preview-thumb" style="max-width:150px;max-height:150px;border-radius:8px;border:1px solid #e2e8f0;object-fit:cover;cursor:pointer;" onclick="showImageViewer('${p}')">`).join('')}</div>` : ''}
                     <div style="background:#eef2ff;padding:8px 12px;border-radius:10px;font-size:0.85rem;color:#2a5298;">✅ 正确方向：${escapeHtml(c.correctDir || '无')}</div>
-                    ${c.dirPhotos && c.dirPhotos.length > 0 ? `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;">${c.dirPhotos.map(p => `<img src="${p}" class="photo-preview-thumb" style="max-width:80px;max-height:80px;border-radius:8px;border:1px solid #e2e8f0;object-fit:cover;cursor:pointer;" onclick="window.open('${p}','_blank')">`).join('')}</div>` : ''}
+                    ${c.dirPhotos && c.dirPhotos.length > 0 ? `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;">${c.dirPhotos.map(p => `<img src="${p}" class="photo-preview-thumb" style="max-width:150px;max-height:150px;border-radius:8px;border:1px solid #e2e8f0;object-fit:cover;cursor:pointer;" onclick="showImageViewer('${p}')">`).join('')}</div>` : ''}
                     <div style="font-size:0.7rem;color:#94a3b8;margin-top:6px;">${new Date(c.createTime).toLocaleString('zh-CN')}</div>
                 </div>
             `).join('');
@@ -6965,7 +6982,7 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
             <tr>
                 <td style="font-weight:600;">${escapeHtml(c.qcCode)}</td>
                 <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(c.issueDesc || '')}</td>
-                <td>${c.issuePhotos && c.issuePhotos.length > 0 ? c.issuePhotos.map(p => `<img src="${p}" style="max-width:50px;max-height:40px;border-radius:6px;margin:2px;cursor:pointer;" onclick="window.open('${p}','_blank')">`).join('') : '-'}</td>
+                <td>${c.issuePhotos && c.issuePhotos.length > 0 ? c.issuePhotos.map(p => `<img src="${p}" style="max-width:50px;max-height:40px;border-radius:6px;margin:2px;cursor:pointer;" onclick="showImageViewer('${p}')">`).join('') : '-'}</td>
                 <td style="max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(c.correctDir || '')}</td>
                 <td>${new Date(c.createTime).toLocaleDateString('zh-CN')}</td>
                 <td>
@@ -7027,9 +7044,9 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
                 document.getElementById('caseDetailBody').innerHTML = `
                     <div style="margin-bottom:12px;"><strong>质检码：</strong>${escapeHtml(c.qcCode)}</div>
                     <div style="margin-bottom:12px;"><strong>问题描述：</strong>${escapeHtml(c.issueDesc)}</div>
-                    ${c.issuePhotos && c.issuePhotos.length > 0 ? `<div style="margin-bottom:12px;"><strong>问题照片：</strong><div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:6px;">${c.issuePhotos.map(p => `<img src="${p}" style="max-width:150px;border-radius:8px;cursor:pointer;" onclick="window.open('${p}','_blank')">`).join('')}</div></div>` : ''}
+                    ${c.issuePhotos && c.issuePhotos.length > 0 ? `<div style="margin-bottom:12px;"><strong>问题照片：</strong><div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:6px;">${c.issuePhotos.map(p => `<img src="${p}" style="max-width:150px;border-radius:8px;cursor:pointer;" onclick="showImageViewer('${p}')">`).join('')}</div></div>` : ''}
                     <div style="margin-bottom:12px;"><strong>正确方向：</strong>${escapeHtml(c.correctDir)}</div>
-                    ${c.dirPhotos && c.dirPhotos.length > 0 ? `<div style="margin-bottom:12px;"><strong>方向照片：</strong><div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:6px;">${c.dirPhotos.map(p => `<img src="${p}" style="max-width:150px;border-radius:8px;cursor:pointer;" onclick="window.open('${p}','_blank')">`).join('')}</div></div>` : ''}
+                    ${c.dirPhotos && c.dirPhotos.length > 0 ? `<div style="margin-bottom:12px;"><strong>方向照片：</strong><div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:6px;">${c.dirPhotos.map(p => `<img src="${p}" style="max-width:150px;border-radius:8px;cursor:pointer;" onclick="showImageViewer('${p}')">`).join('')}</div></div>` : ''}
                     <div style="color:#94a3b8;font-size:0.8rem;">录入时间：${new Date(c.createTime).toLocaleString('zh-CN')}</div>`;
                 document.getElementById('caseDetailModal').style.display = 'flex';
             });
@@ -7197,7 +7214,7 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
             .qc-code{font-size:1.1rem;font-weight:700;color:#1f3a6b;margin-bottom:8px;}
             .label{font-weight:600;color:#5e6f8d;font-size:0.85rem;margin-top:14px;margin-bottom:6px;}
             .desc{line-height:1.7;color:#4a5568;}
-            img{max-width:260px;border-radius:10px;margin:6px;border:1px solid #e2e8f0;}
+            img{max-width:100%;border-radius:10px;margin:6px;border:1px solid #e2e8f0;cursor:pointer;}
             .correct{background:#eef2ff;padding:12px 16px;border-radius:12px;color:#2a5298;line-height:1.7;}
             .footer{color:#94a3b8;text-align:center;margin-top:40px;font-size:0.85rem;}
 </style></head><body>
@@ -11884,6 +11901,17 @@ URL.revokeObjectURL(url);
         }, 200);
     }
 
+    function openSharedReport(name) {
+        var reports = JSON.parse(localStorage.getItem('generatedReports') || '{}');
+        var html = reports[name];
+        if (!html) {
+            document.body.innerHTML = '<div style="text-align:center;padding:60px;font-family:sans-serif;"><h1>📄 培训资料不存在</h1><p style="color:#94a3b8;">可能已被删除或链接失效</p></div>';
+            return;
+        }
+        document.body.innerHTML = html;
+        document.body.style.overflow = 'auto';
+    }
+
     // 按灯弹窗
     function showLightPeoplePopup(key) {
         var people = (window._lightData && window._lightData[key]) || [];
@@ -11897,7 +11925,7 @@ URL.revokeObjectURL(url);
             if (showBtns) {
                 if (p[1] >= 6) btns += '<button class=\"light-exam-btn\" data-name=\"' + escapeHtml(p[0]) + '\" style=\"background:#c0392b;color:white;border:none;padding:2px 6px;border-radius:8px;cursor:pointer;font-size:0.6rem;\">📝 出卷</button> ';
                 if (p[1] >= 10) btns += '<button style=\"background:#e67e22;color:white;border:none;padding:2px 6px;border-radius:8px;cursor:pointer;font-size:0.6rem;\" title=\"学习地图推送（待配置）\">🗺️ 学习</button> ';
-                if (p[1] >= 15) btns += '<button style=\"background:#8e44ad;color:white;border:none;padding:2px 6px;border-radius:8px;cursor:pointer;font-size:0.6rem;\" title=\"培训推送（待配置）\">📖 培训</button>';
+                if (p[1] >= 15) btns += '<button class=\"light-train-btn\" data-name=\"' + escapeHtml(p[0]) + '\" style=\"background:#8e44ad;color:white;border:none;padding:2px 6px;border-radius:8px;cursor:pointer;font-size:0.6rem;\">📖 培训</button>';
             }
             var warn = '';
             var c = p[1];
@@ -11919,6 +11947,14 @@ URL.revokeObjectURL(url);
                 var n = this.dataset.name;
                 overlay.remove();
                 generatePrecisionExam(n);
+            });
+        });
+        overlay.querySelectorAll('.light-train-btn').forEach(function(el){
+            el.addEventListener('click', function(e){
+                e.stopPropagation();
+                var n = this.dataset.name;
+                overlay.remove();
+                generatePrecisionTraining(n);
             });
         });
         overlay.querySelectorAll('.light-person-name').forEach(function(el){
@@ -11966,6 +12002,98 @@ URL.revokeObjectURL(url);
         } else {
             msg.style.display = 'none';
         }
+    }
+
+    // 精准培训资料生成
+    function generatePrecisionTraining(reviewerName) {
+        var filtered = getFilteredErrors();
+        var personErrors = filtered.filter(function(e) { return e.reviewer === reviewerName; });
+        if (personErrors.length === 0) { showAlert('当前维度下「' + reviewerName + '」无失误记录', '⚠️'); return; }
+        // 获取该人失误类别
+        var cats = {};
+        personErrors.forEach(function(e) { cats[e.category] = (cats[e.category] || 0) + 1; });
+        // 从案例库匹配
+        var allCases = getManualCases();
+        var matched = allCases.filter(function(c) {
+            return c.errorCategory && cats[c.errorCategory];
+        });
+        if (matched.length === 0) { showAlert('案例库中无匹配的案例', '⚠️'); return; }
+        // 按类别数排序，最多取20个
+        matched.sort(function(a, b) {
+            return (cats[b.errorCategory] || 0) - (cats[a.errorCategory] || 0);
+        });
+        matched = matched.slice(0, 20);
+
+        var docHtml = '<!DOCTYPE html><html><head><meta charset="UTF-8"><title>培训资料</title>' +
+        '<style>body{font-family:Microsoft YaHei,SimHei,sans-serif;padding:40px;max-width:900px;margin:0 auto;color:#333;}' +
+        'h1{color:#1f3a6b;border-bottom:3px solid #2a5298;padding-bottom:12px;}' +
+        '.case-card{border:1px solid #eef2f6;border-radius:16px;padding:20px;margin:20px 0;background:#fafcfd;}' +
+        '.qc-code{font-size:1.1rem;font-weight:700;color:#1f3a6b;margin-bottom:8px;}' +
+        '.label{font-weight:600;color:#5e6f8d;font-size:0.85rem;margin-top:14px;margin-bottom:6px;}' +
+        '.desc{line-height:1.7;color:#4a5568;}img{max-width:100%;border-radius:10px;margin:6px;border:1px solid #e2e8f0;cursor:pointer;}' +
+        '.correct{background:#eef2ff;padding:12px 16px;border-radius:12px;color:#2a5298;line-height:1.7;}' +
+        '.footer{color:#94a3b8;text-align:center;margin-top:40px;font-size:0.85rem;}' +
+        '</style></head><body><h1>📄 精准培训资料</h1>' +
+        '<p style="color:#94a3b8;">初审：' + escapeHtml(reviewerName) + ' | 生成日期：' + new Date().toLocaleDateString('zh-CN') + ' | 共 ' + matched.length + ' 个案例</p>' +
+        '<p style="color:#5e6f8d;font-size:0.85rem;">失误类别：' + Object.keys(cats).join('、') + '</p>';
+
+        matched.forEach(function(c) {
+            docHtml += '<div class="case-card"><div class="qc-code">🔖 质检码：' + escapeHtml(c.qcCode) + ' | 🏷️ ' + escapeHtml(c.errorCategory || '') + '</div>' +
+            '<div class="label">📝 问题描述</div><div class="desc">' + escapeHtml(c.issueDesc || '') + '</div>';
+            if (c.issuePhotos && c.issuePhotos.length > 0) {
+                docHtml += '<div class="label">📷 问题照片</div>' + c.issuePhotos.map(function(p) { return '<img src="' + p + '" alt="问题照片">'; }).join('');
+            }
+            docHtml += '<div class="label">✅ 应操作方向</div><div class="correct">' + escapeHtml(c.correctDir || '') + '</div>';
+            if (c.dirPhotos && c.dirPhotos.length > 0) {
+                docHtml += '<div class="label">📷 方向示例照片</div>' + c.dirPhotos.map(function(p) { return '<img src="' + p + '" alt="方向照片">'; }).join('');
+            }
+            docHtml += '</div>';
+        });
+        docHtml += '<div class="footer">优学堂 · 精准培训资料</div></body></html>';
+
+        // 存到 generatedReports 并生成可分享链接
+        var reportName = '培训资料_' + reviewerName + '_' + new Date().toISOString().slice(0,10).replace(/-/g,'');
+        saveReportToLocal(reportName, docHtml);
+        var baseUrl = window.location.href.split('?')[0];
+        var shareUrl = baseUrl + '?report=' + encodeURIComponent(reportName);
+
+        var overlay = document.createElement('div');
+        overlay.className = 'modal-overlay'; overlay.style.zIndex = '2000';
+        overlay.innerHTML = '<div class="modal-container" style="max-width:650px;">' +
+            '<div class="modal-header">📄 ' + escapeHtml(reviewerName) + ' · 精准培训资料<button class="modal-close-btn" id="trainClose">✕</button></div>' +
+            '<div class="modal-body" style="text-align:center;">' +
+                '<div style="font-size:1.1rem;font-weight:700;color:#1f3a6b;margin-bottom:8px;">共匹配 ' + matched.length + ' 个案例</div>' +
+                '<div style="font-size:0.8rem;color:#5e6f8d;margin-bottom:12px;">' + Object.keys(cats).join(' / ') + '</div>' +
+                '<div style="display:flex;gap:16px;flex-wrap:wrap;text-align:center;">' +
+                    '<div style="flex:1;min-width:200px;background:#f8fafc;border-radius:14px;padding:14px;border:1px solid #eef2f6;">' +
+                        '<div style="font-weight:700;color:#1f3a6b;margin-bottom:8px;font-size:0.85rem;">🔗 方式一：网页链接</div>' +
+                        '<div style="background:white;border:1px solid #eef2f6;border-radius:8px;padding:6px;font-size:0.65rem;word-break:break-all;color:#5e6f8d;margin-bottom:6px;">' + shareUrl + '</div>' +
+                        '<button class="copy-train-link" data-url="' + shareUrl.replace(/"/g,'&quot;') + '" style="background:#2a5298;color:white;border:none;padding:6px 14px;border-radius:16px;cursor:pointer;font-size:0.75rem;">📋 复制链接</button>' +
+                    '</div>' +
+                    '<div style="flex:1;min-width:200px;background:#f8fafc;border-radius:14px;padding:14px;border:1px solid #eef2f6;">' +
+                        '<div style="font-weight:700;color:#1f3a6b;margin-bottom:8px;font-size:0.85rem;">📱 方式二：扫码查看</div>' +
+                        '<div id="trainQRCode" style="display:inline-block;"></div>' +
+                        '<div style="font-size:0.7rem;color:#94a3b8;margin-top:4px;">微信/飞书扫码查看</div>' +
+                    '</div>' +
+                '</div>' +
+            '</div>' +
+        '</div>';
+        document.body.appendChild(overlay);
+        overlay.querySelector('#trainClose').onclick = function() { overlay.remove(); };
+        overlay.onclick = function(e) { if (e.target === overlay) overlay.remove(); };
+        overlay.querySelector('.copy-train-link').addEventListener('click', function() {
+            navigator.clipboard.writeText(this.dataset.url);
+            this.textContent = '✅ 已复制';
+            var self = this;
+            setTimeout(function() { self.textContent = '📋 复制链接'; }, 1500);
+        });
+        setTimeout(function() {
+            var qrContainer = document.getElementById('trainQRCode');
+            if (qrContainer && typeof QRCode !== 'undefined') {
+                qrContainer.innerHTML = '';
+                new QRCode(qrContainer, { text: shareUrl, width: 130, height: 130, colorDark: '#1f3a6b', colorLight: '#ffffff', correctLevel: QRCode.CorrectLevel.M });
+            }
+        }, 200);
     }
 
     function renderErrorDashboard() {
@@ -12172,7 +12300,7 @@ URL.revokeObjectURL(url);
                         if (errorDashboardFilter.period === 'week' || errorDashboardFilter.period === 'month' || errorDashboardFilter.period === 'custom') {
                             if (count >= 6) btns += '<button onclick="generatePrecisionExam(\'' + name.replace(/'/g, "\\'") + '\')" style="background:#c0392b;color:white;border:none;padding:2px 8px;border-radius:8px;cursor:pointer;font-size:0.65rem;white-space:nowrap;">📝 出卷</button>';
                             if (count >= 10) btns += '<button style="background:#e67e22;color:white;border:none;padding:2px 8px;border-radius:8px;cursor:pointer;font-size:0.65rem;white-space:nowrap;margin-left:3px;" title="学习地图推送（待配置）">🗺️ 学习</button>';
-                            if (count >= 15) btns += '<button style="background:#8e44ad;color:white;border:none;padding:2px 8px;border-radius:8px;cursor:pointer;font-size:0.65rem;white-space:nowrap;margin-left:3px;" title="培训推送（待配置）">📖 培训</button>';
+                            if (count >= 15) btns += '<button onclick="generatePrecisionTraining(\'' + name.replace(/'/g, "\\'") + '\')" style="background:#8e44ad;color:white;border:none;padding:2px 8px;border-radius:8px;cursor:pointer;font-size:0.65rem;white-space:nowrap;margin-left:3px;" title="精准培训资料">📖 培训</button>';
                         }
                         return btns;
                     }
@@ -12920,7 +13048,9 @@ URL.revokeObjectURL(url);
         _syncPullAll().then(function(count) {
             if (count > 0) { try { loadData(); } catch(e) {} }
             var initExam = initParams.get('exam');
+            var initReport = initParams.get('report');
             if (initExam) { startStandaloneExam(initExam); }
+            else if (initReport) { openSharedReport(initReport); }
             else if (_initOauthDone) { switchNav('errorDashboard'); }
             else { renderSubContent('dashboard'); }
         });
