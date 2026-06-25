@@ -13985,18 +13985,33 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
         });
     })();
 
-    // 全局飞书图片兜底：加载失败时通过代理重试
+    // 全局图片兜底：加载失败显示占位，点击通过代理加载
     document.addEventListener('error', function(e) {
-        if (e.target.tagName === 'IMG' && e.target.src) {
-            var src = e.target.src;
-            if (src.indexOf('feishu') < 0 && src.indexOf('bytedance') < 0 && src.indexOf('larksuite') < 0) return;
-            if (src.indexOf('data:') === 0) return;
-            if (e.target._retried) return;
-            e.target._retried = true;
-            fetchImageAsBase64(src).then(function(base64) {
-                if (base64 && base64 !== src) e.target.src = base64;
+        if (e.target.tagName !== 'IMG' || !e.target.src) return;
+        if (e.target.src.indexOf('data:') === 0) return;
+        if (e.target._retried) return;
+        e.target._retried = true;
+        e.target.style.background = '#f1f5f9';
+        e.target.style.minWidth = '40px';
+        e.target.style.minHeight = '40px';
+        e.target.title = '点击加载图片';
+        e.target.style.cursor = 'pointer';
+        e.target.onclick = function(ev) {
+            ev.stopPropagation();
+            e.target.textContent = '⏳';
+            e.target.style.textAlign = 'center';
+            fetchImageAsBase64(e.target._origSrc || e.target.src).then(function(b64) {
+                if (b64 && b64.indexOf('data:') === 0) {
+                    e.target.src = b64;
+                    e.target.style.background = '';
+                    e.target.textContent = '';
+                    e.target.style.cursor = '';
+                } else {
+                    e.target.textContent = '❌';
+                }
             });
-        }
+        };
+        e.target._origSrc = e.target.src;
     }, true);
 
     // 永久删除雍彬彬的数据 + 修正旧版名字（从localStorage清理）+ 迁移旧数据到扁平按周期存储
