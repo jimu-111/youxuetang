@@ -278,11 +278,11 @@
         .custom-toast.warning { border-left: 4px solid #f39c12; color: #7d5e10; }
         .custom-toast.info { border-left: 4px solid #2a5298; color: #1f3a6b; }
         /* 失误分析看板 */
-        .error-dashboard .stat-mini { background:white; border-radius:16px; padding:14px 18px; text-align:center; box-shadow:0 2px 8px rgba(0,0,0,0.04); border:1px solid #eef2f6; }
+        .error-dashboard .stat-mini { background:#fff; border-radius:16px; padding:14px 18px; text-align:center; box-shadow:0 2px 8px rgba(0,0,0,0.04); border:1px solid #eef2f6; }
         .error-dashboard .stat-mini .val { font-size:1.8rem; font-weight:700; color:#1f3a6b; }
         .error-dashboard .stat-mini .lbl { font-size:0.7rem; color:#5e6f8d; margin-top:2px; }
         .error-dashboard .filter-bar { display:flex; gap:10px; flex-wrap:wrap; align-items:center; margin-bottom:16px; }
-        .error-dashboard .filter-btn { padding:8px 16px; border-radius:20px; border:1px solid #cbd5e1; background:white; cursor:pointer; font-size:0.8rem; font-weight:500; transition:all 0.15s; }
+        .error-dashboard .filter-btn { padding:8px 16px; border-radius:20px; border:1px solid #cbd5e1; background:#fff; cursor:pointer; font-size:0.8rem; font-weight:500; transition:all 0.15s; color:#5e6f8d; }
         .error-dashboard .filter-btn.active { background:#1f3a6b; color:white; border-color:#1f3a6b; }
         .error-dashboard .error-table-wrapper { background:white; border-radius:20px; overflow:hidden; box-shadow:0 2px 8px rgba(0,0,0,0.04); border:1px solid #eef2f6; }
         .error-dashboard .error-table { width:100%; border-collapse:collapse; font-size:0.82rem; }
@@ -6267,7 +6267,7 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
         try { return JSON.parse(localStorage.getItem('manualCases') || '[]'); } catch(e) { return []; }
     }
     function saveManualCases(data) {
-        try { localStorage.setItem('manualCases', JSON.stringify(data)); } catch(e) { alert('存储空间不足，请清理一些旧数据'); }
+        try { localStorage.setItem('manualCases', JSON.stringify(data)); } catch(e) { alert('存储空间不足！请先删除一些旧案例释放空间。\n\n建议：删除含大照片的旧案例后重新保存。'); }
     }
     function getKnowledgeCases() {
         try { return JSON.parse(localStorage.getItem('knowledgeCases') || '[]'); } catch(e) { return []; }
@@ -6303,10 +6303,29 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
     function readFilesAsDataURLs(fileList) {
         return Promise.all(Array.from(fileList).map(file => {
             return new Promise((resolve, reject) => {
-                const reader = new FileReader();
-                reader.onload = e => resolve(e.target.result);
-                reader.onerror = reject;
-                reader.readAsDataURL(file);
+                if (!file.type.match(/image\//)) {
+                    const reader = new FileReader();
+                    reader.onload = e => resolve(e.target.result);
+                    reader.onerror = reject;
+                    reader.readAsDataURL(file);
+                    return;
+                }
+                // 压缩图片再存
+                const img = new Image();
+                const url = URL.createObjectURL(file);
+                img.onload = function() {
+                    URL.revokeObjectURL(url);
+                    const MAX_W = 800;
+                    let w = img.width, h = img.height;
+                    if (w > MAX_W) { h = Math.round(h * MAX_W / w); w = MAX_W; }
+                    const canvas = document.createElement('canvas');
+                    canvas.width = w; canvas.height = h;
+                    const ctx = canvas.getContext('2d');
+                    ctx.drawImage(img, 0, 0, w, h);
+                    resolve(canvas.toDataURL('image/jpeg', 0.6));
+                };
+                img.onerror = function() { URL.revokeObjectURL(url); reject(new Error('图片加载失败')); };
+                img.src = url;
             });
         }));
     }
@@ -11308,6 +11327,9 @@ URL.revokeObjectURL(url);
                         reviewer = reviewer.replace(/解答失误$/g, '').trim();
                         var note = (row[sh.colNote] || '').toString().trim();
                         var site = (row[sh.colSite] || '').toString().trim();
+                        // 补充站点信息
+                        var SITE_MAP = { '袁彬城':'深圳','许嘉林':'深圳','林嘉士':'深圳','王跃强':'深圳','孙俊':'深圳','姜玉林':'深圳','邹文文':'深圳','刘华城':'深圳','彭士观':'深圳','宁泰联':'深圳','吕建效':'深圳','张兢':'深圳','贺涛':'深圳','黄俊德':'深圳','李晓阳':'深圳','赵元坤':'深圳','盘训起':'深圳','冯开宁':'深圳','刘文能':'深圳','丁怀强':'深圳','林欣彬':'深圳','许泽雄':'深圳','曾清源':'深圳','吴松豪':'深圳','王燕文':'深圳','庄振航':'深圳','陈跃军':'深圳','王帅':'深圳','李念甘':'深圳','林家文':'深圳','廖天水':'深圳','廖国辉':'深圳','孙伟':'青岛','苏超跃':'青岛','王清婷':'青岛','徐贤炜':'青岛','王洋':'青岛','郑凯雄':'青岛','陶永嵩':'青岛','王为':'青岛','刘荫民':'青岛','代金鹏':'青岛','辛明泉':'青岛','王兴清':'青岛','姜超':'青岛','张明':'青岛','魏才玉':'青岛','张凯凯':'青岛','刘昊东':'青岛','李选国':'青岛','王梦阳':'青岛','王瑞宇':'青岛','陈文彬':'青岛','许江':'青岛','贺文锐':'青岛','臧天昊':'青岛','王璐':'青岛','李仁义':'青岛','徐行':'成都','何显健':'成都','陈毅军':'成都','胡志鹏':'成都','樊景舜':'成都','向阳':'成都','周金山':'成都','马浩':'成都','雍彬彬':'成都','伏鑫':'成都','肖健平':'成都','罗宁':'成都','吴辉':'成都','任青俊':'成都','杜攀':'成都','麦钧淇':'成都','杨宏':'成都','赵晨鸿':'成都','李忠林':'成都','延依飞':'成都','张俊':'成都','刘超':'成都','李晓洋':'成都' };
+                        if (!site && SITE_MAP[reviewer]) site = SITE_MAP[reviewer];
                         var qcCode = (row[sh.colQcCode] || '').toString().trim();
                         if (!category && !note) continue;
                         allErrors.push({
@@ -11823,11 +11845,16 @@ URL.revokeObjectURL(url);
                 if (p[1] >= 10) btns += '<button style=\"background:#e67e22;color:white;border:none;padding:2px 6px;border-radius:8px;cursor:pointer;font-size:0.6rem;\" title=\"学习地图推送（待配置）\">🗺️ 学习</button> ';
                 if (p[1] >= 15) btns += '<button style=\"background:#8e44ad;color:white;border:none;padding:2px 6px;border-radius:8px;cursor:pointer;font-size:0.6rem;\" title=\"培训推送（待配置）\">📖 培训</button>';
             }
-            return '<tr><td style=\"text-align:center;\">' + (icons[key]||'') + '</td><td style=\"text-align:center;\"><span class=\"clickable-tag light-person-name\" data-name=\"' + escapeHtml(p[0]) + '\" style=\"cursor:pointer;font-weight:600;\">' + escapeHtml(p[0]) + '</span></td><td style=\"text-align:center;\">' + p[1] + '次</td><td style=\"text-align:center;white-space:nowrap;\">' + btns + '</td></tr>';
+            var warn = '';
+            var c = p[1];
+            if (c >= 4 && c <= 5) warn = '<span style=\"color:#e67e22;font-size:0.65rem;\">⚠️ 即将黄灯</span>';
+            else if (c >= 9 && c <= 10) warn = '<span style=\"color:#c0392b;font-size:0.65rem;\">⚠️ 即将红灯</span>';
+            else if (c >= 13 && c <= 15) warn = '<span style=\"color:#8e44ad;font-size:0.65rem;\">⚠️ 即将触发培训</span>';
+            return '<tr><td style=\"text-align:center;\">' + (icons[key]||'') + '</td><td style=\"text-align:center;\"><span class=\"clickable-tag light-person-name\" data-name=\"' + escapeHtml(p[0]) + '\" style=\"cursor:pointer;font-weight:600;\">' + escapeHtml(p[0]) + '</span></td><td style=\"text-align:center;\">' + p[1] + '次</td><td style=\"text-align:center;white-space:nowrap;\">' + warn + '</td><td style=\"text-align:center;white-space:nowrap;\">' + btns + '</td></tr>';
         }).join('');
-        overlay.innerHTML = '<div class="modal-container" style="max-width:550px;">' +
+        overlay.innerHTML = '<div class="modal-container" style="max-width:600px;">' +
             '<div class="modal-header">' + (labels[key]||'按灯详情') + '（' + people.length + '人）<button class="modal-close-btn" id="lightClose">✕</button></div>' +
-            '<div class="modal-body"><table class="error-table" style="width:100%;"><thead><tr><th>灯</th><th>姓名</th><th>失误</th><th>操作</th></tr></thead><tbody>' + (rows || '<tr><td colspan=\"4\" style=\"padding:20px;color:#94a3b8;\">暂无人员</td></tr>') + '</tbody></table></div>' +
+            '<div class="modal-body"><table class="error-table" style="width:100%;"><thead><tr><th>灯</th><th>姓名</th><th>失误</th><th>预警提示</th><th>操作</th></tr></thead><tbody>' + (rows || '<tr><td colspan=\"5\" style=\"padding:20px;color:#94a3b8;\">暂无人员</td></tr>') + '</tbody></table></div>' +
         '</div>';
         document.body.appendChild(overlay);
         overlay.querySelector('#lightClose').onclick = function(){overlay.remove();};
@@ -12041,8 +12068,15 @@ URL.revokeObjectURL(url);
         var revFilterRankInfo = buildRankMap(reviewerStats, allReviewers);
         var reviewerBtns = expandableFilterBtns(allReviewers, reviewerStats, revFilterRankInfo, 'reviewer', '👤 全部', 'rev', false);
 
-        var sortedReviewers = Object.entries(reviewerStats).sort(function(a, b) { return b[1] - a[1]; });
-        var html = '<div class="error-dashboard">' +
+        var LIGHT_NAME_LIST = ['袁彬城','许嘉林','林嘉士','王跃强','孙俊','姜玉林','邹文文','刘华城','彭士观','宁泰联','吕建效','张兢','贺涛','黄俊德','李晓阳','赵元坤','盘训起','冯开宁','刘文能','丁怀强','林欣彬','许泽雄','曾清源','吴松豪','王燕文','庄振航','陈跃军','王帅','李念甘','林家文','廖天水','廖国辉','孙伟','苏超跃','王清婷','徐贤炜','王洋','郑凯雄','陶永嵩','王为','刘荫民','代金鹏','辛明泉','王兴清','姜超','张明','魏才玉','张凯凯','刘昊东','李选国','王梦阳','王瑞宇','陈文彬','许江','贺文锐','臧天昊','王璐','李仁义','徐行','何显健','陈毅军','胡志鹏','樊景舜','向阳','周金山','马浩','伏鑫','肖健平','罗宁','吴辉','任青俊','杜攀','麦钧淇','杨宏','赵晨鸿','张俊','刘超','李晓洋','李忠林','延依飞'];
+        // 名单中无失误记录的人→计入绿灯
+        var hasDataNames = {};
+        Object.keys(reviewerStats).forEach(function(n) { hasDataNames[n] = true; });
+        LIGHT_NAME_LIST.forEach(function(n) {
+            if (!hasDataNames[n]) reviewerStats[n] = 0;
+        });
+        var sortedReviewers = Object.entries(reviewerStats).filter(function(e) { return LIGHT_NAME_LIST.indexOf(e[0]) >= 0; }).sort(function(a, b) { return b[1] - a[1]; });
+        var html = '<div class="error-dashboard" style="background:#f5f6f8;border-radius:16px;padding:16px;">' +
             '<div class="report-box" style="margin-bottom:20px;">' +
                 '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;margin-bottom:16px;">' +
                     '<div class="report-title" style="margin-bottom:0;padding-bottom:0;border:none;">📋 失误分析看板</div>' +
@@ -12105,11 +12139,11 @@ URL.revokeObjectURL(url);
                         // 根据是否有E列使用不同列宽
                         personHtml = rowsData.map(function(r) {
                             var lightIcon = r.count > 10 ? '🔴' : (r.count >= 6 ? '🟡' : '🟢');
-                            var nameWithSite = escapeHtml(r.name) + ' <span style="color:#94a3b8;font-size:0.65rem;">（' + escapeHtml(r.sites) + '）</span>';
+                            var siteHtml = ' <span style="color:#94a3b8;font-size:0.65rem;">（' + escapeHtml(r.sites) + '）</span>';
                             return '<tr class="portrait-row" style="border-bottom:1px solid #f1f5f9;">' +
-                                '<td style="text-align:center;padding:6px 4px;"><span style="font-size:0.7rem;">' + lightIcon + '</span> <span class="clickable-tag" onclick="showErrorDetailPopup(\'reviewer\',\'' + r.name.replace(/'/g, "\\'") + '\')" style="font-weight:600;background:' + r.color + ';color:#2d3748;padding:2px 6px;border-radius:8px;cursor:pointer;font-size:0.7rem;" title="点击查看详情">' + nameWithSite + '</span></td>' +
+                                '<td style="text-align:center;padding:6px 4px;"><span style="font-size:0.7rem;">' + lightIcon + '</span> <span class="clickable-tag" onclick="showErrorDetailPopup(\'reviewer\',\'' + r.name.replace(/'/g, "\\'") + '\')" style="font-weight:600;color:#2d3748;cursor:pointer;font-size:0.7rem;" title="点击查看详情">' + escapeHtml(r.name) + siteHtml + '</span></td>' +
                                 '<td style="text-align:center;padding:6px 4px;font-size:0.7rem;color:#5e6f8d;">' + r.count + '次</td>' +
-                                '<td style="text-align:center;padding:6px 4px;font-size:0.7rem;color:#5e6f8d;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="' + escapeHtml(r.cats || '-') + '">' + (r.cats || '-') + '</td>' +
+                                '<td style="text-align:center;padding:6px 4px;font-size:0.7rem;color:#5e6f8d;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:120px;" title="' + escapeHtml(r.cats || '-') + '">' + (r.cats || '-') + '</td>' +
                                 (hasAnyActions ? '<td style="text-align:center;padding:6px 4px;white-space:nowrap;">' + (r.actions||'') + '</td>' : '') +
                             '</tr>';
                         }).join('');
