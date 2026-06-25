@@ -12635,7 +12635,7 @@ URL.revokeObjectURL(url);
             if (showBtns) {
                 if (p[1] >= 6) btns += '<button class=\"light-exam-btn\" data-name=\"' + escapeHtml(p[0]) + '\" style=\"background:#c0392b;color:white;border:none;padding:2px 6px;border-radius:8px;cursor:pointer;font-size:0.6rem;\">📝 出卷</button> ';
                 if (p[1] >= 10) btns += '<button class=\"light-learn-btn\" data-name=\"' + escapeHtml(p[0]) + '\" style=\"background:#e67e22;color:white;border:none;padding:2px 6px;border-radius:8px;cursor:pointer;font-size:0.6rem;\">🗺️ 学习</button> ';
-                if (p[1] >= 15) btns += '<button class=\"light-train-btn\" data-name=\"' + escapeHtml(p[0]) + '\" style=\"background:#8e44ad;color:white;border:none;padding:2px 6px;border-radius:8px;cursor:pointer;font-size:0.6rem;\">📖 培训</button>';
+                if (p[1] > 15) btns += '<button class=\"light-train-btn\" data-name=\"' + escapeHtml(p[0]) + '\" style=\"background:#8e44ad;color:white;border:none;padding:2px 6px;border-radius:8px;cursor:pointer;font-size:0.6rem;\">📖 培训</button>';
             }
             var warn = '';
             var c = p[1];
@@ -13246,7 +13246,7 @@ URL.revokeObjectURL(url);
                         if (errorDashboardFilter.period === 'week' || errorDashboardFilter.period === 'month' || errorDashboardFilter.period === 'custom') {
                             if (count >= 6) btns += '<button onclick="generatePrecisionExam(\'' + name.replace(/'/g, "\\'") + '\')" style="background:#c0392b;color:white;border:none;padding:2px 8px;border-radius:8px;cursor:pointer;font-size:0.65rem;white-space:nowrap;">📝 出卷</button>';
                             if (count >= 10) btns += '<button onclick="navigateToLearningForPerson(\'' + name.replace(/'/g, "\\'") + '\')" style="background:#e67e22;color:white;border:none;padding:2px 8px;border-radius:8px;cursor:pointer;font-size:0.65rem;white-space:nowrap;margin-left:3px;">🗺️ 学习</button>';
-                            if (count >= 15) btns += '<button onclick="generatePrecisionTraining(\'' + name.replace(/'/g, "\\'") + '\')" style="background:#8e44ad;color:white;border:none;padding:2px 8px;border-radius:8px;cursor:pointer;font-size:0.65rem;white-space:nowrap;margin-left:3px;" title="精准培训资料">📖 培训</button>';
+                            if (count > 15) btns += '<button onclick="generatePrecisionTraining(\'' + name.replace(/'/g, "\\'") + '\')" style="background:#8e44ad;color:white;border:none;padding:2px 8px;border-radius:8px;cursor:pointer;font-size:0.65rem;white-space:nowrap;margin-left:3px;" title="精准培训资料">📖 培训</button>';
                         }
                         return btns;
                     }
