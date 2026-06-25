@@ -12795,7 +12795,7 @@ URL.revokeObjectURL(url);
         };
         var plans = getLearningPlans();
         plans[planCode] = planData;
-        saveLearningPlans(plans);
+        saveLearningPlans(plans); var _lps = getLearnPlanPushes(); _lps.push({reviewerName: reviewerName, planCode: planCode, courseCount: planData.totalCourses, areaCount: planData.areas.length, time: new Date().toISOString()}); saveLearnPlanPushes(_lps);
         // 生成链接并弹窗展示
         var shareUrl = location.origin + location.pathname + '?learnPlan=' + planCode;
         showLearningPlanSharePopup(planData, shareUrl);
@@ -12988,7 +12988,7 @@ URL.revokeObjectURL(url);
 
         // 存到 generatedReports 并生成可分享链接
         var reportName = '培训资料_' + reviewerName + '_' + new Date().toISOString().slice(0,10).replace(/-/g,'');
-        saveReportToLocal(reportName, docHtml);
+        saveReportToLocal(reportName, docHtml); var _tps = getTrainingPushes(); _tps.push({reviewerName: reviewerName, reportName: reportName, caseCount: matched.length, time: new Date().toISOString()}); saveTrainingPushes(_tps);
         var baseUrl = window.location.href.split('?')[0];
         var shareUrl = baseUrl + '?report=' + encodeURIComponent(reportName);
 
@@ -13386,7 +13386,168 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
             '</div>' +
         '</div>';
 
+        // 生成分析报告按钮
+        var reportBtn = '<div style="text-align:center;margin-top:20px;">' +
+            '<button onclick="generateErrorReport()" style="background:linear-gradient(135deg,#1f3a6b,#2a5298);color:white;border:none;padding:12px 32px;border-radius:30px;cursor:pointer;font-weight:600;font-size:0.9rem;">📊 生成分析报告</button>' +
+        '</div>';
+        html += reportBtn;
+
         document.getElementById('mainContent').innerHTML = html;
+    }
+
+    function generateErrorReport() {
+        var filtered = getFilteredErrors();
+        var f = errorDashboardFilter;
+        var now = new Date();
+        // 周期描述
+        var periodLabel = f.period === 'day' ? '日度（' + now.toLocaleDateString('zh-CN') + '）' :
+            f.period === 'week' ? '周度' : f.period === 'month' ? '月度' : '自定义';
+        // 基础统计
+        var siteStats = {}; var catStats = {}; var reviewerStats = {};
+        filtered.forEach(function(e) {
+            siteStats[e.site] = (siteStats[e.site]||0)+1;
+            catStats[e.category] = (catStats[e.category]||0)+1;
+            reviewerStats[e.reviewer] = (reviewerStats[e.reviewer]||0)+1;
+        });
+        var totalErrors = filtered.length;
+        var sortedSites = Object.keys(siteStats).sort(function(a,b){return siteStats[b]-siteStats[a];});
+        var sortedCats = Object.entries(catStats).sort(function(a,b){return b[1]-a[1];});
+        var sortedReviewers = Object.entries(reviewerStats).sort(function(a,b){return b[1]-a[1];});
+        // 亮灯
+        var reds = sortedReviewers.filter(function(e){return e[1]>10;});
+        var yellows = sortedReviewers.filter(function(e){return e[1]>=6&&e[1]<=10;});
+        var greens = sortedReviewers.filter(function(e){return e[1]<=5;});
+        // 站点分布
+        var siteHtml = sortedSites.map(function(s){
+            var cnt = siteStats[s];
+            var pct = totalErrors>0?(cnt/totalErrors*100).toFixed(1):0;
+            return '<tr><td>'+escapeHtml(s)+'</td><td>'+cnt+'</td><td>'+pct+'%</td></tr>';
+        }).join('');
+        // 类别分布
+        var catHtml = sortedCats.map(function(e){
+            var pct = totalErrors>0?(e[1]/totalErrors*100).toFixed(1):0;
+            return '<tr><td>'+escapeHtml(e[0])+'</td><td>'+e[1]+'</td><td>'+pct+'%</td></tr>';
+        }).join('');
+        // 推送人员
+        var pushExam = sortedReviewers.filter(function(e){return e[1]>=6;});
+        var pushLearn = sortedReviewers.filter(function(e){return e[1]>=10;});
+        var pushTrain = sortedReviewers.filter(function(e){return e[1]>15;});
+        // 往期对比（上一周期）
+        var prevLabel = '上一周期';
+        // 生成HTML报告
+        var reportHtml = '<!DOCTYPE html><html><head><meta charset="UTF-8"><title>失误分析报告</title>' +
+        '<style>body{font-family:Microsoft YaHei,SimHei,sans-serif;padding:30px;max-width:1000px;margin:0 auto;color:#333;background:#f5f6f8;}' +
+        '.card{background:#fff;border-radius:14px;padding:20px;margin:16px 0;box-shadow:0 2px 8px rgba(0,0,0,0.06);}' +
+        'h1{color:#1f3a6b;border-bottom:3px solid #2a5298;padding-bottom:12px;}h2{color:#2a5298;font-size:1.1rem;margin-bottom:12px;}'+
+        'table{width:100%;border-collapse:collapse;margin:8px 0;}th{background:#f1f5f9;padding:8px 12px;text-align:left;font-size:0.85rem;}'+
+        'td{padding:8px 12px;border-bottom:1px solid #eef2f6;font-size:0.82rem;}'+
+        '.stat-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;}'+
+        '.stat-item{text-align:center;padding:16px;background:#f8fafc;border-radius:10px;}'+
+        '.stat-num{font-size:2rem;font-weight:700;color:#1f3a6b;}.stat-lbl{font-size:0.78rem;color:#5e6f8d;}'+
+        '.light-tag{display:inline-block;padding:4px 12px;border-radius:12px;font-size:0.78rem;font-weight:600;margin:2px;}'+
+        '.red{background:#fecaca;color:#991b1b;}.yellow{background:#fef08a;color:#854d0e;}.green{background:#d4edda;color:#166534;}'+
+        '.bar{height:10px;border-radius:5px;background:#eef2f6;margin:4px 0;overflow:hidden;}'+
+        '.bar-inner{height:100%;border-radius:5px;}'+
+        '.footer{text-align:center;color:#94a3b8;font-size:0.75rem;margin-top:30px;}'+
+        '</style></head><body>'+
+        '<h1>📊 失误分析报告</h1>'+
+        '<p style="color:#5e6f8d;">周期：'+periodLabel+' | 生成时间：'+now.toLocaleString('zh-CN')+' | 总失误：'+totalErrors+'条</p>'+
+        // 统计概览
+        '<div class="card"><h2>📋 统计概览</h2><div class="stat-grid">'+
+        '<div class="stat-item"><div class="stat-num">'+totalErrors+'</div><div class="stat-lbl">📋 总失误</div></div>'+
+        '<div class="stat-item"><div class="stat-num">'+sortedSites.length+'</div><div class="stat-lbl">📍 涉及站点</div></div>'+
+        '<div class="stat-item"><div class="stat-num">'+sortedCats.length+'</div><div class="stat-lbl">🏷️ 失误类别</div></div>'+
+        '<div class="stat-item"><div class="stat-num">'+sortedReviewers.length+'</div><div class="stat-lbl">👤 涉及人员</div></div>'+
+        '</div></div>'+
+        // 亮灯
+        '<div class="card"><h2>🚦 亮灯预警</h2><div style="display:flex;gap:12px;justify-content:center;">'+
+        '<span class="light-tag red">🔴 红灯 '+reds.length+'人（>10次）</span>'+
+        '<span class="light-tag yellow">🟡 黄灯 '+yellows.length+'人（6-10次）</span>'+
+        '<span class="light-tag green">🟢 绿灯 '+greens.length+'人（≤5次）</span>'+
+        '</div></div>'+
+        // 站点分布
+        '<div class="card"><h2>📍 站点分布</h2><table><tr><th>站点</th><th>失误数</th><th>占比</th></tr>'+siteHtml+'</table></div>'+
+        // 三站点对比
+        (function(){
+            var top3Sites = sortedSites.slice(0,3);
+            if (top3Sites.length < 2) return '';
+            var compareCats = {}; // { site: { cat: count } }
+            var compareReviewers = {}; // { site: { name: count } }
+            var allCompCats = [];
+            top3Sites.forEach(function(s){
+                var sc = {}; var sr = {};
+                filtered.forEach(function(e){
+                    if (e.site === s) {
+                        sc[e.category] = (sc[e.category]||0)+1;
+                        sr[e.reviewer] = (sr[e.reviewer]||0)+1;
+                    }
+                });
+                compareCats[s] = sc; compareReviewers[s] = sr;
+                Object.keys(sc).forEach(function(c){ if (allCompCats.indexOf(c)<0) allCompCats.push(c); });
+            });
+            // Top 5 categories across all sites
+            var topCompCats = allCompCats.map(function(c){
+                var total = 0;
+                top3Sites.forEach(function(s){ total += (compareCats[s][c]||0); });
+                return {cat:c, total:total};
+            }).sort(function(a,b){return b.total-a.total;}).slice(0,5);
+            var maxTotal = topCompCats.length>0 ? topCompCats[0].total : 1;
+            var siteColors = ['#2563eb','#e67e22','#16a34a'];
+            var compareHtml = '<div style="display:grid;grid-template-columns:120px repeat('+top3Sites.length+',1fr);gap:4px;font-size:0.75rem;margin-top:8px;">';
+            compareHtml += '<div style="font-weight:700;color:#5e6f8d;padding:6px;">类别</div>';
+            top3Sites.forEach(function(s,i){
+                compareHtml += '<div style="text-align:center;font-weight:700;color:'+siteColors[i]+';padding:6px;">'+escapeHtml(s)+'<br><span style="font-size:0.65rem;">('+siteStats[s]+'条)</span></div>';
+            });
+            topCompCats.forEach(function(cc){
+                compareHtml += '<div style="padding:4px 6px;font-size:0.7rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="'+escapeHtml(cc.cat)+'">'+escapeHtml(cc.cat)+'</div>';
+                top3Sites.forEach(function(s,i){
+                    var cnt = compareCats[s][cc.cat]||0;
+                    var barW = Math.max(0, Math.round(cnt/maxTotal*100));
+                    compareHtml += '<div style="text-align:center;padding:4px;background:#f8fafc;border-radius:4px;position:relative;">'+
+                        '<div style="position:absolute;left:0;top:0;height:100%;background:'+siteColors[i]+'22;border-radius:4px;width:'+barW+'%;"></div>'+
+                        '<span style="position:relative;font-weight:600;">'+(cnt||'-')+'</span></div>';
+                });
+            });
+            compareHtml += '</div>';
+            return '<div class="card"><h2>🔍 站点对比（Top 3）</h2>'+compareHtml+'</div>';
+        })()+
+        // 类别分布
+        '<div class="card"><h2>🏷️ 失误类别分布</h2><table><tr><th>类别</th><th>次数</th><th>占比</th></tr>'+catHtml+'</table></div>'+
+        // 频发问题 Top5
+        '<div class="card"><h2>⚠️ 频发问题点（Top 5）</h2><table><tr><th>排名</th><th>类别</th><th>次数</th><th>占比</th></tr>'+
+        sortedCats.slice(0,5).map(function(e,i){
+            var pct=totalErrors>0?(e[1]/totalErrors*100).toFixed(1):0;
+            var clr=['#c0392b','#e67e22','#f39c12','#5e6f8d','#94a3b8'][i];
+            return '<tr><td style="color:'+clr+';font-weight:700;">#'+(i+1)+'</td><td>'+escapeHtml(e[0])+'</td><td>'+e[1]+'</td><td>'+pct+'%</td>';
+        }).join('')+
+        '</table></div>'+
+        // 人员排行
+        '<div class="card"><h2>👤 失误人员排行（Top 10）</h2><table><tr><th>排名</th><th>姓名</th><th>次数</th></tr>'+
+        sortedReviewers.slice(0,10).map(function(e,i){
+            var icon = e[1]>10?'🔴':(e[1]>=6?'🟡':'🟢');
+            return '<tr><td>'+(i+1)+'</td><td>'+icon+' '+escapeHtml(e[0])+'</td><td>'+e[1]+'</td></tr>';
+        }).join('')+
+        '</table></div>'+
+        // 需推送人员
+        '<div class="card"><h2>📤 需推送人员</h2>'+
+        '<p><b>📝 精准出卷（≥6次）：</b>'+pushExam.length+'人 — '+pushExam.map(function(e){return escapeHtml(e[0])+'('+e[1]+')';}).join('、')+'</p>'+
+        '<p><b>🗺️ 学习地图（≥10次）：</b>'+pushLearn.length+'人 — '+pushLearn.map(function(e){return escapeHtml(e[0])+'('+e[1]+')';}).join('、')+'</p>'+
+        '<p><b>📖 精准培训（>15次）：</b>'+pushTrain.length+'人 — '+pushTrain.map(function(e){return escapeHtml(e[0])+'('+e[1]+')';}).join('、')+'</p>'+
+        '</div>'+
+        // 需关注人员（红灯+黄灯前5）
+        '<div class="card"><h2>🔍 需重点关注人员</h2>'+
+        '<p style="color:#c0392b;">🔴 红灯：'+(reds.length>0?reds.map(function(e){return escapeHtml(e[0])+'('+e[1]+')';}).join('、'):'无')+'</p>'+
+        '<p style="color:#854d0e;">🟡 黄灯前5：'+yellows.slice(0,5).map(function(e){return escapeHtml(e[0])+'('+e[1]+')';}).join('、')+'</p>'+
+        '</div>'+
+        '<div class="footer">优学堂 · 自动生成报告 · '+now.toLocaleString('zh-CN')+'</div>'+
+        '</body></html>';
+        // 下载
+        var blob = new Blob([reportHtml], {type:'text/html;charset=UTF-8'});
+        var a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = '失误分析报告_'+now.toISOString().slice(0,10)+'.html';
+        a.click();
+        showToast('✅ 报告已下载', 'success');
     }
 
     // 每120分钟自动刷新
@@ -13452,93 +13613,164 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
         return code;
     }
 
+    let currentExamTab = 'records';
+    const TRAINING_PUSH_KEY = 'trainingPushRecords';
+    const LEARNPLAN_PUSH_KEY = 'learnPlanPushRecords';
+
+    function getTrainingPushes() { try { return JSON.parse(localStorage.getItem(TRAINING_PUSH_KEY)||'[]'); } catch(e) { return []; } }
+    function saveTrainingPushes(d) { localStorage.setItem(TRAINING_PUSH_KEY, JSON.stringify(d)); }
+    function getLearnPlanPushes() { try { return JSON.parse(localStorage.getItem(LEARNPLAN_PUSH_KEY)||'[]'); } catch(e) { return []; } }
+    function saveLearnPlanPushes(d) { localStorage.setItem(LEARNPLAN_PUSH_KEY, JSON.stringify(d)); }
+
     function renderExamSystem() {
-        // 检查URL参数自动进入考试（扫码/链接直达）
         const urlParams = new URLSearchParams(window.location.search);
         const autoExam = urlParams.get('exam');
         const shouldAutoStart = autoExam && !window._examAutoStarted;
-
         const container = document.getElementById('mainContent');
         if (shouldAutoStart) {
             const history = getExamHistory();
             const exam = Object.values(history).find(e => e.examCode === autoExam);
             if (exam) {
                 window._examAutoStarted = true;
-                // 渲染最小化界面，然后自动开始考试
                 container.innerHTML = '<div class="report-box" style="text-align:center;padding:40px;"><div style="font-size:1.5rem;font-weight:700;color:#1f3a6b;">📝 正在进入考试...</div><div id="examActiveArea"></div></div>';
                 setTimeout(() => startExam(exam.id), 500);
                 return;
-            } else {
-                container.innerHTML = '<div class="report-box"><div class="empty-placeholder">❌ 考试码无效或考试已过期</div></div>';
-                return;
-            }
+            } else { container.innerHTML = '<div class="report-box"><div class="empty-placeholder">❌ 考试码无效或考试已过期</div></div>'; return; }
         }
-        const history = getExamHistory();
-        const examList = Object.values(history).sort((a, b) => new Date(b.generatedAt) - new Date(a.generatedAt));
-
-        let examCards = '';
-        if (examList.length === 0) {
-            examCards = '<div class="empty-placeholder" style="padding:40px;">暂无考试记录<br><br>💡 请先在"数据分析中心 → 失误前五警示画像"中查看初审排名，然后"出卷"</div>';
-        } else {
-            examCards = examList.map(exam => {
-                const statusLabel = exam.status === 'completed' ? '✅ 已完成' : (exam.status === 'in_progress' ? '⏳ 进行中' : '📝 待考试');
-                const scoreInfo = exam.score !== undefined ? ' | 得分：' + exam.score + '/100' : '';
-                const attemptsInfo = exam.attempts ? ' | 考试次数：' + exam.attempts : '';
-                return `<div class="exam-card" style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;">
-                    <div style="flex:1;min-width:200px;">
-                        <div style="font-weight:700;color:#1f3a6b;">📋 ${escapeHtml(fmtRvGlobal(exam.reviewerName))} 的试卷</div>
-                        <div style="font-size:0.8rem;color:#5e6f8d;">考试码：<strong style="font-size:1.2rem;color:#c0392b;">${exam.examCode || 'N/A'}</strong> ${statusLabel}${scoreInfo}${attemptsInfo}</div>
-                        <div style="font-size:0.75rem;color:#94a3b8;">生成时间：${new Date(exam.generatedAt).toLocaleString('zh-CN')} | 题目数：${exam.questions?.length || 0}</div>
-                        ${exam.mistakeCategories ? '<div style="font-size:0.7rem;margin-top:4px;">关联类别：' + exam.mistakeCategories.map(c => '<span class="tag-badge category">' + escapeHtml(c) + '</span>').join(' ') + '</div>' : ''}
-                    </div>
-                    <div style="display:flex;gap:8px;flex-wrap:wrap;">
-                        <button class="primary" data-startexam="${exam.id}">📝 ${exam.status === 'completed' ? '查看详情' : '开始考试'}</button>
-                        <button class="small-outline" data-viewexam="${exam.id}">📊 考试记录</button>
-                        <button class="action-btn danger" data-delexam="${exam.id}">🗑️</button>
-                    </div>
-                </div>`;
-            }).join('');
-        }
-
-        container.innerHTML = `
-            <div class="report-box">
-                <div class="report-title" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;">
-                    <span>📋 考试系统</span>
-                    <div style="display:flex;gap:8px;">
-                        <input type="text" id="examCodeInput" placeholder="输入考试码" style="padding:8px 12px;border:1px solid #cbd5e1;border-radius:20px;font-size:0.85rem;width:150px;">
-                        <button class="primary" id="enterExamBtn">进入考试</button>
-                    </div>
-                </div>
-                <div id="examList">${examCards}</div>
-            </div>
-            <div id="examActiveArea" style="display:none;"></div>
-        `;
-
+        container.innerHTML = '<div class="report-box" style="margin-bottom:16px;">' +
+            '<div class="report-title" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;">' +
+                '<span>📋 考试系统</span>' +
+                '<div style="display:flex;gap:8px;">' +
+                    '<input id="examCodeInput" type="text" placeholder="输入考试码" style="padding:6px 12px;border:1px solid #d1d5db;border-radius:20px;font-size:0.85rem;width:140px;text-align:center;" maxlength="6">' +
+                    '<button class="primary" id="enterExamBtn">进入考试</button>' +
+                '</div>' +
+            '</div>' +
+            '<div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:center;margin-top:12px;">' +
+                '<button class="analysis-type-btn ' + (currentExamTab==='records'?'active':'') + '" data-examtab="records">📝 考试记录</button>' +
+                '<button class="analysis-type-btn ' + (currentExamTab==='training'?'active':'') + '" data-examtab="training">📄 培训推送记录</button>' +
+                '<button class="analysis-type-btn ' + (currentExamTab==='learnplan'?'active':'') + '" data-examtab="learnplan">🗺️ 学习地图推送记录</button>' +
+            '</div>' +
+        '</div>' +
+        '<div id="examTabContent"></div>';
         setTimeout(() => {
             document.getElementById('enterExamBtn').onclick = () => {
                 const code = document.getElementById('examCodeInput').value.trim().toUpperCase();
                 if (!code) { alert('请输入考试码'); return; }
-                const found = examList.find(e => e.examCode === code);
+                const found = Object.values(getExamHistory()).find(e => e.examCode === code);
                 if (!found) { alert('未找到该考试码对应的试卷'); return; }
                 startExam(found.id);
             };
-            document.querySelectorAll('[data-startexam]').forEach(btn => {
-                btn.onclick = () => startExam(btn.dataset.startexam);
+            container.querySelectorAll('[data-examtab]').forEach(btn => {
+                btn.onclick = () => { currentExamTab = btn.dataset.examtab; renderExamTabContent(); };
             });
-            document.querySelectorAll('[data-viewexam]').forEach(btn => {
-                btn.onclick = () => viewExamRecords(btn.dataset.viewexam);
-            });
-            document.querySelectorAll('[data-delexam]').forEach(btn => {
-                btn.onclick = async () => {
-                    if (!await confirmDelete('考试记录')) return;
-                    const data = getExamHistory();
-                    delete data[btn.dataset.delexam];
-                    saveExamHistory(data);
-                    renderExamSystem();
-                };
-            });
+            renderExamTabContent();
         }, 100);
     }
+
+    function renderExamTabContent() {
+        var content = document.getElementById('examTabContent');
+        if (!content) return;
+        if (currentExamTab === 'records') renderExamRecordsTab(content);
+        else if (currentExamTab === 'training') renderTrainingPushesTab(content);
+        else if (currentExamTab === 'learnplan') renderLearnPlanPushesTab(content);
+    }
+
+    function renderExamRecordsTab(content) {
+        const history = getExamHistory();
+        const examList = Object.values(history).sort((a, b) => new Date(b.generatedAt) - new Date(a.generatedAt));
+        var cards = '';
+        if (examList.length === 0) {
+            cards = '<div class="empty-placeholder" style="padding:40px;">暂无考试记录</div>';
+        } else {
+            cards = examList.map(exam => {
+                var isFailed = exam._retakeFailed || (exam.status==='completed' && exam.attempts>=2 && exam.score<100);
+                var bgStyle = isFailed ? 'background:#fff5f5;border:1px solid #fecaca;' : '';
+                var statusLabel = exam._retakeFailed ? '❌ 补考未通过' : (exam.status==='completed' ? (exam.score>=100?'✅ 已通过':'⚠️ 已完成') : (exam.status==='in_progress'?'⏳ 进行中':'📝 待考试'));
+                var retakeNote = isFailed ? '<div style=\"font-size:0.7rem;color:#c0392b;margin-top:2px;\">⚠️ 两次考试均未通过，需重新出卷</div>' : '';
+                return '<div class=\"exam-card\" style=\"display:flex;gap:12px;align-items:center;flex-wrap:wrap;'+bgStyle+'\">' +
+                    '<div style=\"flex:1;min-width:200px;\">' +
+                        '<div style=\"font-weight:700;color:#1f3a6b;\">📋 '+escapeHtml(fmtRvGlobal(exam.reviewerName))+' 的试卷</div>' +
+                        '<div style=\"font-size:0.8rem;color:#5e6f8d;\">考试码：<strong style=\"font-size:1.2rem;color:#c0392b;\">'+(exam.examCode||'N/A')+'</strong> '+statusLabel+' | 得分：'+(exam.score||0)+'/100 | 次数：'+(exam.attempts||0)+'</div>' +
+                        retakeNote +
+                        '<div style=\"font-size:0.75rem;color:#94a3b8;\">生成时间：'+new Date(exam.generatedAt).toLocaleString('zh-CN')+' | 题目数：'+(exam.questions?exam.questions.length:0)+'</div>' +
+                        (exam.mistakeCategories ? '<div style=\"font-size:0.7rem;margin-top:4px;\">关联类别：'+exam.mistakeCategories.map(function(c){return '<span class=\"tag-badge category\">'+escapeHtml(c)+'</span>';}).join(' ')+'</div>' : '') +
+                    '</div>' +
+                    '<div style=\"display:flex;gap:8px;flex-wrap:wrap;\">' +
+                        '<button class=\"primary\" data-startexam=\"'+exam.id+'\">📝 '+(exam.status==='completed'?'查看详情':'开始考试')+'</button>' +
+                        '<button class=\"small-outline\" data-viewexam=\"'+exam.id+'\">📊 考试记录</button>' +
+                        '<button class=\"action-btn danger\" data-delexam=\"'+exam.id+'\">🗑️</button>' +
+                    '</div></div>';
+            }).join('');
+        }
+        content.innerHTML = '<div class=\"report-box\">'+cards+'</div>';
+        content.querySelectorAll('[data-startexam]').forEach(function(btn){ btn.onclick = function(){ startExam(btn.dataset.startexam); }; });
+        content.querySelectorAll('[data-viewexam]').forEach(function(btn){ btn.onclick = function(){ viewExamRecords(btn.dataset.viewexam); }; });
+        content.querySelectorAll('[data-delexam]').forEach(function(btn){
+            btn.onclick = async function(){
+                if (!await confirmDelete('考试记录')) return;
+                var d = getExamHistory(); delete d[btn.dataset.delexam]; saveExamHistory(d); renderExamRecordsTab(content);
+            };
+        });
+    }
+
+    function renderTrainingPushesTab(content) {
+        var pushes = getTrainingPushes();
+        var reports = JSON.parse(localStorage.getItem('generatedReports')||'{}');
+        if (pushes.length === 0) {
+            content.innerHTML = '<div class=\"report-box\"><div class=\"empty-placeholder\" style=\"padding:40px;\">暂无培训推送记录</div></div>';
+            return;
+        }
+        var cards = pushes.sort(function(a,b){return new Date(b.time)-new Date(a.time);}).map(function(p){
+            var reportExists = !!reports[p.reportName];
+            return '<div class=\"exam-card\" style=\"display:flex;gap:12px;align-items:center;flex-wrap:wrap;\">' +
+                '<div style=\"flex:1;min-width:200px;\">' +
+                    '<div style=\"font-weight:700;color:#1f3a6b;\">📄 '+escapeHtml(p.reviewerName)+' 的培训资料</div>' +
+                    '<div style=\"font-size:0.8rem;color:#5e6f8d;\">生成时间：'+new Date(p.time).toLocaleString('zh-CN')+' | 案例数：'+(p.caseCount||0)+'</div>' +
+                '</div>' +
+                '<div style=\"display:flex;gap:8px;\">' +
+                    (reportExists ? '<button class=\"primary\" data-openreport=\"'+p.reportName+'\">📄 查看培训资料</button>' : '<span style=\"color:#94a3b8;font-size:0.75rem;\">已清理</span>') +
+                '</div></div>';
+        }).join('');
+        content.innerHTML = '<div class=\"report-box\">'+cards+'</div>';
+        content.querySelectorAll('[data-openreport]').forEach(function(btn){
+            btn.onclick = function(){ openTrainingReport(btn.dataset.openreport); };
+        });
+    }
+
+    function renderLearnPlanPushesTab(content) {
+        var pushes = getLearnPlanPushes();
+        if (pushes.length === 0) {
+            content.innerHTML = '<div class=\"report-box\"><div class=\"empty-placeholder\" style=\"padding:40px;\">暂无学习地图推送记录</div></div>';
+            return;
+        }
+        var cards = pushes.sort(function(a,b){return new Date(b.time)-new Date(a.time);}).map(function(p){
+            return '<div class=\"exam-card\" style=\"display:flex;gap:12px;align-items:center;flex-wrap:wrap;\">' +
+                '<div style=\"flex:1;min-width:200px;\">' +
+                    '<div style=\"font-weight:700;color:#1f3a6b;\">🗺️ '+escapeHtml(p.reviewerName)+' 的学习地图</div>' +
+                    '<div style=\"font-size:0.8rem;color:#5e6f8d;\">推送时间：'+new Date(p.time).toLocaleString('zh-CN')+' | '+p.courseCount+'节课 · '+p.areaCount+'领域</div>' +
+                '</div>' +
+                '<div style=\"display:flex;gap:8px;\">' +
+                    '<button class=\"primary\" data-openplan=\"'+p.planCode+'\">🔗 打开学习地图</button>' +
+                '</div></div>';
+        }).join('');
+        content.innerHTML = '<div class=\"report-box\">'+cards+'</div>';
+        content.querySelectorAll('[data-openplan]').forEach(function(btn){
+            btn.onclick = function(){
+                window.open(location.origin+location.pathname+'?learnPlan='+btn.dataset.openplan, '_blank');
+            };
+        });
+    }
+
+    function openTrainingReport(name) {
+        var reports = JSON.parse(localStorage.getItem('generatedReports')||'{}');
+        var html = reports[name];
+        if (!html) { showAlert('培训资料已过期或被清理', '⚠️'); return; }
+        var w = window.open('', '_blank');
+        w.document.write(html);
+        w.document.close();
+    }
+
+
 
     function startExam(examId) {
         const history = getExamHistory();
@@ -13732,43 +13964,58 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
         if (passed || exam.attempts >= exam.maxAttempts) exam.status = 'completed';
         saveExamHistory(history);
 
-        document.getElementById('examActiveArea').innerHTML = `
-            <div class="report-box">
-                <div class="report-title">📊 考试结果</div>
-                <div style="text-align:center;padding:20px;">
-                    <div style="font-size:3rem;font-weight:700;color:${passed ? '#27ae60' : '#c0392b'};">${score}分</div>
-                    <div style="font-size:1.2rem;color:${passed ? '#27ae60' : '#c0392b'};">${passed ? '🎉 满分通过！' : (exam.attempts >= (exam.maxAttempts||2) ? '❌ 未通过（补考已用完）' : '⚠️ 未通过，可补考1次（仅考错题）')}</div>
-                    <div style="font-size:0.9rem;color:#5e6f8d;margin-top:8px;">正确：${correctCount}/${questions.length} 题</div>
-                </div>
-                ${wrongQuestions.length > 0 ? `
-                <div style="margin-top:20px;">
-                    <div class="report-title" style="font-size:0.95rem;">❌ 错题解析</div>
-                    ${wrongQuestions.map(wq => `
-                        <div class="exam-question-item" style="border-left-color:#c0392b;">
-                            <div style="font-weight:600;">${wq.index + 1}. ${escapeHtml(wq.question)}</div>
-                            <div style="font-size:0.8rem;margin-top:4px;">
-                                <span style="color:#c0392b;">❌ 你的答案：${escapeHtml(wq.userAnswer)}</span>
-                            </div>
-                            <div style="font-size:0.8rem;color:#27ae60;">
-                                ✅ 正确答案：${escapeHtml(wq.answer || '详见解析')}
-                            </div>
-                            ${wq.options && wq.options.length > 0 ? '<div style="font-size:0.75rem;color:#5e6f8d;">选项：' + wq.options.map((o,i) => String.fromCharCode(65+i) + '. ' + escapeHtml(o.replace(/^✓\s*/, ''))).join(' / ') + '</div>' : ''}
-                        </div>
-                    `).join('')}
-                </div>` : ''}
-                <div style="display:flex;gap:12px;justify-content:center;margin-top:16px;">
-                    ${!passed && exam.attempts < (exam.maxAttempts||2) ? '<button class="generate-btn" id="retryExamBtn">🔄 补考·仅考错题（剩余' + ((exam.maxAttempts||2) - exam.attempts) + '次）</button>' : ''}
-                    <button class="small-outline" onclick="renderExamSystem()">📋 返回考试列表</button>
-                </div>
-            </div>
-        `;
+        var isRetakeExam = isRetake;
+        var wrongQuestions = newWrongQuestions;
+        var examMaxAttempts = exam.maxAttempts || 2;
+        var canRetry = !passed && exam.attempts < examMaxAttempts;
+        // 弹窗显示结果
+        var resultOverlay = document.createElement('div');
+        resultOverlay.className = 'modal-overlay'; resultOverlay.style.zIndex = '3000';
+        var wrongHtml = wrongQuestions.length > 0 ? `
+            <div style="margin-top:16px;text-align:left;max-height:40vh;overflow-y:auto;">
+                <div style="font-weight:700;color:#c0392b;margin-bottom:8px;">❌ 错题解析（${wrongQuestions.length}题）</div>
+                ${wrongQuestions.map(function(wq) { return '<div style="background:#fff5f5;border-left:3px solid #c0392b;padding:10px 14px;margin-bottom:8px;border-radius:0 8px 8px 0;">' +
+                    '<div style="font-weight:600;font-size:0.85rem;">' + (wq.index + 1) + '. ' + escapeHtml(wq.question || '') + '</div>' +
+                    '<div style="font-size:0.75rem;margin-top:4px;color:#c0392b;">❌ 你的答案：' + escapeHtml(wq.userAnswer || '未作答') + '</div>' +
+                    '<div style="font-size:0.75rem;color:#27ae60;">✅ 正确答案：' + escapeHtml(wq.answer || '详见解析') + '</div>' +
+                    (wq.options ? '<div style="font-size:0.7rem;color:#5e6f8d;margin-top:2px;">' + wq.options.map(function(o,i){return String.fromCharCode(65+i)+'. '+escapeHtml((o||'').replace(/^✓\\s*/, ''));}).join(' / ') + '</div>' : '') +
+                '</div>'; }).join('')}
+            </div>` : '';
+        resultOverlay.innerHTML = '<div class="modal-container" style="max-width:600px;">' +
+            '<div class="modal-header" style="background:' + (passed ? '#27ae60' : '#c0392b') + ';">' +
+                '<span>' + (passed ? '🎉 考试通过' : (canRetry ? '⚠️ 未通过（可补考）' : '❌ 未通过（补考已用完）')) + '</span>' +
+                '<button class="modal-close-btn" id="resultCloseBtn">✕</button></div>' +
+            '<div class="modal-body" style="text-align:center;">' +
+                '<div style="font-size:4rem;font-weight:800;color:' + (passed ? '#27ae60' : '#c0392b') + ';">' + score + '<span style="font-size:1.5rem;">分</span></div>' +
+                '<div style="font-size:0.9rem;color:#5e6f8d;">正确 ' + correctCount + '/' + questions.length + ' 题' +
+                    (isRetakeExam ? '（补考）' : '（首次）') + '</div>' +
+                wrongHtml +
+                '<div style="display:flex;gap:10px;justify-content:center;margin-top:16px;">' +
+                    (canRetry ? '<button class="generate-btn" id="retryExamPopupBtn">🔄 补考·仅考错题（剩余' + (examMaxAttempts - exam.attempts) + '次）</button>' : '') +
+                    '<button class="small-outline" id="backToListPopupBtn">📋 返回考试列表</button>' +
+                '</div>' +
+            '</div></div>';
+        document.body.appendChild(resultOverlay);
+        resultOverlay.querySelector('#resultCloseBtn').onclick = function() { resultOverlay.remove(); renderExamSystem(); };
+        resultOverlay.onclick = function(e) { if (e.target === resultOverlay) { resultOverlay.remove(); renderExamSystem(); } };
+        resultOverlay.querySelector('#backToListPopupBtn').onclick = function() { resultOverlay.remove(); renderExamSystem(); };
+        if (canRetry) {
+            resultOverlay.querySelector('#retryExamPopupBtn').onclick = function() {
+                resultOverlay.remove();
+                // 更新错题集后重新开始
+                var h2 = getExamHistory();
+                var e2 = h2[currentExamId];
+                if (e2) { e2.attempts = exam.attempts; e2.wrongAnswers = wrongQuestions; saveExamHistory(h2); }
+                startExam(currentExamId);
+            };
+        }
+        // 如果补考未通过，在考试系统中显示消息
+        if (!passed && !canRetry) {
+            exam._retakeFailed = true;
+            saveExamHistory(history);
+        }
 
-        setTimeout(() => {
-            const retryBtn = document.getElementById('retryExamBtn');
-            if (retryBtn) {
-                retryBtn.onclick = () => { currentExamAnswers = {}; startExam(currentExamId); };
-            }
-        }, 100);
+        document.getElementById('examActiveArea').innerHTML = '<div style="text-align:center;padding:40px;color:#5e6f8d;">📊 考试已提交，查看弹窗中的结果</div>';
     }
 
     function viewExamRecords(examId) {
