@@ -6366,7 +6366,10 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
         container.innerHTML = `
         <div style="max-width:1000px;margin:0 auto;">
             <div class="report-box" style="margin-bottom:20px;">
-                <div class="report-title">📝 培训案例收集</div>
+                <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">
+                    <div class="report-title" style="margin-bottom:0;">📝 培训案例收集</div>
+                    <button id="importFeishuCasesBtn" class="primary" style="background:#e67e22;padding:6px 14px;border-radius:20px;font-size:0.8rem;">📥 从飞书导入</button>
+                </div>
                 <div style="display:flex;gap:12px;flex-wrap:wrap;justify-content:center;margin-top:12px;">
                     <button class="analysis-type-btn ${currentTrainingSubNav==='biweekly'?'active':''}" data-subnav="biweekly">📅 双周培训案例</button>
                     <button class="analysis-type-btn ${currentTrainingSubNav==='manual'?'active':''}" data-subnav="manual">✍️ 手动录入</button>
@@ -6388,6 +6391,51 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
         if (currentTrainingSubNav === 'biweekly') renderBiweeklyTab();
         else if (currentTrainingSubNav === 'manual') renderManualTab();
         else if (currentTrainingSubNav === 'knowledge') renderKnowledgeTab();
+
+        // 从飞书导入案例
+        var importBtn = document.getElementById('importFeishuCasesBtn');
+        if (importBtn) {
+            importBtn.addEventListener('click', async () => {
+                if (!confirm('将从飞书表格导入案例数据，确认继续？')) return;
+                importBtn.textContent = '⏳ 导入中...';
+                importBtn.disabled = true;
+                try {
+                    var token = getErrorDashboardToken();
+                    if (!token) { alert('请先在失误分析看板授权飞书'); importBtn.textContent = '📥 从飞书导入'; importBtn.disabled = false; return; }
+                    var resp = await feishuApiFetch('https://open.feishu.cn/open-apis/sheets/v2/spreadsheets/Id6OsBKpWhYJm8ti08acihZbnNh/values/dd29f7?majorDimension=ROWS', {
+                        headers: { 'Authorization': 'Bearer ' + token }
+                    });
+                    var data = await resp.json();
+                    var rows = (data.data && data.data.valueRange && data.data.valueRange.values) || [];
+                    if (rows.length <= 1) { alert('表格无数据'); importBtn.textContent = '📥 从飞书导入'; importBtn.disabled = false; return; }
+                    var cases = getManualCases();
+                    var added = 0;
+                    for (var r = 1; r < rows.length; r++) {
+                        var row = rows[r];
+                        var qcCode = (row[0] || '').toString().trim();
+                        if (!qcCode) continue;
+                        var errorCategory = (row[1] || '').toString().trim();
+                        var issueDesc = (row[2] || '').toString().trim();
+                        var dirText = (row[4] || '').toString().trim();
+                        var issuePhotos = [];
+                        var dirPhotos = [];
+                        if (row[3] && row[3].link) issuePhotos.push(row[3].link);
+                        if (row[5] && row[5].link) dirPhotos.push(row[5].link);
+                        var exists = cases.find(function(c) { return c.qcCode === qcCode; });
+                        if (exists) continue;
+                        cases.unshift({ qcCode: qcCode, errorCategory: errorCategory, issueDesc: issueDesc, issuePhotos: issuePhotos, correctDir: dirText, dirPhotos: dirPhotos, createTime: Date.now() });
+                        added++;
+                    }
+                    saveManualCases(cases);
+                    alert('✅ 导入完成：新增 ' + added + ' 条案例（跳过 ' + (rows.length - 1 - added) + ' 条重复）');
+                    renderManualTab();
+                } catch(e) {
+                    alert('❌ 导入失败：' + e.message);
+                }
+                importBtn.textContent = '📥 从飞书导入';
+                importBtn.disabled = false;
+            });
+        }
     }
 
     // 子Tab1：双周培训案例
@@ -6531,10 +6579,7 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
 
         content.innerHTML = `
         <div class="report-box" style="margin-bottom:16px;" id="manualEntryForm">
-            <div style="display:flex;justify-content:space-between;align-items:center;">
-                <div class="report-title" style="font-size:0.95rem;">✍️ 手动录入新案例</div>
-                <button id="importFeishuCasesBtn" class="primary" style="background:#e67e22;padding:6px 14px;border-radius:20px;font-size:0.8rem;">📥 从飞书导入</button>
-            </div>
+            <div class="report-title" style="font-size:0.95rem;">✍️ 手动录入新案例</div>
             <div style="margin-bottom:12px;">
                 <label style="font-weight:600;color:#1f3a6b;">质检码 <span style="color:#c0392b;">*</span></label>
                 <input id="manualQcCode" type="text" placeholder="输入质检码编号" style="width:100%;padding:8px 12px;border:1px solid #d1d5db;border-radius:10px;margin-top:4px;font-size:0.9rem;">
@@ -6611,49 +6656,6 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
                     reader.readAsDataURL(file);
                 });
             }
-        });
-
-        // 从飞书导入案例
-        document.getElementById('importFeishuCasesBtn').addEventListener('click', async () => {
-            if (!confirm('将从飞书表格导入案例数据，确认继续？')) return;
-            document.getElementById('importFeishuCasesBtn').textContent = '⏳ 导入中...';
-            document.getElementById('importFeishuCasesBtn').disabled = true;
-            try {
-                var token = getErrorDashboardToken();
-                if (!token) { alert('请先在失误分析看板授权飞书'); return; }
-                var resp = await feishuApiFetch('https://open.feishu.cn/open-apis/sheets/v2/spreadsheets/Id6OsBKpWhYJm8ti08acihZbnNh/values/dd29f7?majorDimension=ROWS', {
-                    headers: { 'Authorization': 'Bearer ' + token }
-                });
-                var data = await resp.json();
-                var rows = (data.data && data.data.valueRange && data.data.valueRange.values) || [];
-                if (rows.length <= 1) { alert('表格无数据'); return; }
-                var cases = getManualCases();
-                var added = 0;
-                for (var r = 1; r < rows.length; r++) {
-                    var row = rows[r];
-                    var qcCode = (row[0] || '').toString().trim();
-                    if (!qcCode) continue;
-                    var errorCategory = (row[1] || '').toString().trim();
-                    var issueDesc = (row[2] || '').toString().trim();
-                    var dirText = (row[4] || '').toString().trim();
-                    var issuePhotos = [];
-                    var dirPhotos = [];
-                    if (row[3] && row[3].link) issuePhotos.push(row[3].link);
-                    if (row[5] && row[5].link) dirPhotos.push(row[5].link);
-                    // 去重
-                    var exists = cases.find(function(c) { return c.qcCode === qcCode; });
-                    if (exists) continue;
-                    cases.unshift({ qcCode: qcCode, errorCategory: errorCategory, issueDesc: issueDesc, issuePhotos: issuePhotos, correctDir: dirText, dirPhotos: dirPhotos, createTime: Date.now() });
-                    added++;
-                }
-                saveManualCases(cases);
-                alert('✅ 导入完成：新增 ' + added + ' 条案例（跳过 ' + (rows.length - 1 - added) + ' 条重复）');
-                renderManualTab();
-            } catch(e) {
-                alert('❌ 导入失败：' + e.message);
-            }
-            document.getElementById('importFeishuCasesBtn').textContent = '📥 从飞书导入';
-            document.getElementById('importFeishuCasesBtn').disabled = false;
         });
 
         // 保存手动录入案例
@@ -7786,7 +7788,9 @@ URL.revokeObjectURL(url);
             { nav: 'dashboard', label: '📊 仪表盘' },
             { nav: 'frontend', label: '👥 新人进度' }
         ]},
-        { id: 'learningMap', name: '🗺️ 学习地图', subs: [] },
+        { id: 'learningMap', name: '🗺️ 学习地图', subs: [
+            { nav: 'learningMapView', label: '📖 学习地图' }
+        ] },
         { id: 'qualityAnalysis', name: '📊 品控分析', subs: [
             { nav: 'dataAnalysis', label: '📈 数据分析' },
             { nav: 'errorDashboard', label: '📋 失误分析看板' }
@@ -7886,6 +7890,7 @@ URL.revokeObjectURL(url);
         else if (nav === 'questionBank') renderQuestionBank();
         else if (nav === 'examSystem') renderExamSystem();
         else if (nav === 'errorAnalysis') renderErrorAnalysis();
+        else if (nav === 'learningMapView') renderLearningMapView();
     }
     
     // ==================== 截图功能通用函数 ====================
@@ -11159,6 +11164,366 @@ URL.revokeObjectURL(url);
         saveKBList(kbList.filter(function(k) { return k.id !== kbId; }));
         if (kbActiveId === kbId) kbActiveId = null;
         renderKnowledgeBase();
+    }
+
+    // ==================== 学习地图模块 ====================
+    const LEARNING_MAP_SPREADSHEET = 'IZYasNkm5hNOfltLAAacDOAVnSd';
+    // 9个品类工作表（从飞书metainfo动态获取，此处为缓存）
+    let learningMapSheets = [];
+    let learningMapData = [];
+    let learningMapLastRefresh = null;
+
+    async function fetchLearningMapSheets() {
+        var token = getErrorDashboardToken();
+        if (!token) return [];
+        try {
+            var resp = await feishuApiFetch(
+                'https://open.feishu.cn/open-apis/sheets/v2/spreadsheets/' + LEARNING_MAP_SPREADSHEET + '/metainfo',
+                { headers: { 'Authorization': 'Bearer ' + token } }
+            );
+            var data = await resp.json();
+            if (data.code !== 0) return [];
+            return (data.data.sheets || []).map(function(s) {
+                return { sheetId: s.sheetId, title: s.title };
+            });
+        } catch(e) { return []; }
+    }
+
+    async function fetchLearningMapData(force) {
+        var token = getErrorDashboardToken();
+        if (!token) { console.log('学习地图：无飞书token'); return; }
+        try {
+            // 先获取工作表列表
+            if (learningMapSheets.length === 0) {
+                learningMapSheets = await fetchLearningMapSheets();
+            }
+            if (learningMapSheets.length === 0) return;
+            // 并行读取所有工作表
+            var allGroups = [];
+            for (var si = 0; si < learningMapSheets.length; si++) {
+                var sh = learningMapSheets[si];
+                var url = 'https://open.feishu.cn/open-apis/sheets/v2/spreadsheets/' + LEARNING_MAP_SPREADSHEET + '/values/' + sh.sheetId + '?majorDimension=ROWS';
+                var resp = await feishuApiFetch(url, { headers: { 'Authorization': 'Bearer ' + token } });
+                var data = await resp.json();
+                if (data.code !== 0) continue;
+                var rows = (data.data && data.data.valueRange && data.data.valueRange.values) || [];
+                if (rows.length === 0) continue;
+                // 解析该工作表
+                var groups = parseSheetGroups(rows, sh.title);
+                allGroups = allGroups.concat(groups);
+            }
+            learningMapData = allGroups;
+            learningMapLastRefresh = new Date();
+        } catch(e) {
+            console.log('学习地图获取异常:', e.message);
+        }
+    }
+
+    function parseSheetGroups(rows, sheetTitle) {
+        var groups = [];
+        var curGroup = null;
+        for (var i = 0; i < rows.length; i++) {
+            var row = rows[i];
+            // 提取所有非空文本列和链接
+            var texts = [];
+            var linkObj = null;
+            for (var j = 0; j < row.length; j++) {
+                var cell = row[j];
+                if (cell === null || cell === undefined || cell === '') continue;
+                if (Array.isArray(cell) && cell.length > 0 && cell[0].link) {
+                    linkObj = cell[0];
+                } else if (typeof cell === 'object' && cell.link) {
+                    linkObj = cell;
+                } else {
+                    var t = cell.toString().trim();
+                    if (t) texts.push({ idx: j, text: t });
+                }
+            }
+            // 判断行类型
+            var mergedText = texts.map(function(t){return t.text;}).join('');
+            if (mergedText.indexOf('纳期') >= 0 || mergedText.indexOf('完成') >= 0) {
+                if (curGroup) curGroup.deadline = mergedText;
+                continue;
+            }
+            // 无链接且只有1列有文本 → 分组标题
+            if (!linkObj && texts.length === 1 && texts[0].idx === 0) {
+                curGroup = { title: texts[0].text, sheetTitle: sheetTitle, items: [], deadline: '' };
+                groups.push(curGroup);
+                continue;
+            }
+            // 有文本，是学习项
+            if (texts.length > 0 && curGroup) {
+                // 最后一列文本是名称，前面的列拼接成路径描述
+                var name = texts[texts.length - 1].text;
+                var descParts = texts.slice(0, -1).map(function(t){return t.text;});
+                var desc = descParts.join(' > ');
+                var linkUrl = linkObj ? (linkObj.link || '') : '';
+                var linkText = linkObj ? (linkObj.text || '') : '';
+                curGroup.items.push({
+                    name: name,
+                    desc: desc,
+                    link: linkUrl,
+                    linkText: linkText
+                });
+            }
+        }
+        return groups;
+    }
+
+    // 品类封面配色方案
+    var CATEGORY_COLORS = [
+        ['#667eea','#764ba2'],['#f093fb','#f5576c'],['#4facfe','#00f2fe'],['#43e97b','#38f9d7'],
+        ['#fa709a','#fee140'],['#a18cd1','#fbc2eb'],['#fccb90','#d57eeb'],['#e0c3fc','#8ec5fc'],
+        ['#f9d423','#ff4e50']
+    ];
+
+    function renderCategoryCoverCard(sheetTitle, sheetGroups, totalItems, idx) {
+        var icon = {手机:'📱',平板:'📋',笔记本:'💻','相机&镜头':'📷',耳机:'🎧',手表:'⌚','游戏机&Switch&游戏卡':'🎮',手写笔:'🖊️','初入转转':'🚀'}[sheetTitle] || '📦';
+        var colors = CATEGORY_COLORS[idx % CATEGORY_COLORS.length];
+        var countText = sheetGroups.length + '组 · ' + totalItems + '课';
+        return '<div onclick="renderCategoryDetail(\'' + idx + '\')" style="cursor:pointer;border-radius:20px;overflow:hidden;background:linear-gradient(135deg,' + colors[0] + ',' + colors[1] + ');box-shadow:0 8px 32px rgba(0,0,0,0.12);transition:transform 0.2s,box-shadow 0.2s;" onmouseover="this.style.transform=\'translateY(-4px)\';this.style.boxShadow=\'0 12px 40px rgba(0,0,0,0.18)\';" onmouseout="this.style.transform=\'translateY(0)\';this.style.boxShadow=\'0 8px 32px rgba(0,0,0,0.12)\';">' +
+            '<div style="padding:28px 20px 22px;text-align:center;color:white;">' +
+                '<div style="font-size:3rem;margin-bottom:10px;filter:drop-shadow(0 2px 4px rgba(0,0,0,0.2));">' + icon + '</div>' +
+                '<div style="font-weight:800;font-size:1.05rem;margin-bottom:4px;text-shadow:0 1px 3px rgba(0,0,0,0.2);">' + escapeHtml(sheetTitle) + '</div>' +
+                '<div style="font-size:0.72rem;opacity:0.85;">' + countText + '</div>' +
+            '</div>' +
+        '</div>';
+    }
+
+    function renderSubGroupCover(g, colors) {
+        var itemsWithLink = g.items.filter(function(it){return !!it.link;}).length;
+        var info = itemsWithLink + '/' + g.items.length + ' 有链接';
+        return '<div onclick="renderGroupDetail(\'' + g._id + '\')" style="cursor:pointer;border-radius:16px;overflow:hidden;background:linear-gradient(135deg,' + colors[0] + ',' + colors[1] + ');box-shadow:0 4px 20px rgba(0,0,0,0.1);transition:transform 0.2s;" onmouseover="this.style.transform=\'translateY(-2px)\';" onmouseout="this.style.transform=\'translateY(0)\';">' +
+            '<div style="padding:24px 18px;text-align:center;color:white;">' +
+                '<div style="font-size:2.2rem;margin-bottom:8px;">📂</div>' +
+                '<div style="font-weight:700;font-size:0.9rem;text-shadow:0 1px 2px rgba(0,0,0,0.15);">' + escapeHtml(g.title) + '</div>' +
+                '<div style="font-size:0.68rem;opacity:0.8;margin-top:4px;">' + g.items.length + ' 项课程</div>' +
+                '<div style="font-size:0.62rem;opacity:0.7;">' + info + '</div>' +
+                (g.deadline ? '<div style="font-size:0.62rem;margin-top:4px;background:rgba(255,255,255,0.25);display:inline-block;padding:2px 8px;border-radius:8px;">⏰ ' + escapeHtml(g.deadline) + '</div>' : '') +
+            '</div>' +
+        '</div>';
+    }
+
+    // 存储结构化数据供钻取视图使用
+    window._lmCategories = [];
+    window._lmGroups = [];
+    window._lmReady = false;
+
+    async function renderLearningMapView() {
+        var container = document.getElementById('mainContent');
+        container.innerHTML = '<div style="text-align:center;padding:40px;color:#5e6f8d;">⏳ 加载学习地图数据...</div>';
+        await fetchLearningMapData(true);
+        if (!buildLMCache()) {
+            container.innerHTML = '<div style="max-width:900px;margin:0 auto;"><div class="report-box" style="text-align:center;padding:40px;"><div style="font-size:3rem;margin-bottom:16px;">🗺️</div><div style="font-size:1.1rem;color:#1f3a6b;font-weight:700;margin-bottom:8px;">学习地图加载失败</div><div style="color:#94a3b8;font-size:0.85rem;">请先在失误分析看板完成飞书授权后再试</div></div></div>';
+            return;
+        }
+        renderLMMainPage();
+    }
+
+    function buildLMCache() {
+        var groups = learningMapData;
+        if (groups.length === 0) return false;
+        var sheetMap = {};
+        groups.forEach(function(g) {
+            var key = g.sheetTitle || '其他';
+            if (!sheetMap[key]) sheetMap[key] = [];
+            g._id = 'lm_' + key + '_' + sheetMap[key].length;
+            sheetMap[key].push(g);
+        });
+        var sheetOrder = learningMapSheets.map(function(s){return s.title;}).filter(function(t){return sheetMap[t];});
+        Object.keys(sheetMap).forEach(function(t){if(sheetOrder.indexOf(t)<0) sheetOrder.push(t);});
+        var categories = [];
+        sheetOrder.forEach(function(sheetTitle, idx) {
+            var sheetGroups = sheetMap[sheetTitle];
+            var totalItems = 0;
+            sheetGroups.forEach(function(g){totalItems += g.items.length;});
+            categories.push({title: sheetTitle, groups: sheetGroups, totalItems: totalItems, idx: idx});
+        });
+        window._lmCategories = categories;
+        window._lmGroups = groups;
+        window._lmReady = true;
+        return true;
+    }
+
+    function renderLMMainPage() {
+        var container = document.getElementById('mainContent');
+        var categories = window._lmCategories;
+        var refreshStr = learningMapLastRefresh ? '上次刷新：' + learningMapLastRefresh.toLocaleTimeString('zh-CN') : '';
+        var cardsHtml = categories.map(function(cat, i) {
+            return renderCategoryCoverCard(cat.title, cat.groups, cat.totalItems, i);
+        }).join('');
+        container.innerHTML = '<div style="max-width:1100px;margin:0 auto;">' +
+            '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">' +
+                '<div class="report-title" style="margin-bottom:0;font-size:1.2rem;">🗺️ 学习地图</div>' +
+                '<div style="display:flex;align-items:center;gap:12px;">' +
+                    '<span style="font-size:0.7rem;color:#94a3b8;">' + categories.length + ' 品类 · ' + refreshStr + '</span>' +
+                    '<button onclick="renderLearningMapView()" style="background:#f1f5f9;border:1px solid #e2e8f0;border-radius:14px;padding:4px 14px;cursor:pointer;font-size:0.72rem;">🔄 刷新</button>' +
+                '</div>' +
+            '</div>' +
+            '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:18px;">' + cardsHtml + '</div>' +
+        '</div>';
+    }
+
+    // 知识领域分类：根据课程路径自动归类
+    var KNOWLEDGE_AREA_RULES = [
+        { name: '基础信息', icon: '📋', keywords: ['入门', '认识', '知识', '基础', '名词', '标准', 'sku', '品牌', '型号', '参数', '介绍', '文化', '组织', '架构', '展望', '流程', '办理', '实物'] },
+        { name: '显示类', icon: '🖥️', keywords: ['显示', '屏幕', '屏'] },
+        { name: '外观类', icon: '📱', keywords: ['外观', '成色', '外壳', '后壳', '中框', '正面'] },
+        { name: '功能类', icon: '⚙️', keywords: ['功能', '验机', '开机', '账号', '系统', '保修'] },
+        { name: '拆修类', icon: '🔧', keywords: ['拆修', '拆机', '维修', '浸液', '零件', '摄像', '电池', '主板', '副屏'] },
+        { name: '考核实操', icon: '📝', keywords: ['考核', '实操', '考试', '测试', '练习题'] },
+        { name: '业务介绍', icon: '📦', keywords: ['业务', '回收', '上门', '售后', '以旧换新', '曼哈顿'] }
+    ];
+
+    function classifyKnowledgeArea(item) {
+        var desc = (item.desc || '').toLowerCase();
+        var name = (item.name || '').toLowerCase();
+        var combined = desc + ' ' + name;
+        // 取 desc 的第一段作为主要路径
+        var firstSegment = (item.desc || '').split('>')[0].trim().toLowerCase();
+        var searchText = firstSegment + ' ' + name;
+        var bestMatch = null;
+        var bestScore = 0;
+        for (var i = 0; i < KNOWLEDGE_AREA_RULES.length; i++) {
+            var rule = KNOWLEDGE_AREA_RULES[i];
+            var score = 0;
+            for (var j = 0; j < rule.keywords.length; j++) {
+                var kw = rule.keywords[j].toLowerCase();
+                if (firstSegment.indexOf(kw) >= 0) score += 3;
+                if (name.indexOf(kw) >= 0) score += 2;
+                if (combined.indexOf(kw) >= 0) score += 1;
+            }
+            if (score > bestScore) { bestScore = score; bestMatch = rule; }
+        }
+        return bestMatch || KNOWLEDGE_AREA_RULES[0];
+    }
+
+    function renderCategoryDetail(catIdx) {
+        var cat = window._lmCategories[catIdx];
+        if (!cat) return;
+        var colors = CATEGORY_COLORS[catIdx % CATEGORY_COLORS.length];
+        var icon = {手机:'📱',平板:'📋',笔记本:'💻','相机&镜头':'📷',耳机:'🎧',手表:'⌚','游戏机&Switch&游戏卡':'🎮',手写笔:'🖊️','初入转转':'🚀'}[cat.title] || '📦';
+        // 收集所有item并按知识领域分类（保持文档原始顺序）
+        var areaMap = {};
+        var areaOrder = 0;
+        cat.groups.forEach(function(g) {
+            g.items.forEach(function(item) {
+                var area = classifyKnowledgeArea(item);
+                var key = area.name;
+                if (!areaMap[key]) { areaMap[key] = { area: area, items: [], deadline: '', order: areaOrder++ }; }
+                areaMap[key].items.push(item);
+                if (g.deadline && !areaMap[key].deadline) areaMap[key].deadline = g.deadline;
+            });
+        });
+        var areaList = Object.values(areaMap).sort(function(a, b) { return a.order - b.order; });
+        // 存储到全局供 detail 视图使用
+        window._lmCurrentAreas = areaList;
+        window._lmCurrentCatIdx = catIdx;
+
+        var container = document.getElementById('mainContent');
+        var cardsHtml = areaList.map(function(ar, i) {
+            var subColors = CATEGORY_COLORS[(catIdx + i + 1) % CATEGORY_COLORS.length];
+            var linkCount = ar.items.filter(function(it){return !!it.link;}).length;
+            return '<div onclick="renderAreaDetail(' + i + ')" style="cursor:pointer;border-radius:18px;overflow:hidden;background:linear-gradient(135deg,' + subColors[0] + ',' + subColors[1] + ');box-shadow:0 4px 20px rgba(0,0,0,0.1);transition:transform 0.2s;" onmouseover="this.style.transform=\'translateY(-2px)\';" onmouseout="this.style.transform=\'translateY(0)\';">' +
+                '<div style="padding:24px 18px;text-align:center;color:white;">' +
+                    '<div style="font-size:2.4rem;margin-bottom:8px;">' + ar.area.icon + '</div>' +
+                    '<div style="font-weight:700;font-size:0.95rem;text-shadow:0 1px 2px rgba(0,0,0,0.15);">' + ar.area.name + '</div>' +
+                    '<div style="font-size:0.7rem;opacity:0.85;margin-top:4px;">' + ar.items.length + ' 节课程 · ' + linkCount + ' 有链接</div>' +
+                    (ar.deadline ? '<div style="font-size:0.62rem;margin-top:6px;background:rgba(255,255,255,0.25);display:inline-block;padding:2px 8px;border-radius:8px;">⏰ ' + escapeHtml(ar.deadline) + '</div>' : '') +
+                '</div>' +
+            '</div>';
+        }).join('');
+
+        container.innerHTML = '<div style="max-width:1000px;margin:0 auto;">' +
+            '<div style="margin-bottom:20px;display:flex;align-items:center;gap:12px;">' +
+                '<button onclick="renderLMMainPage()" style="background:#f1f5f9;border:1px solid #e2e8f0;border-radius:50%;width:36px;height:36px;cursor:pointer;font-size:1rem;display:flex;align-items:center;justify-content:center;">←</button>' +
+                '<div style="width:40px;height:40px;border-radius:12px;background:linear-gradient(135deg,'+colors[0]+','+colors[1]+');display:flex;align-items:center;justify-content:center;font-size:1.3rem;">' + icon + '</div>' +
+                '<div>' +
+                    '<div style="font-weight:800;font-size:1.1rem;color:#1f3a6b;">' + escapeHtml(cat.title) + '</div>' +
+                    '<div style="font-size:0.7rem;color:#94a3b8;">' + areaList.length + ' 模块 · ' + cat.totalItems + ' 课</div>' +
+                '</div>' +
+            '</div>' +
+            '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:14px;">' + cardsHtml + '</div>' +
+        '</div>';
+    }
+
+    function renderAreaDetail(areaIdx) {
+        var area = (window._lmCurrentAreas || [])[areaIdx];
+        var catIdx = window._lmCurrentCatIdx || 0;
+        if (!area) return;
+        var colors = CATEGORY_COLORS[catIdx % CATEGORY_COLORS.length];
+        var container = document.getElementById('mainContent');
+        var itemsHtml = area.items.map(function(item) {
+            var linkHtml = '';
+            if (item.link) {
+                linkHtml = '<a href="' + item.link + '" target="_blank" style="background:#2563eb;color:white;padding:6px 16px;border-radius:20px;font-size:0.72rem;text-decoration:none;white-space:nowrap;">📖 开始学习</a>';
+            } else {
+                linkHtml = '<span style="background:#f1f5f9;color:#94a3b8;padding:6px 16px;border-radius:20px;font-size:0.72rem;">📌 无链接</span>';
+            }
+            return '<div style="background:#fff;border-radius:14px;padding:16px 18px;border:1px solid #eef2f6;display:flex;justify-content:space-between;align-items:center;gap:12px;box-shadow:0 1px 4px rgba(0,0,0,0.04);">' +
+                '<div style="flex:1;min-width:0;">' +
+                    '<div style="font-weight:600;font-size:0.85rem;color:#1f3a6b;">' + escapeHtml(item.name) + '</div>' +
+                    (item.desc ? '<div style="font-size:0.7rem;color:#5e6f8d;margin-top:3px;">📂 ' + escapeHtml(item.desc) + '</div>' : '') +
+                '</div>' +
+                '<div style="flex-shrink:0;">' + linkHtml + '</div>' +
+            '</div>';
+        }).join('');
+        container.innerHTML = '<div style="max-width:800px;margin:0 auto;">' +
+            '<div style="margin-bottom:20px;display:flex;align-items:center;gap:12px;">' +
+                '<button onclick="renderCategoryDetail(' + catIdx + ')" style="background:#f1f5f9;border:1px solid #e2e8f0;border-radius:50%;width:36px;height:36px;cursor:pointer;font-size:1rem;display:flex;align-items:center;justify-content:center;">←</button>' +
+                '<div style="width:40px;height:40px;border-radius:12px;background:linear-gradient(135deg,'+colors[0]+','+colors[1]+');display:flex;align-items:center;justify-content:center;font-size:1.3rem;">' + area.area.icon + '</div>' +
+                '<div style="flex:1;min-width:0;">' +
+                    '<div style="font-weight:800;font-size:1rem;color:#1f3a6b;">' + area.area.name + '</div>' +
+                    '<div style="font-size:0.7rem;color:#94a3b8;">' + area.items.length + ' 节课程' + (area.deadline ? ' · ⏰ ' + escapeHtml(area.deadline) : '') + '</div>' +
+                '</div>' +
+            '</div>' +
+            '<div style="display:flex;flex-direction:column;gap:10px;">' + itemsHtml + '</div>' +
+        '</div>';
+    }
+
+    function renderGroupDetail(groupId) {
+        var g = null;
+        var allGroups = window._lmGroups || [];
+        for (var i = 0; i < allGroups.length; i++) {
+            if (allGroups[i]._id === groupId) { g = allGroups[i]; break; }
+        }
+        if (!g) return;
+        // 找到所属品类
+        var catIdx = 0;
+        var cats = window._lmCategories || [];
+        for (var j = 0; j < cats.length; j++) {
+            for (var k = 0; k < cats[j].groups.length; k++) {
+                if (cats[j].groups[k]._id === groupId) { catIdx = j; break; }
+            }
+        }
+        var colors = CATEGORY_COLORS[catIdx % CATEGORY_COLORS.length];
+        var container = document.getElementById('mainContent');
+        var itemsHtml = g.items.map(function(item) {
+            var linkHtml = '';
+            if (item.link) {
+                linkHtml = '<a href="' + item.link + '" target="_blank" style="background:#2563eb;color:white;padding:6px 16px;border-radius:20px;font-size:0.72rem;text-decoration:none;white-space:nowrap;">📖 开始学习</a>';
+            } else {
+                linkHtml = '<span style="background:#f1f5f9;color:#94a3b8;padding:6px 16px;border-radius:20px;font-size:0.72rem;">📌 无链接</span>';
+            }
+            return '<div style="background:#fff;border-radius:14px;padding:16px 18px;border:1px solid #eef2f6;display:flex;justify-content:space-between;align-items:center;gap:12px;box-shadow:0 1px 4px rgba(0,0,0,0.04);">' +
+                '<div style="flex:1;min-width:0;">' +
+                    '<div style="font-weight:600;font-size:0.85rem;color:#1f3a6b;">' + escapeHtml(item.name) + '</div>' +
+                    (item.desc ? '<div style="font-size:0.7rem;color:#5e6f8d;margin-top:3px;">📂 ' + escapeHtml(item.desc) + '</div>' : '') +
+                '</div>' +
+                '<div style="flex-shrink:0;">' + linkHtml + '</div>' +
+            '</div>';
+        }).join('');
+        container.innerHTML = '<div style="max-width:800px;margin:0 auto;">' +
+            '<div style="margin-bottom:20px;display:flex;align-items:center;gap:12px;">' +
+                '<button onclick="renderCategoryDetail(' + catIdx + ')" style="background:#f1f5f9;border:1px solid #e2e8f0;border-radius:50%;width:36px;height:36px;cursor:pointer;font-size:1rem;display:flex;align-items:center;justify-content:center;">←</button>' +
+                '<div style="width:40px;height:40px;border-radius:12px;background:linear-gradient(135deg,'+colors[0]+','+colors[1]+');display:flex;align-items:center;justify-content:center;font-size:1.3rem;">📂</div>' +
+                '<div style="flex:1;min-width:0;">' +
+                    '<div style="font-weight:800;font-size:1rem;color:#1f3a6b;">' + escapeHtml(g.title) + '</div>' +
+                    '<div style="font-size:0.7rem;color:#94a3b8;">' + g.items.length + ' 项课程' + (g.deadline ? ' · ⏰ ' + escapeHtml(g.deadline) : '') + '</div>' +
+                '</div>' +
+            '</div>' +
+            '<div style="display:flex;flex-direction:column;gap:10px;">' + itemsHtml + '</div>' +
+        '</div>';
     }
 
     // ==================== 失误分析看板 ====================
