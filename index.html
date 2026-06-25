@@ -495,7 +495,7 @@
         reduceWeeks(weeks){ let newMax = Math.max(1, (this.stageProgress.maxWeek || 6) - weeks); if(newMax >= this.stageProgress.formalWeek){ this.stageProgress.maxWeek = newMax; return true; } return false; }
     }
 
-    let students=[],nextId=400,currentCity="all",currentNav="dashboard",currentPanoramaStudentId=null;
+    let students=[],nextId=400,currentCity="all",currentNav=null,currentPanoramaStudentId=null;
 
     function tryAdvanceStudent(s){
         let cur=s.stage;
@@ -11174,7 +11174,7 @@ URL.revokeObjectURL(url);
     let learningMapLastRefresh = null;
 
     async function fetchLearningMapSheets() {
-        var token = getErrorDashboardToken();
+        var token = getErrorDashboardToken() || await feishuRefreshToken() || await getFeishuToken();
         if (!token) return [];
         try {
             var resp = await feishuApiFetch(
@@ -11190,8 +11190,11 @@ URL.revokeObjectURL(url);
     }
 
     async function fetchLearningMapData(force) {
-        var token = getErrorDashboardToken();
-        if (!token) { console.log('学习地图：无飞书token'); return; }
+        var token = getErrorDashboardToken() || await feishuRefreshToken() || await getFeishuToken();
+        if (!token) {
+            learningMapData = [];
+            return;
+        }
         try {
             // 先获取工作表列表
             if (learningMapSheets.length === 0) {
@@ -11314,7 +11317,12 @@ URL.revokeObjectURL(url);
         container.innerHTML = '<div style="text-align:center;padding:40px;color:#5e6f8d;">⏳ 加载学习地图数据...</div>';
         await fetchLearningMapData(true);
         if (!buildLMCache()) {
-            container.innerHTML = '<div style="max-width:900px;margin:0 auto;"><div class="report-box" style="text-align:center;padding:40px;"><div style="font-size:3rem;margin-bottom:16px;">🗺️</div><div style="font-size:1.1rem;color:#1f3a6b;font-weight:700;margin-bottom:8px;">学习地图加载失败</div><div style="color:#94a3b8;font-size:0.85rem;">请先在失误分析看板完成飞书授权后再试</div></div></div>';
+            container.innerHTML = '<div style="max-width:500px;margin:60px auto;"><div class="report-box" style="text-align:center;padding:40px;">' +
+                '<div style="font-size:3rem;margin-bottom:16px;">⏳</div>' +
+                '<div style="font-size:1.1rem;color:#1f3a6b;font-weight:700;margin-bottom:8px;">数据加载中...</div>' +
+                '<div style="color:#5e6f8d;font-size:0.85rem;margin-bottom:20px;">正在从飞书获取最新学习地图数据</div>' +
+                '<button onclick="renderLearningMapView()" style="background:linear-gradient(135deg,#667eea,#764ba2);color:white;border:none;padding:12px 28px;border-radius:30px;cursor:pointer;font-weight:600;">🔄 重新加载</button>' +
+            '</div></div>';
             return;
         }
         renderLMMainPage();
@@ -11697,6 +11705,34 @@ URL.revokeObjectURL(url);
         };
     }
 
+    // 应用级 tenant_access_token（无需用户授权，存储在云端自动续期）
+    async function getFeishuToken() {
+        var stored = null;
+        try { stored = JSON.parse(localStorage.getItem('feishu_tenant_token') || 'null'); } catch(e) {}
+        // 有效期内直接返回
+        if (stored && stored.expiresAt > Date.now() + 60000) return stored.access_token;
+        // 过期或不存在，重新获取
+        try {
+            var body = JSON.stringify({ app_id: FEISHU_CONFIG.appId, app_secret: FEISHU_CONFIG.appSecret });
+            var resp = await feishuApiFetch('https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: body
+            });
+            var data = await resp.json();
+            if (data.code === 0 && data.tenant_access_token) {
+                var tokenData = {
+                    access_token: data.tenant_access_token,
+                    expiresAt: Date.now() + (data.expire || 7200) * 1000 - 60000
+                };
+                localStorage.setItem('feishu_tenant_token', JSON.stringify(tokenData));
+                return tokenData.access_token;
+            }
+        } catch(e) { console.log('获取tenant_token失败:', e.message); }
+        // 兜底：尝试旧用户token
+        if (stored && stored.expiresAt > Date.now()) return stored.access_token;
+        return null;
+    }
     function getErrorDashboardToken() {
         var stored = null;
         try { stored = JSON.parse(localStorage.getItem('feishu_token') || 'null'); } catch(e) {}
@@ -11740,7 +11776,7 @@ URL.revokeObjectURL(url);
         return (data.data && data.data.valueRange && data.data.valueRange.values) || [];
     }
 
-    async function refreshErrorDashboardData(force) {
+    async function refreshErrorDashboardData(force, silent) {
         if (errorDashboardRefreshing) return;
         errorDashboardRefreshing = true;
         var allErrors = [];
@@ -11748,6 +11784,7 @@ URL.revokeObjectURL(url);
         try {
             var token = getErrorDashboardToken();
             if (!token) token = await feishuRefreshToken();
+            if (!token) token = await getFeishuToken();
             if (!token) {
                 // 需要重新授权 — 检查是否是已授权但token过期
                 var storedToken = null;
@@ -11809,11 +11846,11 @@ URL.revokeObjectURL(url);
             errorDashboardSheetStatus = status;
             errorDashboardLastRefresh = new Date();
             errorDashboardPage = 1;
-            renderErrorDashboardContent();
+            if (!silent) renderErrorDashboardContent();
         } catch(e) {
             errorDashboardSheetStatus = { '_global': { ok: false, error: e.message } };
             errorDashboardLastRefresh = new Date();
-            renderErrorDashboardContent();
+            if (!silent) renderErrorDashboardContent();
         }
         errorDashboardRefreshing = false;
     }
@@ -12757,6 +12794,8 @@ URL.revokeObjectURL(url);
             document.getElementById('mainContent').innerHTML = '<div style="text-align:center;padding:60px;"><div style="font-size:3rem;">🗺️</div><div style="color:#94a3b8;">学习地图已过期或不存在</div></div>';
             return;
         }
+        // 标记为独立学习页，阻止其他模块覆盖
+        window._isLearningPlanView = true;
         // 隐藏侧边栏（分享链接独立视图）
         var sidebar = document.querySelector('.sidebar');
         var main = document.getElementById('mainContent');
@@ -12919,6 +12958,7 @@ URL.revokeObjectURL(url);
     }
 
     function renderErrorDashboardContent() {
+        if (window._isLearningPlanView) return; // 学习计划独立页，不覆盖
         var filtered = getFilteredErrors();
         var allSites = getSiteList();
         var allCategories = getCategoryList(filtered);
@@ -13272,7 +13312,7 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
 
     // 每120分钟自动刷新
     setInterval(function() {
-        if (currentNav === 'errorDashboard') refreshErrorDashboardData(true);
+        if (currentNav === 'errorDashboard' && !window._isLearningPlanView) refreshErrorDashboardData(true);
     }, 7200000);
 
     // ==================== 考试系统模块 ====================
@@ -13803,8 +13843,10 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
 
     // 启动：处理飞书OAuth回调 + 云端拉数据 + 初始化
     var _initOauthDone = false;
+    var _justAuthorized = false; // 本次页面加载是否刚完成飞书授权
     (async function() {
         var initParams = new URLSearchParams(window.location.search);
+        var initLearnPlan = initParams.get('learnPlan') || ((location.hash.match(/learnPlan=(.+)/)||[])[1]) || null;
         var oauthCode = initParams.get('code');
         if (oauthCode) {
             try {
@@ -13818,7 +13860,8 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
                 if (tokenData.code === 0 && tokenData.data) {
                     saveErrorDashboardToken(tokenData.data.access_token, tokenData.data.refresh_token, tokenData.data.expires_in);
                     _initOauthDone = true;
-                    window.history.replaceState({}, '', window.location.pathname);
+                    _justAuthorized = true;
+                    if (!initLearnPlan) window.history.replaceState({}, '', window.location.pathname);
                     showToast('✅ 飞书授权成功，正在加载数据...', 'success');
                 } else {
                     showToast('❌ 授权失败：' + (tokenData.msg || '未知错误'), 'error');
@@ -13836,7 +13879,6 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
         });
 
         // 检查是否有学习地图分享链接（需在渲染前处理）
-        var initLearnPlan = initParams.get('learnPlan') || ((location.hash.match(/learnPlan=(.+)/)||[])[1]) || null;
         if (initLearnPlan) {
             var sbLP = document.querySelector('.sidebar');
             if (sbLP) sbLP.style.display = 'none';
@@ -13849,20 +13891,18 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
         document.querySelector('.nav-btn[data-nav="admin"]').addEventListener('click', function() { switchNav('admin'); });
         _syncPullAll().then(function(count) {
             if (count > 0) { try { loadData(); } catch(e) {} }
-            // 预加载：学习地图 + 失误分析看板（后台异步，不阻塞渲染）
-            setTimeout(function() {
-                if (getErrorDashboardToken()) {
-                    fetchLearningMapData(true);
-                    refreshErrorDashboardData(true);
-                }
-            }, 1500);
             if (initLearnPlan) { renderLearningPlanView(initLearnPlan); return; }
             var initExam = initParams.get('exam');
             var initReport = initParams.get('report');
             if (initExam) { startStandaloneExam(initExam); }
             else if (initReport) { openSharedReport(initReport); }
-            else if (_initOauthDone) { switchNav('errorDashboard'); }
-            else { renderSubContent('dashboard'); }
+            else if (!currentNav) { // 仅在用户未手动导航时才自动跳转
+                if (_justAuthorized) { switchNav('errorDashboard'); } // 刚授权完→跳失误看板
+                else { renderSubContent('dashboard'); } // 正常打开→仪表盘
+            }
+            // 后台静默预加载（只拉数据，不渲染页面）
+            fetchLearningMapData(true);
+            refreshErrorDashboardData(true, true);
         });
     })();
     // 永久删除雍彬彬的数据 + 修正旧版名字（从localStorage清理）+ 迁移旧数据到扁平按周期存储
