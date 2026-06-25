@@ -11647,7 +11647,7 @@ URL.revokeObjectURL(url);
             var needExpand = totalCatCount > 5 || totalNoteRows > 20;
             if (needExpand) {
                 var isAll = showAllCats && showAllNotes;
-                html += '<div style="text-align:center;margin-top:6px;"><span onclick="window._showAllCats=true;window._showAllNotes=true;document.getElementById(\'popupNoteArea\').innerHTML=window._renderNoteTable();" style="color:#2a5298;cursor:pointer;font-size:0.75rem;text-decoration:underline;">' + (isAll ? '收起▲' : '查看全部（' + totalCatCount + '类/' + totalNoteRows + '条）▼') + '</span></div>';
+                html += '<div style="text-align:center;margin-top:6px;"><span onclick="if(window._showAllCats&&window._showAllNotes){window._showAllCats=false;window._showAllNotes=false;}else{window._showAllCats=true;window._showAllNotes=true;}document.getElementById(\'popupNoteArea\').innerHTML=window._renderNoteTable();" style="color:#2a5298;cursor:pointer;font-size:0.75rem;text-decoration:underline;">' + (isAll ? '收起▲' : '查看全部（' + totalCatCount + '类/' + totalNoteRows + '条）▼') + '</span></div>';
             }
             return html;
         }
@@ -11663,14 +11663,229 @@ URL.revokeObjectURL(url);
             '<div class="modal-body">' +
                 '<div style="font-weight:700;color:#1f3a6b;margin-bottom:6px;">📊 失误来源</div>' +
                 '<div style="background:#f8fafc;padding:8px;border-radius:12px;margin-bottom:14px;display:flex;gap:8px;">' + (sourceCols || '<span style="color:#94a3b8;">-</span>') + '</div>' +
-                '<div style="font-weight:700;color:#1f3a6b;margin-bottom:6px;">📋 失误详细分析</div>' +
+                // 失误总结及改善建议
+                (function(){
+                    var now2 = new Date();
+                    var dayOfWeek = now2.getDay();
+                    var mondayOffset = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
+                    var thisMonday = new Date(now2.getFullYear(), now2.getMonth(), now2.getDate() - mondayOffset);
+                    thisMonday.setHours(0,0,0,0);
+                    // 四周数据（含完整记录）
+                    var weeks = [];
+                    for (var w = 0; w < 4; w++) {
+                        var ws = new Date(thisMonday.getTime() - w * 7 * 86400000);
+                        var we = new Date(ws.getTime() + 6 * 86400000);
+                        var weekErrs = errorDashboardData.filter(function(e) {
+                            return e.reviewer === name && e.date >= ws && e.date <= we;
+                        });
+                        var cats = {};
+                        weekErrs.forEach(function(e) { var c = e.category||'(未分类)'; cats[c] = (cats[c]||0)+1; });
+                        weeks.push({label: w===0?'本周':(w+'周前'), count: weekErrs.length, cats: cats, start: ws, end: we, errors: weekErrs});
+                    }
+                    // 存储全局用于交互
+                    window._personWeeks = weeks;
+                    window._personName = name;
+                    window._personCurWeekIdx = 0; // 默认选中本周
+                    window._personCatFilter = null; // 类别筛选
+                    window._personPopupTotal = total;
+                    // 趋势判断
+                    var trendIcon = '', trendText = '', trendColor = '';
+                    var recentAvg = (weeks[1].count + weeks[2].count + weeks[3].count) / 3;
+                    if (weeks[0].count > recentAvg && recentAvg > 0 && weeks[0].count - recentAvg >= 2) {
+                        trendIcon = '📈'; trendText = '上升趋势'; trendColor = '#c0392b';
+                    } else if (weeks[0].count < recentAvg && recentAvg - weeks[0].count >= 2) {
+                        trendIcon = '📉'; trendText = '下降趋势'; trendColor = '#166534';
+                    } else if (weeks[0].count === 0 && recentAvg === 0) {
+                        trendIcon = '✅'; trendText = '无失误'; trendColor = '#166534';
+                    } else {
+                        trendIcon = '➡️'; trendText = '保持平稳'; trendColor = '#5e6f8d';
+                    }
+                    // 渲染薄弱环节标签
+                    window._personRenderWeakTags = function(wkIdx) {
+                        var wk = weeks[wkIdx];
+                        var wCats = Object.entries(wk.cats).sort(function(a,b){return b[1]-a[1];}).slice(0,5);
+                        if (wCats.length === 0) return '<span style="color:#94a3b8;font-size:0.72rem;">暂无足够数据</span>';
+                        var selFilter = window._personCatFilter;
+                        return wCats.map(function(wc){
+                            var wpct = wk.count > 0 ? Math.round(wc[1]/wk.count*100) : 0;
+                            var isSel = selFilter === wc[0];
+                            return '<span onclick=\"window._personSelectCat(\''+escapeHtml(wc[0]).replace(/'/g,'\\\'')+'\')\" style=\"cursor:pointer;background:'+(isSel?'#dbeafe':'#fff')+';border:1px solid '+(isSel?'#2563eb':'#e2e8f0')+';border-radius:16px;padding:4px 12px;font-size:0.7rem;\">'+escapeHtml(wc[0])+' <b style=\"color:#c0392b;\">'+wc[1]+'次</b> <span style=\"color:#5e6f8d;\">('+wpct+'%)</span></span>';
+                        }).join('');
+                    }
+                    // 渲染周柱
+                    var maxWk = Math.max(1, weeks[0].count, weeks[1].count, weeks[2].count, weeks[3].count);
+                    var weekBars = weeks.map(function(wk, i) {
+                        var h = maxWk > 0 ? Math.max(8, Math.round(wk.count / maxWk * 40)) : 8;
+                        var isActive = i === 0; // 默认本周
+                        return '<div onclick=\"window._personSwitchWeek('+i+')\" style=\"flex:1;text-align:center;cursor:pointer;\" id=\"weekBar'+i+'\"><div style=\"font-size:0.7rem;font-weight:600;color:#2d3748;\">'+wk.count+'</div><div style=\"height:'+h+'px;background:'+(isActive?'#2563eb':'#cbd5e1')+';border-radius:4px 4px 0 0;margin:2px 4px 0;transition:background 0.2s;\"></div><div style=\"font-size:0.55rem;color:#94a3b8;margin-top:2px;\">'+wk.label+'</div></div>';
+                    }).join('');
+                    // 改善建议（基于本周）
+                    var curCats = weeks[0].cats;
+                    var weakCats = Object.entries(curCats).sort(function(a,b){return b[1]-a[1];}).slice(0,5);
+                    var sugItems = [];
+                    if (weeks[0].count >= 6) {
+                        sugItems.push({icon:'📝', title:'精准出卷考试', desc:'当前失误较多，建议针对「'+(weakCats[0]?weakCats[0][0]:'整体')+'」等薄弱类别出具精准试卷，强化考核。', color:'#c0392b', bg:'#fde8e8'});
+                    }
+                    if (weakCats.length >= 2 && (weakCats[0][1]+weakCats[1][1]) >= 3) {
+                        sugItems.push({icon:'📖', title:'专项培训', desc:'「'+weakCats[0][0]+'」和「'+weakCats[1][0]+'」为高频失误类别，建议安排针对性培训资料学习。', color:'#8e44ad', bg:'#f3e8ff'});
+                    }
+                    if (weeks[0].count >= 3 || (weeks[0].count >= 1 && trendText === '上升趋势')) {
+                        sugItems.push({icon:'🗺️', title:'学习地图推送', desc:'根据薄弱环节推送对应学习路径，帮助系统性提升薄弱领域。', color:'#e67e22', bg:'#fef3c7'});
+                    }
+                    if (weeks[0].count <= 2 && weeks[0].count > 0) {
+                        sugItems.push({icon:'👀', title:'持续关注', desc:'失误数量可控，建议持续观察，避免新问题出现。', color:'#2563eb', bg:'#dbeafe'});
+                    }
+                    if (weeks[0].count === 0 && recentAvg === 0) {
+                        sugItems.push({icon:'🌟', title:'保持优秀', desc:'近期无误记录，请继续保持高标准操作。', color:'#166534', bg:'#d4edda'});
+                    }
+                    if (sugItems.length === 0) {
+                        sugItems.push({icon:'📋', title:'常规跟进', desc:'按日常培训计划正常跟进即可。', color:'#5e6f8d', bg:'#f1f5f9'});
+                    }
+                    var suggHtml = sugItems.map(function(s){
+                        return '<div style="background:'+s.bg+';border-left:3px solid '+s.color+';padding:8px 12px;border-radius:0 8px 8px 0;margin-bottom:6px;">' +
+                            '<span style="font-weight:700;font-size:0.75rem;color:'+s.color+';">'+s.icon+' '+s.title+'</span>' +
+                            '<div style="font-size:0.7rem;color:#5e6f8d;margin-top:2px;">'+s.desc+'</div></div>';
+                    }).join('');
+                    return '<div style="font-weight:700;color:#1f3a6b;margin-bottom:6px;margin-top:14px;">📝 失误总结及改善建议</div>' +
+                        '<div style="background:#f8fafc;border-radius:12px;padding:14px;margin-bottom:14px;border:1px solid #eef2f6;">' +
+                            '<div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;">' +
+                                '<div style="font-weight:700;font-size:0.78rem;color:#1f3a6b;white-space:nowrap;">📅 四周趋势</div>' +
+                                '<span style="font-size:0.7rem;color:'+trendColor+';font-weight:600;">'+trendIcon+' '+trendText+'</span>' +
+                                '<span style="font-size:0.6rem;color:#94a3b8;">（点击柱切换）</span>' +
+                            '</div>' +
+                            '<div style="display:flex;gap:0;align-items:flex-end;margin-bottom:14px;" id="weekBarsArea">'+weekBars+'</div>' +
+                            '<div style="font-weight:700;font-size:0.78rem;color:#1f3a6b;margin-bottom:8px;">🔍 薄弱环节 <span style="font-size:0.6rem;color:#94a3b8;" id="weakLabel">（本周）</span></div>' +
+                            '<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:14px;" id="weakTagsArea">'+window._personRenderWeakTags(0)+'</div>' +
+                            '<div style="font-weight:700;font-size:0.78rem;color:#1f3a6b;margin-bottom:8px;">💡 改善建议</div>' +
+                            suggHtml +
+                        '</div>';
+                })() +
+                '<div style="font-weight:700;color:#1f3a6b;margin-bottom:6px;">📋 失误详细分析 <span style="font-size:0.6rem;color:#94a3b8;" id="detailLabel"></span></div>' +
                 '<div id="popupNoteArea" style="max-height:50vh;overflow-y:auto;">' + renderNoteTable() + '</div>' +
             '</div>' +
         '</div>';
         window._renderNoteTable = renderNoteTable;
+        // 存储 catList 用于动态重建 note table
+        window._personCatList = catList;
+        window._personFilteredTotal = total;
+        window._personRenderNoteTableForWeek = function(wkIdx) {
+            var wk = window._personWeeks[wkIdx];
+            var wkErrs = wk.errors;
+            // Build catGroups from week errors
+            var cg = {};
+            wkErrs.forEach(function(e) {
+                var cat = e.category || '(未分类)';
+                var note = (e.note || '').trim() || '(无备注)';
+                if (!cg[cat]) cg[cat] = { cat: cat, total: 0, details: {} };
+                cg[cat].total++;
+                if (!cg[cat].details[note]) cg[cat].details[note] = { note: note, count: 0, qcCodes: [] };
+                cg[cat].details[note].count++;
+                if (e.qcCode && cg[cat].details[note].qcCodes.indexOf(e.qcCode) < 0) cg[cat].details[note].qcCodes.push(e.qcCode);
+            });
+            var cl = Object.values(cg).sort(function(a,b){return b.total-a.total;});
+            var t = wkErrs.length;
+            // Filter by selected category if any
+            var catFilter = window._personCatFilter;
+            if (catFilter) {
+                cl = cl.filter(function(c){return c.cat === catFilter;});
+            }
+            window._showAllCats = false;
+            window._showAllNotes = false;
+            // Build table rows
+            var rows_arr = [];
+            var visibleCats = cl.slice(0, 5);
+            var noteRowCount = 0;
+            visibleCats.forEach(function(cg2) {
+                var catPct = t > 0 ? Math.round(cg2.total/t*100) : 0;
+                var details = Object.values(cg2.details).sort(function(a,b){return b.count-a.count;});
+                details.forEach(function(d, di) {
+                    noteRowCount++;
+                    if (noteRowCount > 20) return;
+                    var row = [];
+                    if (di === 0) {
+                        row.push('<td rowspan=\"'+details.length+'\" style=\"text-align:center;vertical-align:middle;\">'+escapeHtml(cg2.cat)+'</td>');
+                        row.push('<td rowspan=\"'+details.length+'\" style=\"text-align:center;vertical-align:middle;\">'+cg2.total+'</td>');
+                        row.push('<td rowspan=\"'+details.length+'\" style=\"text-align:center;vertical-align:middle;\"><div style=\"display:inline-block;width:60px;height:8px;background:#eef2f6;border-radius:4px;vertical-align:middle;\"><div style=\"width:'+catPct+'%;height:100%;background:'+barHeatColor(catPct)+';border-radius:4px;\"></div></div><span style=\"font-size:0.7rem;margin-left:4px;\">'+catPct+'%</span></td>');
+                    }
+                    row.push('<td style=\"text-align:center;\">'+escapeHtml(d.note)+(d.count>1?' <b style=\"color:#c0392b;\">&times;'+d.count+'</b>':'')+'</td>');
+                    row.push('<td style=\"text-align:center;font-size:0.7rem;\">'+d.qcCodes.join(', ')+'</td>');
+                    rows_arr.push('<tr>'+row.join('')+'</tr>');
+                });
+            });
+            var html = '<table class=\"error-table\" style=\"width:100%;table-layout:fixed;\"><thead><tr><th style=\"width:18%;\">失误类别</th><th style=\"width:8%;\">个数</th><th style=\"width:18%;\">占比</th><th style=\"width:40%;\">失误详细</th><th style=\"width:16%;\">质检码</th></tr></thead><tbody>';
+            if (rows_arr.length === 0) html += '<tr><td colspan=\"5\" style=\"padding:20px;color:#94a3b8;\">暂无记录</td></tr>';
+            else html += rows_arr.join('');
+            html += '</tbody></table>';
+            var totalCatCount = cl.length;
+            var totalNoteRows = 0;
+            cl.forEach(function(cg3){totalNoteRows+=Object.keys(cg3.details).length;});
+            if (totalCatCount > 5 || totalNoteRows > 20) {
+                var isExpanded = window._showAllCats && window._showAllNotes;
+                html += '<div style=\"text-align:center;margin-top:6px;\"><span onclick=\"window._personExpandAll()\" style=\"color:#2a5298;cursor:pointer;font-size:0.75rem;text-decoration:underline;\">'+(isExpanded?'收起▲':'查看全部（'+totalCatCount+'类/'+totalNoteRows+'条）▼')+'</span></div>';
+            }
+            return html;
+        };
+        window._personExpandAll = function() {
+            if (window._showAllCats && window._showAllNotes) {
+                window._showAllCats = false;
+                window._showAllNotes = false;
+            } else {
+                window._showAllCats = true;
+                window._showAllNotes = true;
+            }
+            var area = document.getElementById('popupNoteArea');
+            if (area) area.innerHTML = window._personRenderNoteTableForWeek(window._personCurWeekIdx);
+        };
+        window._personSwitchWeek = function(idx) {
+            window._personCurWeekIdx = idx;
+            window._personCatFilter = null;
+            // Update bars
+            var wk = window._personWeeks;
+            var maxW = Math.max(1, wk[0].count, wk[1].count, wk[2].count, wk[3].count);
+            for (var i = 0; i < 4; i++) {
+                var bar = document.getElementById('weekBar'+i);
+                if (bar) {
+                    var h = Math.max(8, Math.round(wk[i].count/maxW*40));
+                    bar.querySelector('div:nth-child(2)').style.background = i===idx?'#2563eb':'#cbd5e1';
+                    bar.querySelector('div:nth-child(2)').style.height = h+'px';
+                    bar.querySelector('div:nth-child(1)').textContent = wk[i].count;
+                }
+            }
+            // Update weak tags
+            var tagsArea = document.getElementById('weakTagsArea');
+            if (tagsArea) tagsArea.innerHTML = window._personRenderWeakTags(idx);
+            // Update label
+            var wl = document.getElementById('weakLabel');
+            if (wl) wl.textContent = '（'+wk[idx].label+'）';
+            var dl = document.getElementById('detailLabel');
+            if (dl) dl.textContent = '';
+            // Update note table
+            window._showAllCats = false;
+            window._showAllNotes = false;
+            var noteArea = document.getElementById('popupNoteArea');
+            if (noteArea) noteArea.innerHTML = window._personRenderNoteTableForWeek(idx);
+        };
+        window._personSelectCat = function(cat) {
+            if (window._personCatFilter === cat) {
+                window._personCatFilter = null;
+            } else {
+                window._personCatFilter = cat;
+            }
+            // Update weak tags
+            var tagsArea = document.getElementById('weakTagsArea');
+            if (tagsArea) tagsArea.innerHTML = window._personRenderWeakTags(window._personCurWeekIdx);
+            // Update detail label
+            var dl = document.getElementById('detailLabel');
+            if (dl) dl.textContent = window._personCatFilter ? '（筛选：'+window._personCatFilter+'，点击标签取消）' : '';
+            // Update note table
+            window._showAllCats = false;
+            window._showAllNotes = false;
+            var noteArea = document.getElementById('popupNoteArea');
+            if (noteArea) noteArea.innerHTML = window._personRenderNoteTableForWeek(window._personCurWeekIdx);
+        };
         document.body.appendChild(overlay);
-        overlay.querySelector('#popupCloseBtn').onclick = function() { overlay.remove(); window._renderNoteTable = null; };
-        overlay.onclick = function(e) { if (e.target === overlay) { overlay.remove(); window._renderNoteTable = null; } };
+        overlay.querySelector('#popupCloseBtn').onclick = function() { overlay.remove(); window._renderNoteTable = null; window._personWeeks = null; window._personSwitchWeek = null; window._personSelectCat = null; };
+        overlay.onclick = function(e) { if (e.target === overlay) { overlay.remove(); window._renderNoteTable = null; window._personWeeks = null; window._personSwitchWeek = null; window._personSelectCat = null; } };
     }
 
     // 按失误类别比例出卷（30题）
@@ -12313,7 +12528,7 @@ URL.revokeObjectURL(url);
                         }
                         return btns;
                     }
-                    var allPeople = sortedReviewers;
+                    var allPeople = sortedReviewers.filter(function(e) { return e[1] > 0; });
                     var portraitPage = window._portraitPage || 1;
                     var portraitPageSize = 20;
                     var portraitTotalPages = Math.ceil(allPeople.length / portraitPageSize) || 1;
@@ -12402,38 +12617,33 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
                     '</div>' +
                 '</div>' +
             '</div>' +
-            // 数据表格 + 初审画像（3:2），表格默认10条可滚动
+            // 数据表格 + 初审画像（3:2），默认20条，>20翻页
             (function() {
-                var showAllTable = (window._showAllTable === true);
-                var initRows = filtered.slice(0, 10);
-                var initHtml = '';
-                if (initRows.length === 0) initHtml = '<tr><td colspan="7" style="padding:30px;color:#94a3b8;">暂无匹配的失误记录</td></tr>';
-                else initRows.forEach(function(e) {
-                    var srcTag = e.source === '初审' ? 'cs' : (e.source === '抽检' ? 'cj' : 'qa');
-                    initHtml += '<tr><td>' + e.dateStr + '</td><td>' + escapeHtml(e.site) + '</td><td><span class="source-tag ' + srcTag + '">' + e.source + '</span></td><td>' + escapeHtml(e.category) + '</td><td>' + escapeHtml(e.reviewer) + '</td><td style="text-align:center;max-width:300px;font-size:0.78rem;">' + escapeHtml(e.note) + '</td><td style="font-size:0.7rem;">' + escapeHtml(e.qcCode) + '</td></tr>';
-                });
-                var expandBtn = '';
-                if (filtered.length > 10) {
-                    expandBtn = '<div style="text-align:center;margin-top:6px;"><span onclick="window._showAllTable=' + (!showAllTable) + ';renderErrorDashboardContent();" style="color:#2a5298;cursor:pointer;font-size:0.75rem;text-decoration:underline;">' + (showAllTable ? '收起▲' : '查看全部(' + filtered.length + '条)▼') + '</span></div>';
-                }
+                var PG_SIZE = 20;
+                var totalFiltered = filtered.length;
                 var tableBlock;
-                if (showAllTable) {
-                    // 展开全部：每20条一页
-                    var pgSize = 20;
-                    var allPages = Math.ceil(filtered.length / pgSize) || 1;
-                    var pg = errorDashboardPage || 1;
-                    if (pg > allPages) pg = allPages;
-                    var start = (pg - 1) * pgSize;
-                    var pgData = filtered.slice(start, start + pgSize);
+                if (totalFiltered === 0) {
+                    tableBlock = '<div style="flex:1;overflow:auto;min-height:0;"><div class="error-table-wrapper"><table class="error-table"><thead><tr><th>日期</th><th>站点</th><th>来源</th><th>失误类别</th><th>初审人</th><th>失误备注</th><th>质检码</th></tr></thead><tbody><tr><td colspan="7" style="padding:30px;color:#94a3b8;">暂无匹配的失误记录</td></tr></tbody></table></div></div>';
+                } else if (totalFiltered <= PG_SIZE) {
                     var allRows = '';
-                    pgData.forEach(function(e) {
+                    filtered.forEach(function(e) {
                         var srcTag = e.source === '初审' ? 'cs' : (e.source === '抽检' ? 'cj' : 'qa');
                         allRows += '<tr><td>' + e.dateStr + '</td><td>' + escapeHtml(e.site) + '</td><td><span class="source-tag ' + srcTag + '">' + e.source + '</span></td><td>' + escapeHtml(e.category) + '</td><td>' + escapeHtml(e.reviewer) + '</td><td style="text-align:center;max-width:300px;font-size:0.78rem;">' + escapeHtml(e.note) + '</td><td style="font-size:0.7rem;">' + escapeHtml(e.qcCode) + '</td></tr>';
                     });
-                    var pgHtml = allPages > 1 ? '<div class="pagination"><button ' + (pg <= 1 ? 'disabled' : '') + ' onclick="errorDashboardPage=' + (pg - 1) + ';renderErrorDashboardContent();">上一页</button><span style="font-size:0.8rem;">' + pg + '/' + allPages + '</span><button ' + (pg >= allPages ? 'disabled' : '') + ' onclick="errorDashboardPage=' + (pg + 1) + ';renderErrorDashboardContent();">下一页</button></div>' : '';
-                    tableBlock = '<div style="flex:1;overflow:auto;min-height:0;"><div class="error-table-wrapper"><table class="error-table"><thead><tr><th>日期</th><th>站点</th><th>来源</th><th>失误类别</th><th>初审人</th><th>失误备注</th><th>质检码</th></tr></thead><tbody>' + allRows + '</tbody></table>' + pgHtml + '</div></div><div style="margin-top:auto;padding-top:8px;">' + expandBtn + '</div>';
+                    tableBlock = '<div style="flex:1;overflow:auto;min-height:0;"><div class="error-table-wrapper"><table class="error-table"><thead><tr><th>日期</th><th>站点</th><th>来源</th><th>失误类别</th><th>初审人</th><th>失误备注</th><th>质检码</th></tr></thead><tbody>' + allRows + '</tbody></table></div></div>';
                 } else {
-                    tableBlock = '<div style="flex:1;overflow:auto;min-height:0;"><div class="error-table-wrapper" style="max-height:400px;overflow-y:auto;"><table class="error-table"><thead><tr><th>日期</th><th>站点</th><th>来源</th><th>失误类别</th><th>初审人</th><th>失误备注</th><th>质检码</th></tr></thead><tbody>' + initHtml + '</tbody></table></div></div><div style="margin-top:auto;padding-top:8px;">' + expandBtn + '</div>';
+                    var totalPages = Math.ceil(totalFiltered / PG_SIZE);
+                    var pg = errorDashboardPage || 1;
+                    if (pg > totalPages) pg = totalPages;
+                    var start = (pg - 1) * PG_SIZE;
+                    var pgData = filtered.slice(start, start + PG_SIZE);
+                    var pgRows = '';
+                    pgData.forEach(function(e) {
+                        var srcTag = e.source === '初审' ? 'cs' : (e.source === '抽检' ? 'cj' : 'qa');
+                        pgRows += '<tr><td>' + e.dateStr + '</td><td>' + escapeHtml(e.site) + '</td><td><span class="source-tag ' + srcTag + '">' + e.source + '</span></td><td>' + escapeHtml(e.category) + '</td><td>' + escapeHtml(e.reviewer) + '</td><td style="text-align:center;max-width:300px;font-size:0.78rem;">' + escapeHtml(e.note) + '</td><td style="font-size:0.7rem;">' + escapeHtml(e.qcCode) + '</td></tr>';
+                    });
+                    var pgHtml = '<div class="pagination"><button ' + (pg <= 1 ? 'disabled' : '') + ' onclick="errorDashboardPage=' + (pg - 1) + ';renderErrorDashboardContent();">上一页</button><span style="font-size:0.8rem;">' + pg + '/' + totalPages + '（共' + totalFiltered + '条）</span><button ' + (pg >= totalPages ? 'disabled' : '') + ' onclick="errorDashboardPage=' + (pg + 1) + ';renderErrorDashboardContent();">下一页</button></div>';
+                    tableBlock = '<div style="flex:1;overflow:auto;min-height:0;"><div class="error-table-wrapper"><table class="error-table"><thead><tr><th>日期</th><th>站点</th><th>来源</th><th>失误类别</th><th>初审人</th><th>失误备注</th><th>质检码</th></tr></thead><tbody>' + pgRows + '</tbody></table>' + pgHtml + '</div></div>';
                 }
                 return '<div style="display:flex;gap:16px;align-items:stretch;">' +
                     '<div class="report-box" style="flex:3;min-width:0;margin-bottom:0;display:flex;flex-direction:column;">' +
