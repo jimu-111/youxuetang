@@ -13861,7 +13861,7 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
 
     function _syncSetItem(key, value) {
         _realLS.setItem(key, value);
-        if (key && !key.startsWith('_') && key !== 'manualCases' && key !== 'biweeklyCases' && key !== 'knowledgeCases') {
+        if (key && !key.startsWith('_')) {
             _syncQueue[key] = value;
             if (_syncTimer) clearTimeout(_syncTimer);
             _syncTimer = setTimeout(_syncFlush, 2000);
@@ -13883,7 +13883,7 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
 
     function _syncRemoveItem(key) {
         _realLS.removeItem(key);
-        if (key && !key.startsWith('_') && key !== 'manualCases' && key !== 'biweeklyCases' && key !== 'knowledgeCases') {
+        if (key && !key.startsWith('_')) {
             // 从云端删除该 key
             fetch(SUPABASE_URL + '/rest/v1/app_data?key=eq.' + encodeURIComponent(key), {
                 method: 'DELETE',
@@ -13984,6 +13984,21 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
             refreshErrorDashboardData(true, true);
         });
     })();
+
+    // 全局飞书图片兜底：加载失败时通过代理重试
+    document.addEventListener('error', function(e) {
+        if (e.target.tagName === 'IMG' && e.target.src) {
+            var src = e.target.src;
+            if (src.indexOf('feishu') < 0 && src.indexOf('bytedance') < 0 && src.indexOf('larksuite') < 0) return;
+            if (src.indexOf('data:') === 0) return;
+            if (e.target._retried) return;
+            e.target._retried = true;
+            fetchImageAsBase64(src).then(function(base64) {
+                if (base64 && base64 !== src) e.target.src = base64;
+            });
+        }
+    }, true);
+
     // 永久删除雍彬彬的数据 + 修正旧版名字（从localStorage清理）+ 迁移旧数据到扁平按周期存储
     (function() {
         try {
