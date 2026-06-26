@@ -294,6 +294,17 @@
         .error-dashboard .source-tag.cs { background:#e8f5e9; color:#2e7d32; }
         .error-dashboard .source-tag.cj { background:#fff3e0; color:#e67e22; }
         .error-dashboard .source-tag.qa { background:#e3f2fd; color:#1565c0; }
+        .error-dashboard .site-tag { display:inline-block; padding:2px 8px; border-radius:10px; font-size:0.7rem; font-weight:500; }
+        .error-dashboard .site-tag.sz { background:#e3f2fd; color:#1565c0; }
+        .error-dashboard .site-tag.qd { background:#fff3e0; color:#e67e22; }
+        .error-dashboard .site-tag.cd { background:#e8f5e9; color:#2e7d32; }
+        .error-dashboard tr.row-low { background:#fff0f0; }
+        .error-dashboard tr.row-low td { color:#2d3748; }
+        .error-dashboard tr.row-mid { background:#ffe0e0; }
+        .error-dashboard tr.row-mid td { color:#2d3748; }
+        .error-dashboard tr.row-high { background:#ffd0d0; }
+        .error-dashboard tr.row-high td { color:#2d3748; }
+        .exam-tab-btn.active { background:#1f3a6b !important; color:#fff !important; border-color:#1f3a6b !important; }
         .error-dashboard .refresh-info { font-size:0.7rem; color:#94a3b8; display:flex; align-items:center; gap:6px; }
         .error-dashboard .sheet-status { display:flex; gap:12px; flex-wrap:wrap; margin-bottom:12px; }
         .error-dashboard .sheet-dot { display:flex; align-items:center; gap:4px; font-size:0.7rem; color:#5e6f8d; }
@@ -409,7 +420,9 @@
 
     // ==================== 存储生成的周报 ====================
     let generatedReports = JSON.parse(localStorage.getItem('generatedReports') || '{}');
-    function saveReportToLocal(name, htmlContent) { generatedReports[name] = htmlContent; localStorage.setItem('generatedReports', JSON.stringify(generatedReports)); var sec = document.getElementById('reportGenSection'); if (sec) { sec.remove(); appendReportSection(); } }
+    function refreshReportSection() { var s = document.getElementById('reportGenSection'); if (s && s.parentNode) s.parentNode.removeChild(s); appendReportSection(); }
+    function saveReportToLocal(name, htmlContent) { generatedReports[name] = htmlContent; localStorage.setItem('generatedReports', JSON.stringify(generatedReports)); refreshReportSection(); }
+    function deleteReport(name) { delete generatedReports[name]; localStorage.setItem('generatedReports', JSON.stringify(generatedReports)); refreshReportSection(); }
     
     // ==================== 新人进度模块 ====================
     const ADMIN_PASSWORD = "888888";
@@ -3784,8 +3797,11 @@
     
     function generateWeeklyReport(analysis, filterResult, weekRange, periodRanges, allRows, dateColumn, reviewerColumn, sourceColumn, reviewerPeriodStats, sortedReviewers, totalCounts, totalThisWeek, totalLastWeek, increaseCount, decreaseCount, sameCount, top3Reviewers, diffClass, diffText, persona, accRateThisPeriod, accRateLastPeriod, categoryRowsHtml, sourceRowsHtml, siteColumn) {
         const periodName = periodRanges[0].periodName;
+        const thisPeriodKey = periodRanges[0].periodKey || '';
         const isMonth = periodName.includes('月') && !periodName.includes('周');
-        const reportName = isMonth ? `成都品控${periodName}月报` : `成都品控${periodName}周报`;
+        var selectedSites = window._selectedSites || [];
+        var siteLabel = selectedSites.length === 1 ? selectedSites[0] : (selectedSites.length > 1 ? selectedSites.join('/') : '全站点');
+        const reportName = isMonth ? siteLabel+'品控'+periodName+'月报' : siteLabel+'品控'+periodName+'周报';
         const thisPeriodLabel = isMonth ? '本月' : '本周';
         const lastPeriodLabel = isMonth ? '上月' : '上周';
 
@@ -5125,9 +5141,14 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
             btn.addEventListener('click', (e) => { e.stopPropagation(); generateExamForReviewer(btn.dataset.genexam2); });
         });
 
-        document.getElementById('generateReportBtn')?.addEventListener('click', () => {
-            generateWeeklyReport(analysis, filterResult, periodRange, periodRanges, allRows, dateColumn, reviewerColumn, sourceColumn, reviewerPeriodStats, sortedReviewers, totalCounts, totalThisPeriod, totalLastPeriod, increaseCount, decreaseCount, sameCount, topReviewers, diffClass, diffText, persona, accRateThisPeriod, accRateLastPeriod, categoryRows, sourceRows, siteColumn);
-        });
+        var genBtn = document.getElementById('generateReportBtn');
+        if (genBtn) {
+            genBtn.addEventListener('click', function() {
+                try {
+                    generateWeeklyReport(analysis, filterResult, periodRange, periodRanges, allRows, dateColumn, reviewerColumn, sourceColumn, reviewerPeriodStats, sortedReviewers, totalCounts, totalThisPeriod, totalLastPeriod, increaseCount, decreaseCount, sameCount, topReviewers, diffClass, diffText, persona, accRateThisPeriod, accRateLastPeriod, categoryRows, sourceRows, siteColumn);
+                } catch(e) { alert('生成报告失败：' + e.message); }
+            });
+        }
         
         // 抽检工作表切换
         const samplingSelect = document.getElementById('samplingSheetSelect');
@@ -6162,7 +6183,7 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
     }
     
     function renderReportGen() {
-        const reportNames = Object.keys(generatedReports);
+        const reportNames = Object.keys(generatedReports).filter(function(n){ return n.indexOf('培训资料') !== 0; });
         let html = `<div class="report-box"><div class="report-title">📄 已生成的周报</div>`;
         if (reportNames.length === 0) {
             html += '<div class="empty-placeholder">暂无生成的周报，请先上传数据分析并点击"生成周报"</div>';
@@ -6171,11 +6192,12 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
             reportNames.forEach(name => {
                 const blob = new Blob([generatedReports[name]], { type: 'text/html' });
                 const url = URL.createObjectURL(blob);
-                html += `<div style="background:#f8fafc;padding:8px 12px;border-radius:12px;margin-bottom:8px;display:flex;justify-content:space-between;align-items:center;">
-                            <span>📄 ${name}</span>
-                            <div><a href="${url}" download="${name}.html" style="color:#2a5298;text-decoration:none;margin-left:12px;">📥 下载</a>
-                            <a href="${url}" target="_blank" style="color:#2a5298;text-decoration:none;margin-left:12px;">👁️ 预览</a></div>
-                        </div>`;
+                html += '<div style=\"background:#f8fafc;padding:8px 12px;border-radius:12px;margin-bottom:8px;display:flex;justify-content:space-between;align-items:center;\">' +
+                    '<span>📄 '+name+'</span>' +
+                    '<div><a href=\"'+url+'\" download=\"'+name+'.html\" style=\"color:#2a5298;text-decoration:none;margin-left:12px;\">📥 下载</a>' +
+                    '<a href=\"'+url+'\" target=\"_blank\" style=\"color:#2a5298;text-decoration:none;margin-left:12px;\">👁️ 预览</a>' +
+                    '<span class=\"del-report\" data-rname=\"'+name+'\" style=\"color:#c0392b;cursor:pointer;margin-left:12px;\">🗑️ 删除</span></div>' +
+                '</div>';
             });
             html += '</div>';
         }
@@ -6188,7 +6210,7 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
         if (!container) return;
         // 避免重复追加
         if (document.getElementById('reportGenSection')) return;
-        const reportNames = Object.keys(generatedReports);
+        const reportNames = Object.keys(generatedReports).filter(function(n){ return n.indexOf('培训资料') !== 0; });
         let html = '<div id="reportGenSection" class="report-box" style="margin-top:24px;"><div class="report-title">📄 已生成的报告</div>';
         if (reportNames.length === 0) {
             html += '<div class="empty-placeholder">暂无生成的周报，请先上传数据分析并点击"生成周报"</div>';
@@ -6196,20 +6218,26 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
             reportNames.forEach(name => {
                 const blob = new Blob([generatedReports[name]], { type: 'text/html' });
                 const url = URL.createObjectURL(blob);
-                html += `<div style="background:#f8fafc;padding:8px 12px;border-radius:12px;margin-bottom:8px;display:flex;justify-content:space-between;align-items:center;">
-                            <span>📄 ${name}</span>
-                            <div><a href="${url}" download="${name}.html" style="color:#2a5298;text-decoration:none;margin-left:12px;">📥 下载</a>
-                            <a href="${url}" target="_blank" style="color:#2a5298;text-decoration:none;margin-left:12px;">👁️ 预览</a></div>
-                        </div>`;
+                html += '<div style=\"background:#f8fafc;padding:8px 12px;border-radius:12px;margin-bottom:8px;display:flex;justify-content:space-between;align-items:center;\">' +
+                    '<span>📄 '+name+'</span>' +
+                    '<div><a href=\"'+url+'\" download=\"'+name+'.html\" style=\"color:#2a5298;text-decoration:none;margin-left:12px;\">📥 下载</a>' +
+                    '<a href=\"'+url+'\" target=\"_blank\" style=\"color:#2a5298;text-decoration:none;margin-left:12px;\">👁️ 预览</a>' +
+                    '<span class=\"del-report\" data-rname=\"'+name+'\" style=\"color:#c0392b;cursor:pointer;margin-left:12px;\">🗑️ 删除</span></div>' +
+                '</div>';
             });
         }
         html += '</div>';
         container.insertAdjacentHTML('beforeend', html);
+        setTimeout(function(){
+            document.querySelectorAll('.del-report').forEach(function(el){
+                el.onclick = function(){ deleteReport(el.dataset.rname); };
+            });
+        }, 100);
     }
 
 
     // ==================== 培训案例收集库（总入口） ====================
-    let currentCaseHubTab = 'collection'; // collection | library | materials | exam
+    let currentCaseHubTab = 'collection'; // collection | library | exam
 
     function showImageViewer(src) {
         var overlay = document.createElement('div');
@@ -6233,7 +6261,6 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
         const tabs = [
             { id: 'collection', label: '📝 培训案例收集', icon: '📝' },
             { id: 'library', label: '📚 案例库', icon: '📚' },
-            { id: 'materials', label: '📄 生成培训资料', icon: '📄' },
             { id: 'exam', label: '📝 生成考题', icon: '📝' }
         ];
 
@@ -6269,7 +6296,6 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
     function switchCaseHubTab() {
         if (currentCaseHubTab === 'collection') renderTrainingCollection('caseHubContent');
         else if (currentCaseHubTab === 'library') renderCaseLibraryView('caseHubContent');
-        else if (currentCaseHubTab === 'materials') renderGenerateMaterials('caseHubContent');
         else if (currentCaseHubTab === 'exam') renderGenerateExam('caseHubContent');
     }
 
@@ -10921,7 +10947,7 @@ URL.revokeObjectURL(url);
             questions: selected20, generatedAt: new Date().toISOString(),
             source: '失误前五警示画像',
             mistakeCategories: categoryKeys, status: 'pending', attempts: 0, records: [],
-            timeLimit: 30, maxAttempts: 2, wrongAnswers: []
+            timeLimit: 40, maxAttempts: 2, wrongAnswers: []
         };
         examData[examId] = examRecord;
         saveExamHistory(examData);
@@ -12046,7 +12072,51 @@ URL.revokeObjectURL(url);
         window._popupGoPage = function(pg) { var a = document.getElementById('popupTableArea'); if (a) a.innerHTML = renderTable(pg); };
         var overlay = document.createElement('div');
         overlay.className = 'modal-overlay'; overlay.style.zIndex = '2000';
-        overlay.innerHTML = '<div class="modal-container" style="max-width:1000px;"><div class="modal-header">' + title + '（' + total + '条）<button class="modal-close-btn" id="popupCloseBtn">✕</button></div><div class="modal-body"><div style="background:#f8fafc;padding:10px;border-radius:12px;margin-bottom:12px;font-size:0.78rem;">👤 人员分布：' + (revStats || '-') + '</div><div id="popupTableArea">' + renderTable(1) + '</div></div></div>';
+        // 三站点占比对比模块
+        var siteTotal = {};
+        var siteReviewers = {};
+        filtered.forEach(function(e){
+            var s = e.site || '未知';
+            siteTotal[s] = (siteTotal[s]||0) + 1;
+            if (!siteReviewers[s]) siteReviewers[s] = {};
+            siteReviewers[s][e.reviewer] = (siteReviewers[s][e.reviewer]||0) + 1;
+        });
+        var sortedSites = Object.keys(siteTotal).sort(function(a,b){return siteTotal[b]-siteTotal[a];}).slice(0,3);
+        function heatBarColor(ratio) {
+            var h = Math.round(40 * (1 - ratio)); // 40(orange) → 0(red)
+            return 'hsl('+h+', 85%, 55%)';
+        }
+        var siteCardsHtml = '';
+        sortedSites.forEach(function(s){
+            var siteCnt = siteTotal[s]||0;
+            var sitePct = total>0 ? (siteCnt/total*100).toFixed(1) : 0;
+            var siteBarW = Math.max(3, Math.round(parseFloat(sitePct)));
+            var revs = siteReviewers[s] || {};
+            var sortedRevs = Object.entries(revs).sort(function(a,b){return b[1]-a[1];});
+            var revsHtml = sortedRevs.slice(0,5).map(function(r){
+                var rPct = siteCnt>0 ? (r[1]/siteCnt*100).toFixed(0) : 0;
+                var barW = Math.max(3, Math.round(parseFloat(rPct)));
+                return '<div style="display:flex;align-items:center;gap:4px;font-size:0.65rem;margin-bottom:2px;">' +
+                    '<span style="flex:0 0 auto;width:44px;text-align:center;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="'+escapeHtml(r[0])+'">'+escapeHtml(r[0])+'</span>' +
+                    '<span style="flex:0 0 auto;width:24px;text-align:right;color:#5e6f8d;">'+r[1]+'</span>' +
+                    '<span style="flex:0 0 auto;width:30px;text-align:right;color:#94a3b8;font-size:0.6rem;">'+rPct+'%</span>' +
+                    '<div style="flex:1;height:5px;background:#f1f5f9;border-radius:3px;"><div style="width:'+barW+'%;height:100%;background:'+heatBarColor(parseFloat(rPct)/100)+';border-radius:3px;"></div></div>' +
+                '</div>';
+            }).join('');
+            siteCardsHtml += '<div style="flex:1;min-width:180px;background:#f8fafc;border-radius:12px;padding:12px;border:1px solid #eef2f6;">' +
+                '<div style="text-align:center;margin-bottom:8px;">' +
+                    '<div style="font-weight:700;font-size:0.85rem;color:#1f3a6b;">📍 '+escapeHtml(s)+'</div>' +
+                    '<div style="font-size:0.7rem;color:#5e6f8d;">'+siteCnt+'条 / '+sitePct+'%</div>' +
+                    '<div style="height:8px;background:#f1f5f9;border-radius:4px;margin-top:4px;"><div style="width:'+siteBarW+'%;height:100%;background:'+heatBarColor(parseFloat(sitePct)/100)+';border-radius:4px;"></div></div>' +
+                '</div>' +
+                '<div style="border-top:1px solid #eef2f6;padding-top:8px;">' +
+                    '<div style="font-size:0.65rem;color:#94a3b8;margin-bottom:4px;">人员分布</div>' +
+                    (revsHtml || '<div style="color:#94a3b8;font-size:0.65rem;">-</div>') +
+                '</div>' +
+            '</div>';
+        });
+        var topModule = sortedSites.length > 0 ? '<div style="display:flex;gap:10px;margin-bottom:12px;">'+siteCardsHtml+'</div>' : '';
+        overlay.innerHTML = '<div class="modal-container" style="max-width:1000px;"><div class="modal-header">' + title + '（' + total + '条）<button class="modal-close-btn" id="popupCloseBtn">✕</button></div><div class="modal-body">' + topModule + '<div style="background:#f8fafc;padding:10px;border-radius:12px;margin-bottom:12px;font-size:0.78rem;">👤 人员分布：' + (revStats || '-') + '</div><div id="popupTableArea">' + renderTable(1) + '</div></div></div>';
         document.body.appendChild(overlay);
         overlay.querySelector('#popupCloseBtn').onclick = function() { overlay.remove(); };
         overlay.onclick = function(e) { if (e.target === overlay) { overlay.remove(); } };
@@ -12457,7 +12527,7 @@ URL.revokeObjectURL(url);
             source: '失误分析看板',
             mistakeCategories: categories.map(function(e) { return e[0]; }),
             status: 'pending', attempts: 0, records: [],
-            timeLimit: 30, maxAttempts: 2, wrongAnswers: []
+            timeLimit: 40, maxAttempts: 2, wrongAnswers: []
         };
         examData[examId] = examRecord;
         saveExamHistory(examData);
@@ -12472,7 +12542,7 @@ URL.revokeObjectURL(url);
             '<div class="modal-header">📝 按失误比例出卷<button class="modal-close-btn" id="genExamClose">✕</button></div>' +
             '<div class="modal-body" style="text-align:center;">' +
                 '<div style="font-size:1.3rem;font-weight:700;color:#1f3a6b;">考试码：<span style="color:#c0392b;font-size:1.8rem;">' + examCode + '</span></div>' +
-                '<div style="font-size:0.85rem;color:#5e6f8d;margin-top:4px;">共 ' + selectedQuestions.length + ' 题 | 100分制 | ⏱️30分钟 | 支持补考</div>' +
+                '<div style="font-size:0.85rem;color:#5e6f8d;margin-top:4px;">共 ' + selectedQuestions.length + ' 题 | 100分制 | ⏱️40分钟 | 支持补考</div>' +
                 '<div style="font-size:0.75rem;color:#94a3b8;margin-top:4px;">' + categories.slice(0, 5).map(function(e) { return e[0] + '(' + (catQuestions[e[0]] || 0) + '题)'; }).join(' / ') + '</div>' +
                 '<div style="display:flex;gap:16px;flex-wrap:wrap;margin-top:12px;text-align:center;">' +
                     '<div style="flex:1;min-width:200px;background:#f8fafc;border-radius:14px;padding:14px;border:1px solid #eef2f6;">' +
@@ -12486,7 +12556,10 @@ URL.revokeObjectURL(url);
                         '<div style="font-size:0.7rem;color:#94a3b8;margin-top:4px;">微信/飞书扫码考试</div>' +
                     '</div>' +
                 '</div>' +
-                '<button class="generate-btn" style="width:100%;margin-top:12px;" onclick="this.closest(\'.modal-overlay\').remove();switchNav(\'examSystem\');">📋 前往考试系统</button>' +
+                '<div style=\"display:flex;gap:8px;margin-top:12px;\">' +
+                    '<button class=\"push-exam-btn\" style=\"flex:1;background:#e67e22;color:white;border:none;padding:8px 16px;border-radius:20px;cursor:pointer;font-size:0.8rem;\">📤 推送</button>' +
+                    '<button class=\"goto-exam-btn\" style=\"flex:1;border:1px solid #e2e8f0;background:#f8fafc;padding:8px 16px;border-radius:20px;cursor:pointer;font-size:0.8rem;\">📋 前往考试系统</button>' +
+                '</div>' +
             '</div>' +
         '</div>';
         document.body.appendChild(overlay);
@@ -12567,7 +12640,7 @@ URL.revokeObjectURL(url);
             source: '失误画像精准匹配',
             mistakeCategories: categories.map(function(e) { return e[0]; }),
             status: 'pending', attempts: 0, records: [],
-            timeLimit: 30, maxAttempts: 2, wrongAnswers: []
+            timeLimit: 40, maxAttempts: 2, wrongAnswers: []
         };
         examData[examId] = examRecord;
         saveExamHistory(examData);
@@ -12581,7 +12654,7 @@ URL.revokeObjectURL(url);
             '<div class="modal-header">🎯 ' + escapeHtml(reviewerName) + ' · 精准试卷<button class="modal-close-btn" id="pexamClose">✕</button></div>' +
             '<div class="modal-body" style="text-align:center;">' +
                 '<div style="font-size:1.3rem;font-weight:700;color:#1f3a6b;">考试码：<span style="color:#c0392b;font-size:1.8rem;">' + examCode + '</span></div>' +
-                '<div style="font-size:0.85rem;color:#5e6f8d;margin-top:4px;">' + selected.length + '题 | 100分制 | ⏱️30分钟 | 支持补考</div>' +
+                '<div style="font-size:0.85rem;color:#5e6f8d;margin-top:4px;">' + selected.length + '题 | 100分制 | ⏱️40分钟 | 支持补考</div>' +
                 '<div style="font-size:0.7rem;color:#94a3b8;margin-top:4px;">' + categories.map(function(e) { return e[0] + '(' + (catQuestions[e[0]] || 0) + '题)'; }).join(' / ') + '</div>' +
                 '<div style="display:flex;gap:16px;flex-wrap:wrap;margin-top:12px;text-align:center;">' +
                     '<div style="flex:1;min-width:200px;background:#f8fafc;border-radius:14px;padding:14px;border:1px solid #eef2f6;">' +
@@ -12595,12 +12668,29 @@ URL.revokeObjectURL(url);
                         '<div style="font-size:0.7rem;color:#94a3b8;margin-top:4px;">微信/飞书扫码考试</div>' +
                     '</div>' +
                 '</div>' +
-                '<button class="generate-btn" style="width:100%;margin-top:12px;" onclick="this.closest(\'.modal-overlay\').remove();switchNav(\'examSystem\');">📋 前往考试系统</button>' +
+                '<div style=\"display:flex;gap:8px;margin-top:12px;\">' +
+                    '<button class=\"push-exam-btn\" style=\"flex:1;background:#e67e22;color:white;border:none;padding:8px 16px;border-radius:20px;cursor:pointer;font-size:0.8rem;\">📤 推送</button>' +
+                    '<button class=\"goto-exam-btn\" style=\"flex:1;border:1px solid #e2e8f0;background:#f8fafc;padding:8px 16px;border-radius:20px;cursor:pointer;font-size:0.8rem;\">📋 前往考试系统</button>' +
+                '</div>' +
             '</div>' +
         '</div>';
         document.body.appendChild(modal);
         modal.querySelector('#pexamClose').onclick = function() { modal.remove(); };
         modal.onclick = function(e) { if (e.target === modal) modal.remove(); };
+        modal.querySelector('.goto-exam-btn').onclick = function(){ modal.remove(); switchNav('examSystem'); };
+        if (isPushedThisPeriod(reviewerName, 'exam')) {
+            modal.querySelector('.push-exam-btn').textContent = '✅ 已推送';
+            modal.querySelector('.push-exam-btn').style.background = '#27ae60';
+        }
+        modal.querySelector('.push-exam-btn').onclick = function(){
+            var btn = this;
+            confirmRepush(reviewerName, 'exam', function(){
+                var ep = getTrainingPushes();
+                ep.push({reviewerName: reviewerName, reportName: '精准出卷_'+reviewerName+'_'+new Date().toISOString().slice(0,10), caseCount: selected.length, time: new Date().toISOString(), type: 'exam'});
+                saveTrainingPushes(ep);
+                btn.textContent = '✅ 已推送'; btn.style.background = '#27ae60';
+            });
+        };
         // 生成二维码
         setTimeout(function() {
             var qrContainer = document.getElementById('pexamQRCode');
@@ -12623,34 +12713,106 @@ URL.revokeObjectURL(url);
     }
 
     // 按灯弹窗
+    // 亮灯阈值：按周期独立配置
+    function getLightThresholds() {
+        var p = errorDashboardFilter.period;
+        if (p === 'day') return { greenMax: 1, yellowMax: 4, redMin: 5, actions: false,
+            greensLabel: '绿色正常（0-1次）', yellowsLabel: '黄色预警（2-4次）', redsLabel: '红色预警（≥5次）',
+            examMin: 999, learnMin: 999, trainMin: 999,
+            redTooltip: '红灯 ≥5次\n红灯≥5次，不触发推送\n⚠️提前1个预警（4次即将红灯）',
+            yellowTooltip: '黄灯 2-4次\n黄灯2-4次，不触发推送\n⚠️提前1个预警（1次即将黄灯）',
+            greenTooltip: '绿灯 ≤1次\n绿灯≤1次，无推送' };
+        if (p === 'month') return { greenMax: 10, yellowMax: 15, redMin: 16, red2Min: 21, actions: true,
+            greensLabel: '绿色正常（0-10次）', yellowsLabel: '黄色预警（11-15次）', redsLabel: '红色预警（16-20次）', reds2Label: '红色预警（≥21次）',
+            examMin: 11, learnMin: 16, trainMin: 21,
+            redTooltip: '红灯 16-20次 / ≥21次\n红灯16-20次→出卷+学习\n红灯≥21次→出卷+学习+培训\n⚠️提前3个预警（13-15次即将红灯）',
+            yellowTooltip: '黄灯 11-15次\n黄灯11-15次→出卷\n⚠️提前3个预警（8-10次即将黄灯）',
+            greenTooltip: '绿灯 ≤10次\n绿灯≤10次，无推送' };
+        // week / custom
+        return { greenMax: 5, yellowMax: 10, redMin: 11, red2Min: 16, actions: true,
+            greensLabel: '绿色正常（0-5次）', yellowsLabel: '黄色预警（6-10次）', redsLabel: '红色预警（11-15次）', reds2Label: '红色预警（≥16次）',
+            examMin: 6, learnMin: 11, trainMin: 16,
+            redTooltip: '红灯 11-15次 / ≥16次\n红灯11-15次→出卷+学习\n红灯≥16次→出卷+学习+培训\n⚠️提前2个预警（9-10次即将红灯）',
+            yellowTooltip: '黄灯 6-10次\n黄灯6-10次→出卷\n⚠️提前2个预警（4-5次即将黄灯）',
+            greenTooltip: '绿灯 ≤5次\n绿灯≤5次，无推送' };
+    }
+    // 分类用：red2也算reds
+    function classifyLight(count, thresholds) {
+        if (count <= thresholds.greenMax) return 'greens';
+        if (count <= thresholds.yellowMax) return 'yellows';
+        return 'reds';
+    }
+
+    var _lightTooltipEl = null;
+    function showLightTooltip(e, html) {
+        hideLightTooltip();
+        var tip = document.createElement('div');
+        tip.id = 'lightTooltip';
+        tip.innerHTML = html;
+        tip.style.cssText = 'position:fixed;z-index:9999;background:rgba(30,40,60,0.92);color:#fff;padding:12px 16px;border-radius:12px;pointer-events:none;box-shadow:0 8px 24px rgba(0,0,0,0.3);';
+        document.body.appendChild(tip);
+        var rect = e.target.getBoundingClientRect();
+        var x = rect.left + rect.width/2 - tip.offsetWidth/2;
+        var y = rect.bottom + 6;
+        if (x < 4) x = 4;
+        if (x + tip.offsetWidth > window.innerWidth - 4) x = window.innerWidth - tip.offsetWidth - 4;
+        if (y + tip.offsetHeight > window.innerHeight - 4) y = rect.top - tip.offsetHeight - 6;
+        tip.style.left = x + 'px'; tip.style.top = y + 'px';
+        _lightTooltipEl = tip;
+    }
+    function hideLightTooltip() {
+        if (_lightTooltipEl) { _lightTooltipEl.remove(); _lightTooltipEl = null; }
+    }
+
     function showLightPeoplePopup(key) {
         var people = (window._lightData && window._lightData[key]) || [];
         var icons = { reds: '🔴', yellows: '🟡', greens: '🟢' };
-        var labels = { reds: '红色预警（>10次）', yellows: '黄色预警（6-10次）', greens: '绿色正常（0-5次）' };
+        var th = getLightThresholds();
+        var labels = { reds: th.redsLabel + (th.reds2Label ? ' / ' + th.reds2Label : ''), yellows: th.yellowsLabel, greens: th.greensLabel };
         var overlay = document.createElement('div');
         overlay.className = 'modal-overlay'; overlay.style.zIndex = '2000';
-        var showBtns = (errorDashboardFilter.period === 'week' || errorDashboardFilter.period === 'month' || errorDashboardFilter.period === 'custom');
         var rows = people.map(function(p){
             var btns = '';
-            if (showBtns) {
-                if (p[1] >= 6) btns += '<button class=\"light-exam-btn\" data-name=\"' + escapeHtml(p[0]) + '\" style=\"background:#c0392b;color:white;border:none;padding:2px 6px;border-radius:8px;cursor:pointer;font-size:0.6rem;\">📝 出卷</button> ';
-                if (p[1] >= 10) btns += '<button class=\"light-learn-btn\" data-name=\"' + escapeHtml(p[0]) + '\" style=\"background:#e67e22;color:white;border:none;padding:2px 6px;border-radius:8px;cursor:pointer;font-size:0.6rem;\">🗺️ 学习</button> ';
-                if (p[1] > 15) btns += '<button class=\"light-train-btn\" data-name=\"' + escapeHtml(p[0]) + '\" style=\"background:#8e44ad;color:white;border:none;padding:2px 6px;border-radius:8px;cursor:pointer;font-size:0.6rem;\">📖 培训</button>';
+            if (th.actions) {
+                if (p[1] >= th.examMin) btns += '<button class=\"light-exam-btn\" data-name=\"' + escapeHtml(p[0]) + '\" style=\"background:#c0392b;color:white;border:none;padding:2px 6px;border-radius:8px;cursor:pointer;font-size:0.6rem;\">📝 出卷</button> ';
+                if (p[1] >= th.learnMin) btns += '<button class=\"light-learn-btn\" data-name=\"' + escapeHtml(p[0]) + '\" style=\"background:#e67e22;color:white;border:none;padding:2px 6px;border-radius:8px;cursor:pointer;font-size:0.6rem;\">🗺️ 学习</button> ';
+                if (p[1] >= th.trainMin) btns += '<button class=\"light-train-btn\" data-name=\"' + escapeHtml(p[0]) + '\" style=\"background:#8e44ad;color:white;border:none;padding:2px 6px;border-radius:8px;cursor:pointer;font-size:0.6rem;\">📖 培训</button>';
             }
             var warn = '';
             var c = p[1];
-            if (c >= 4 && c <= 5) warn = '<span style=\"color:#e67e22;font-size:0.65rem;\">⚠️ 即将黄灯</span>';
-            else if (c >= 9 && c <= 10) warn = '<span style=\"color:#c0392b;font-size:0.65rem;\">⚠️ 即将红灯</span>';
-            else if (c >= 13 && c <= 15) warn = '<span style=\"color:#8e44ad;font-size:0.65rem;\">⚠️ 即将触发培训</span>';
-            return '<tr><td style=\"text-align:center;\">' + (icons[key]||'') + '</td><td style=\"text-align:center;\"><span class=\"clickable-tag light-person-name\" data-name=\"' + escapeHtml(p[0]) + '\" style=\"cursor:pointer;font-weight:600;\">' + escapeHtml(p[0]) + '</span></td><td style=\"text-align:center;\">' + p[1] + '次</td><td style=\"text-align:center;white-space:nowrap;\">' + warn + '</td><td style=\"text-align:center;white-space:nowrap;\">' + btns + '</td></tr>';
+            var gM = th.greenMax, yM = th.yellowMax;
+            var gWarn = errorDashboardFilter.period === 'month' ? 3 : (errorDashboardFilter.period === 'week' ? 2 : 1);
+            var yWarn = errorDashboardFilter.period === 'month' ? 3 : (errorDashboardFilter.period === 'week' ? 2 : 1);
+            if (c >= Math.max(1, gM - gWarn + 1) && c <= gM) warn = '<span style=\"color:#e67e22;font-size:0.65rem;\">⚠️ 即将黄灯</span>';
+            else if (c >= yM - yWarn + 1 && c <= yM) warn = '<span style=\"color:#c0392b;font-size:0.65rem;\">⚠️ 即将红灯</span>';
+            else if (th.actions && c >= th.trainMin-3 && c < th.trainMin) warn = '<span style=\"color:#8e44ad;font-size:0.65rem;\">⚠️ 即将触发培训</span>';
+            return '<tr><td style=\"text-align:center;\">' + (icons[key]||'') + '</td><td style=\"text-align:center;\"><span class=\"clickable-tag light-person-name\" data-name=\"' + escapeHtml(p[0]) + '\" style=\"cursor:pointer;font-size:0.7rem;font-weight:600;\">' + escapeHtml(p[0]) + '</span></td><td style=\"text-align:center;\">' + p[1] + '次</td><td style=\"text-align:center;white-space:nowrap;\">' + warn + '</td><td style=\"text-align:center;white-space:nowrap;\">' + btns + '</td></tr>';
         }).join('');
         overlay.innerHTML = '<div class="modal-container" style="max-width:600px;">' +
             '<div class="modal-header">' + (labels[key]||'按灯详情') + '（' + people.length + '人）<button class="modal-close-btn" id="lightClose">✕</button></div>' +
-            '<div class="modal-body"><table class="error-table" style="width:100%;"><thead><tr><th>灯</th><th>姓名</th><th>失误</th><th>预警提示</th><th>操作</th></tr></thead><tbody>' + (rows || '<tr><td colspan=\"5\" style=\"padding:20px;color:#94a3b8;\">暂无人员</td></tr>') + '</tbody></table></div>' +
+            '<div class="modal-body"><table class="error-table" style="width:100%;"><thead><tr><th>灯</th><th>姓名</th><th>失误</th><th>预警提示</th><th>操作</th></tr></thead><tbody>' + (rows || '<tr><td colspan=\"5\" style=\"padding:20px;color:#94a3b8;\">暂无人员</td></tr>') + '</tbody></table>' +
+            '<div style=\"display:flex;gap:8px;justify-content:center;margin-top:12px;\">' +
+                '<button id=\"lightPushBtn\" class=\"generate-btn\" style=\"background:#e67e22;font-size:0.8rem;\">📤 推送记录</button>' +
+                '<button id=\"lightGoExamBtn\" class=\"small-outline\" style=\"font-size:0.8rem;\">📋 前往考试系统</button>' +
+            '</div></div>' +
         '</div>';
         document.body.appendChild(overlay);
         overlay.querySelector('#lightClose').onclick = function(){overlay.remove();};
         overlay.onclick = function(e){if(e.target===overlay)overlay.remove();};
+        overlay.querySelector('#lightGoExamBtn').onclick = function(){ overlay.remove(); switchNav('examSystem'); };
+        overlay.querySelector('#lightPushBtn').onclick = function(){
+            var pushed = 0;
+            people.forEach(function(p){
+                if (p[1] >= th.examMin) {
+                    // 记录出卷推送
+                    var ep = getTrainingPushes();
+                    ep.push({reviewerName: p[0], reportName: '精准出卷_'+p[0]+'_'+new Date().toISOString().slice(0,10), caseCount: 0, time: new Date().toISOString(), type: '出卷'});
+                    saveTrainingPushes(ep);
+                    pushed++;
+                }
+            });
+            showToast('✅ 已记录 '+pushed+' 条推送', 'success');
+        };
         overlay.querySelectorAll('.light-exam-btn').forEach(function(el){
             el.addEventListener('click', function(e){
                 e.stopPropagation();
@@ -12740,39 +12902,59 @@ URL.revokeObjectURL(url);
                 showAlert('学习地图数据加载失败，请稍后重试', '⚠️'); return;
             }
         }
-        // 收集该人员的失误，映射到知识领域
+        // 收集该人员的失误，提取关键词
         var personErrs = errorDashboardData.filter(function(e) { return e.reviewer === reviewerName; });
         if (personErrs.length === 0) { showAlert('当前时间维度下「' + reviewerName + '」无失误记录', '⚠️'); return; }
-        var areaScores = {};
+        // 从所有失误备注中提取关键词（按出现次数加权）
+        var kwScores = {};
         personErrs.forEach(function(e) {
-            var fakeItem = { name: (e.category || ''), desc: (e.note || '') };
-            var area = classifyKnowledgeArea(fakeItem);
-            var key = area.name;
-            if (!areaScores[key]) areaScores[key] = { area: area, count: 0 };
-            areaScores[key].count++;
+            var text = (e.note + ' ' + e.category).toLowerCase();
+            var stopWords = {手机:1,异常:1,反馈:1,问题:1,错误:1,未达:1,标准:1,情况:1,质检:1,失误:1,存在:1,进行:1,需要:1,注意:1,可能:1,部分:1};
+            var words = text.split(/[，,、\s。；;：:（）()\/]+/);
+            words.forEach(function(w) {
+                w = w.trim();
+                if (!w || w.length < 2 || stopWords[w]) return;
+                // 用完整词和2-3字片段同时匹配
+                if (w.length <= 4) { kwScores[w] = (kwScores[w]||0) + 1; }
+                else {
+                    kwScores[w] = (kwScores[w]||0) + 1;
+                    for (var n=0; n <= w.length-2; n++) {
+                        var sub = w.substring(n, n+2);
+                        if (!stopWords[sub] && sub.length === 2) kwScores[sub] = (kwScores[sub]||0) + 0.5;
+                    }
+                }
+            });
         });
-        var ranked = Object.values(areaScores).sort(function(a, b) { return b.count - a.count; });
-        // 从学习地图中匹配课程
+        // 精准匹配：对每个课程计算匹配分
         var allItems = [];
-        window._lmCategories.forEach(function(cat) { if (cat.title !== '手机') return; // 只推送手机品类
+        window._lmCategories.forEach(function(cat) { if (cat.title !== '手机') return;
             cat.groups.forEach(function(g) {
                 g.items.forEach(function(item) {
-                    var itemArea = classifyKnowledgeArea(item);
-                    var matched = ranked.find(function(r) { return r.area.name === itemArea.name; });
-                    if (matched && item.link) {
+                    if (!item.link) return;
+                    var courseText = ((item.desc||'') + ' ' + (item.name||'')).toLowerCase();
+                    var matchScore = 0;
+                    var matchWords = [];
+                    Object.keys(kwScores).forEach(function(kw) {
+                        if (courseText.indexOf(kw) >= 0) {
+                            matchScore += kwScores[kw];
+                            matchWords.push(kw);
+                        }
+                    });
+                    // 至少匹配到1个词即纳入
+                    if (matchScore >= 1) {
+                        var area = classifyKnowledgeArea(item);
                         allItems.push({
-                            areaName: itemArea.name,
-                            areaIcon: itemArea.icon,
-                            catTitle: cat.title,
-                            name: item.name,
-                            desc: item.desc,
-                            link: item.link,
-                            weaknessCount: matched.count
+                            areaName: area.name, areaIcon: area.icon, catTitle: cat.title,
+                            name: item.name, desc: item.desc, link: item.link,
+                            weaknessCount: matchScore, matchWords: matchWords
                         });
                     }
                 });
             });
         });
+        // 按匹配分排序，最多取30节课
+        allItems.sort(function(a,b){ return b.weaknessCount - a.weaknessCount; });
+        allItems = allItems.slice(0, 30);
         // 按知识领域分组，按薄弱程度排序
         var planAreas = {};
         allItems.forEach(function(item) {
@@ -12795,7 +12977,7 @@ URL.revokeObjectURL(url);
         };
         var plans = getLearningPlans();
         plans[planCode] = planData;
-        saveLearningPlans(plans); var _lps = getLearnPlanPushes(); _lps.push({reviewerName: reviewerName, planCode: planCode, courseCount: planData.totalCourses, areaCount: planData.areas.length, time: new Date().toISOString()}); saveLearnPlanPushes(_lps);
+        saveLearningPlans(plans);
         // 生成链接并弹窗展示
         var shareUrl = location.origin + location.pathname + '?learnPlan=' + planCode;
         showLearningPlanSharePopup(planData, shareUrl);
@@ -12807,23 +12989,40 @@ URL.revokeObjectURL(url);
         var areaTags = planData.areas.map(function(a) {
             return '<span style="background:#fef3c7;padding:2px 8px;border-radius:10px;font-size:0.7rem;">' + a.icon + ' ' + a.name + '(' + a.items.length + '课)</span>';
         }).join(' ');
-        overlay.innerHTML = '<div class="modal-container" style="max-width:550px;">' +
-            '<div class="modal-header" style="background:linear-gradient(90deg,#e67e22,#f093fb);">' +
-                '<span>🗺️ 推荐学习地图已生成</span><button class="modal-close-btn" id="lpCloseBtn">✕</button></div>' +
-            '<div class="modal-body" style="text-align:center;">' +
+        overlay.innerHTML = '<div class="modal-container" style="max-width:550px;max-height:none;\">' +
+            '<div class="modal-header" style=\"background:linear-gradient(90deg,#e67e22,#f093fb);\">' +
+                '<span>🗺️ 推荐学习地图已生成</span><button class=\"modal-close-btn\" id=\"lpCloseBtn\">✕</button></div>' +
+            '<div class=\"modal-body\" style=\"text-align:center;\">' +
                 '<div style="font-size:1.1rem;font-weight:700;color:#1f3a6b;margin-bottom:8px;">👤 ' + escapeHtml(planData.reviewerName) + ' 的定制学习地图</div>' +
                 '<div style="font-size:0.78rem;color:#5e6f8d;margin-bottom:4px;">' + planData.totalCourses + ' 节课程 · ' + planData.areas.length + ' 个知识领域</div>' +
                 '<div style="margin-bottom:12px;">' + areaTags + '</div>' +
                 '<div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:12px;padding:8px 12px;margin-bottom:12px;word-break:break-all;font-size:0.7rem;color:#166534;">' + escapeHtml(shareUrl) + '</div>' +
                 '<div style="display:flex;gap:8px;justify-content:center;flex-wrap:wrap;">' +
                     '<button onclick="copyLearningPlanLink(\'' + planData.code + '\', this)" style="background:#2563eb;color:white;border:none;padding:8px 16px;border-radius:20px;cursor:pointer;font-size:0.8rem;">📋 复制链接</button>' +
-                    '<button onclick="window.open(location.origin+location.pathname+\'?learnPlan=' + planData.code + '\',\'_blank\')" style="background:#16a34a;color:white;border:none;padding:8px 16px;border-radius:20px;cursor:pointer;font-size:0.8rem;">👁️ 预览学习地图</button>' +
-                    '<button onclick="generateQRForPlan(\'' + planData.code + '\')" style="background:#8b5cf6;color:white;border:none;padding:8px 16px;border-radius:20px;cursor:pointer;font-size:0.8rem;">📱 生成二维码</button>' +
+                    '<a href=\"?learnPlan=' + planData.code + '\" target=\"_blank\" style=\"background:#16a34a;color:white;padding:8px 16px;border-radius:20px;cursor:pointer;font-size:0.8rem;text-decoration:none;display:inline-block;\">👁️ 预览学习地图</a>' +
+                '</div>' +
+                '<div style=\"display:flex;gap:8px;margin-top:8px;justify-content:center;\">' +
+                    '<button class=\"push-exam-btn\" style=\"flex:1;background:#e67e22;color:white;border:none;padding:8px 16px;border-radius:20px;cursor:pointer;font-size:0.8rem;\">📤 推送</button>' +
+                    '<button class=\"goto-exam-btn\" style=\"flex:1;border:1px solid #e2e8f0;background:#f8fafc;padding:8px 16px;border-radius:20px;cursor:pointer;font-size:0.8rem;\">📋 前往考试系统</button>' +
                 '</div>' +
             '</div></div>';
         document.body.appendChild(overlay);
         overlay.querySelector('#lpCloseBtn').onclick = function() { overlay.remove(); };
         overlay.onclick = function(e) { if (e.target === overlay) overlay.remove(); };
+        overlay.querySelector('.goto-exam-btn').onclick = function(){ overlay.remove(); switchNav('examSystem'); };
+        if (isPushedThisPeriod(planData.reviewerName, 'learn')) {
+            overlay.querySelector('.push-exam-btn').textContent = '✅ 已推送';
+            overlay.querySelector('.push-exam-btn').style.background = '#27ae60';
+        }
+        overlay.querySelector('.push-exam-btn').onclick = function(){
+            var btn = this;
+            confirmRepush(planData.reviewerName, 'learn', function(){
+                var lp = getLearnPlanPushes();
+                lp.push({reviewerName: planData.reviewerName, planCode: planData.code, courseCount: planData.totalCourses, areaCount: planData.areas.length, time: new Date().toISOString(), type: 'learn'});
+                saveLearnPlanPushes(lp);
+                btn.textContent = '✅ 已推送'; btn.style.background = '#27ae60';
+            });
+        };
     }
 
     function copyLearningPlanLink(code, btn) {
@@ -12941,92 +13140,179 @@ URL.revokeObjectURL(url);
         generateLearningPlanForPerson(reviewerName);
     }
     function generatePrecisionTraining(reviewerName) {
-        var filtered = getFilteredErrors();
-        var personErrors = filtered.filter(function(e) { return e.reviewer === reviewerName; });
-        if (personErrors.length === 0) { showAlert('当前维度下「' + reviewerName + '」无失误记录', '⚠️'); return; }
-        // 获取该人失误类别
-        var cats = {};
-        personErrors.forEach(function(e) { cats[e.category] = (cats[e.category] || 0) + 1; });
-        // 从案例库匹配
-        var allCases = getManualCases();
-        var matched = allCases.filter(function(c) {
-            return c.errorCategory && cats[c.errorCategory];
-        });
-        if (matched.length === 0) { showAlert('案例库中无匹配的案例', '⚠️'); return; }
-        // 按类别数排序，最多取20个
-        matched.sort(function(a, b) {
-            return (cats[b.errorCategory] || 0) - (cats[a.errorCategory] || 0);
-        });
-        matched = matched.slice(0, 20);
+        var selOverlay = document.createElement("div");
+        selOverlay.className = "modal-overlay"; selOverlay.style.zIndex = "2000";
+        selOverlay.innerHTML = "<div class=\"modal-container\" style=\"max-width:550px;\">" +
+            "<div class=\"modal-header\">📄 选择培训资料范围<button class=\"modal-close-btn\" id=\"trainSelClose\">✕</button></div>" +
+            "<div class=\"modal-body\" style=\"text-align:center;\">" +
+                "<div style=\"font-weight:700;color:#1f3a6b;margin-bottom:16px;\">👤 " + escapeHtml(reviewerName) + " 的培训资料</div>" +
+                "<div style=\"display:flex;flex-direction:column;gap:10px;\">" +
+                    "<button id=\"trainPersonal\" style=\"background:#2563eb;color:white;border:none;padding:14px;border-radius:14px;cursor:pointer;font-size:0.9rem;font-weight:600;\">👤 个人培训资料<br><span style=\"font-size:0.7rem;opacity:0.8;\">精准匹配该人员的失误案例</span></button>" +
+                    "<button id=\"trainSite\" style=\"background:#e67e22;color:white;border:none;padding:14px;border-radius:14px;cursor:pointer;font-size:0.9rem;font-weight:600;\">📍 单站点培训资料<br><span style=\"font-size:0.7rem;opacity:0.8;\">综合该站点所有需培训人员</span></button>" +
+                    "<button id=\"trainAll\" style=\"background:#8e44ad;color:white;border:none;padding:14px;border-radius:14px;cursor:pointer;font-size:0.9rem;font-weight:600;\">🌐 全站培训资料<br><span style=\"font-size:0.7rem;opacity:0.8;\">综合三站点所有需培训人员</span></button>" +
+                "</div>" +
+            "</div></div>";
+        document.body.appendChild(selOverlay);
+        selOverlay.querySelector("#trainSelClose").onclick = function(){ selOverlay.remove(); };
+        selOverlay.onclick = function(e){ if(e.target===selOverlay) selOverlay.remove(); };
+        selOverlay.querySelector("#trainPersonal").onclick = function(){ selOverlay.remove(); doGenerateTraining([reviewerName], "个人培训资料"); };
+        selOverlay.querySelector("#trainSite").onclick = function(){
+            selOverlay.remove();
+            // 显示三站点选择
+            var allSites = ['深圳','青岛','成都'];
+            var siteOverlay = document.createElement('div');
+            siteOverlay.className = 'modal-overlay'; siteOverlay.style.zIndex = '2001';
+            var siteBtns = '';
+            allSites.forEach(function(s){
+                var names = getSiteTrainingPeople(s);
+                var count = names.length;
+                var disabledAttr = count === 0 ? 'disabled' : '';
+                var extraStyle = count === 0 ? 'opacity:0.4;' : 'cursor:pointer;';
+                var namesJson = JSON.stringify(names).replace(/"/g,'&quot;');
+                siteBtns += '<button class=\"site-train-btn\" data-names=\"'+namesJson+'\" data-site=\"'+s+'\" '+disabledAttr+' style=\"width:100%;background:#e67e22;color:white;border:none;padding:14px;border-radius:14px;font-size:0.9rem;font-weight:600;margin-bottom:8px;'+extraStyle+'\">📍 '+s+'（'+(count>0?count+'人需培训':'无需培训')+'）</button>';
+            });
+            siteOverlay.innerHTML = '<div class=\"modal-container\" style=\"max-width:400px;\">' +
+                '<div class=\"modal-header\">📍 选择站点<button class=\"modal-close-btn\" id=\"siteSelClose\">✕</button></div>' +
+                '<div class=\"modal-body\">'+siteBtns+'</div></div>';
+            document.body.appendChild(siteOverlay);
+            siteOverlay.querySelector('#siteSelClose').onclick = function(){ siteOverlay.remove(); };
+            siteOverlay.onclick = function(e){ if(e.target===siteOverlay) siteOverlay.remove(); };
+            siteOverlay.querySelectorAll('.site-train-btn').forEach(function(btn){
+                btn.onclick = function(){
+                    siteOverlay.remove();
+                    var names = JSON.parse(btn.dataset.names.replace(/&quot;/g,'\"'));
+                    doGenerateTraining(names, btn.dataset.site + '站点培训资料');
+                };
+            });
+        };
+        selOverlay.querySelector("#trainAll").onclick = function(){
+            selOverlay.remove();
+            var allNames = getSiteTrainingPeople("all");
+            doGenerateTraining(allNames, "全站培训资料");
+        };
+    }
 
-        var docHtml = '<!DOCTYPE html><html><head><meta charset="UTF-8"><title>培训资料</title>' +
-        '<style>body{font-family:Microsoft YaHei,SimHei,sans-serif;padding:40px;max-width:900px;margin:0 auto;color:#333;}' +
-        'h1{color:#1f3a6b;border-bottom:3px solid #2a5298;padding-bottom:12px;}' +
-        '.case-card{border:1px solid #eef2f6;border-radius:16px;padding:20px;margin:20px 0;background:#fafcfd;}' +
-        '.qc-code{font-size:1.1rem;font-weight:700;color:#1f3a6b;margin-bottom:8px;}' +
-        '.label{font-weight:600;color:#5e6f8d;font-size:0.85rem;margin-top:14px;margin-bottom:6px;}' +
-        '.desc{line-height:1.7;color:#4a5568;}img{max-width:100%;border-radius:10px;margin:6px;border:1px solid #e2e8f0;cursor:pointer;}' +
-        '.correct{background:#eef2ff;padding:12px 16px;border-radius:12px;color:#2a5298;line-height:1.7;}' +
-        '.footer{color:#94a3b8;text-align:center;margin-top:40px;font-size:0.85rem;}' +
-        '</style></head><body><h1>📄 精准培训资料</h1>' +
-        '<p style="color:#94a3b8;">初审：' + escapeHtml(reviewerName) + ' | 生成日期：' + new Date().toLocaleDateString('zh-CN') + ' | 共 ' + matched.length + ' 个案例</p>' +
-        '<p style="color:#5e6f8d;font-size:0.85rem;">失误类别：' + Object.keys(cats).join('、') + '</p>';
+    function getPersonSite(name) {
+        var filtered = getFilteredErrors();
+        var found = filtered.filter(function(e){return e.reviewer===name;});
+        return found.length > 0 ? (found[0].site || "深圳") : "深圳";
+    }
+
+    function getSiteTrainingPeople(site) {
+        var filtered = getFilteredErrors();
+        var th = getLightThresholds();
+        var reviewerStats = {};
+        filtered.forEach(function(e){ reviewerStats[e.reviewer] = (reviewerStats[e.reviewer]||0) + 1; });
+        var names = [];
+        Object.keys(reviewerStats).forEach(function(n){
+            if (reviewerStats[n] >= th.trainMin) {
+                if (site === "all") { names.push(n); return; }
+                var s = getPersonSite(n);
+                if (s === site) names.push(n);
+            }
+        });
+        return names;
+    }
+
+    function doGenerateTraining(reviewerNames, titleLabel) {
+        var allErrors = getFilteredErrors();
+        var cats = {};
+        reviewerNames.forEach(function(name){
+            allErrors.filter(function(e){return e.reviewer===name;}).forEach(function(e){ cats[e.category] = (cats[e.category]||0)+1; });
+        });
+        if (Object.keys(cats).length === 0) { showAlert("当前维度下无可匹配的培训人员", "⚠️"); return; }
+        var allCases = getManualCases();
+        var matched = allCases.filter(function(c){ return c.errorCategory && cats[c.errorCategory]; });
+        if (matched.length === 0) { showAlert("案例库中无匹配的案例", "⚠️"); return; }
+        matched.sort(function(a,b){ return (cats[b.errorCategory]||0)-(cats[a.errorCategory]||0); });
+        matched = matched.slice(0, 30);
+
+        var docHtml = "<!DOCTYPE html><html><head><meta charset=\"UTF-8\"><title>培训资料</title>" +
+        "<style>body{font-family:Microsoft YaHei,SimHei,sans-serif;padding:40px;max-width:900px;margin:0 auto;color:#333;}" +
+        "h1{color:#1f3a6b;border-bottom:3px solid #2a5298;padding-bottom:12px;}" +
+        ".case-card{border:1px solid #eef2f6;border-radius:16px;padding:20px;margin:20px 0;background:#fafcfd;}" +
+        ".qc-code{font-size:1.1rem;font-weight:700;color:#1f3a6b;margin-bottom:8px;}" +
+        ".label{font-weight:600;color:#5e6f8d;font-size:0.85rem;margin-top:14px;margin-bottom:6px;}" +
+        ".desc{line-height:1.7;color:#4a5568;}img{max-width:100%;border-radius:10px;margin:6px;border:1px solid #e2e8f0;cursor:pointer;}" +
+        ".correct{background:#eef2ff;padding:12px 16px;border-radius:12px;color:#2a5298;line-height:1.7;}" +
+        ".footer{color:#94a3b8;text-align:center;margin-top:40px;font-size:0.85rem;}" +
+        "</style></head><body><h1>📄 精准培训资料</h1>" +
+        "<p style=\"color:#94a3b8;\">培训范围：" + escapeHtml(titleLabel) + " | 涉及人员：" + reviewerNames.join("、") + " | 生成日期：" + new Date().toLocaleDateString("zh-CN") + " | 共 " + matched.length + " 个案例</p>" +
+        "<p style=\"color:#5e6f8d;font-size:0.85rem;\">失误类别：" + Object.keys(cats).join("、") + "</p>";
 
         matched.forEach(function(c) {
-            docHtml += '<div class="case-card"><div class="qc-code">🔖 质检码：' + escapeHtml(c.qcCode) + ' | 🏷️ ' + escapeHtml(c.errorCategory || '') + '</div>' +
-            '<div class="label">📝 问题描述</div><div class="desc">' + escapeHtml(c.issueDesc || '') + '</div>';
+            docHtml += "<div class=\"case-card\"><div class=\"qc-code\">🔖 质检码：" + escapeHtml(c.qcCode) + " | 🏷️ " + escapeHtml(c.errorCategory || "") + "</div>" +
+            "<div class=\"label\">📝 问题描述</div><div class=\"desc\">" + escapeHtml(c.issueDesc || "") + "</div>";
             if (c.issuePhotos && c.issuePhotos.length > 0) {
-                docHtml += '<div class="label">📷 问题照片</div>' + c.issuePhotos.map(function(p) { return '<img src="' + p + '" alt="问题照片" style="max-width:100%;">'; }).join('');
+                docHtml += "<div class=\"label\">📷 问题照片</div>" + c.issuePhotos.map(function(p) { return "<img src=\"" + p + "\" alt=\"问题照片\" style=\"max-width:100%;\">"; }).join("");
             }
-            docHtml += '<div class="label">✅ 应操作方向</div><div class="correct">' + escapeHtml(c.correctDir || '') + '</div>';
+            docHtml += "<div class=\"label\">✅ 应操作方向</div><div class=\"correct\">" + escapeHtml(c.correctDir || "") + "</div>";
             if (c.dirPhotos && c.dirPhotos.length > 0) {
-                docHtml += '<div class="label">📷 方向示例照片</div>' + c.dirPhotos.map(function(p) { return '<img src="' + p + '" alt="方向照片" style="max-width:100%;">'; }).join('');
+                docHtml += "<div class=\"label\">📷 方向示例照片</div>" + c.dirPhotos.map(function(p) { return "<img src=\"" + p + "\" alt=\"方向照片\" style=\"max-width:100%;\">"; }).join("");
             }
-            docHtml += '</div>';
+            docHtml += "</div>";
         });
-        docHtml += '<div class="footer">优学堂 · 精准培训资料</div></body></html>';
+        docHtml += "<div class=\"footer\">优学堂 · 精准培训资料</div></body></html>";
 
-        // 存到 generatedReports 并生成可分享链接
-        var reportName = '培训资料_' + reviewerName + '_' + new Date().toISOString().slice(0,10).replace(/-/g,'');
-        saveReportToLocal(reportName, docHtml); var _tps = getTrainingPushes(); _tps.push({reviewerName: reviewerName, reportName: reportName, caseCount: matched.length, time: new Date().toISOString()}); saveTrainingPushes(_tps);
-        var baseUrl = window.location.href.split('?')[0];
-        var shareUrl = baseUrl + '?report=' + encodeURIComponent(reportName);
+        var dateStr = new Date().toISOString().slice(0,10).replace(/-/g,'');
+        var scopeLabel = titleLabel.indexOf('个人')>=0 ? '个人' : (titleLabel.indexOf('全站')>=0 ? '全站' : titleLabel.replace(/站点培训资料/,''));
+        var periodLabel = errorDashboardFilter.period === 'week' ? '周' : (errorDashboardFilter.period === 'month' ? '月' : '日');
+        var reportName = '培训资料_' + scopeLabel + '_' + periodLabel + '_' + dateStr;
+        saveReportToLocal(reportName, docHtml);
+        var baseUrl = window.location.href.split("?")[0];
+        var shareUrl = baseUrl + "?report=" + encodeURIComponent(reportName);
 
-        var overlay = document.createElement('div');
-        overlay.className = 'modal-overlay'; overlay.style.zIndex = '2000';
-        overlay.innerHTML = '<div class="modal-container" style="max-width:650px;">' +
-            '<div class="modal-header">📄 ' + escapeHtml(reviewerName) + ' · 精准培训资料<button class="modal-close-btn" id="trainClose">✕</button></div>' +
-            '<div class="modal-body" style="text-align:center;">' +
-                '<div style="font-size:1.1rem;font-weight:700;color:#1f3a6b;margin-bottom:8px;">共匹配 ' + matched.length + ' 个案例</div>' +
-                '<div style="font-size:0.8rem;color:#5e6f8d;margin-bottom:12px;">' + Object.keys(cats).join(' / ') + '</div>' +
-                '<div style="display:flex;gap:16px;flex-wrap:wrap;text-align:center;">' +
-                    '<div style="flex:1;min-width:200px;background:#f8fafc;border-radius:14px;padding:14px;border:1px solid #eef2f6;">' +
-                        '<div style="font-weight:700;color:#1f3a6b;margin-bottom:8px;font-size:0.85rem;">🔗 方式一：网页链接</div>' +
-                        '<div style="background:white;border:1px solid #eef2f6;border-radius:8px;padding:6px;font-size:0.65rem;word-break:break-all;color:#5e6f8d;margin-bottom:6px;">' + shareUrl + '</div>' +
-                        '<button class="copy-train-link" data-url="' + shareUrl.replace(/"/g,'&quot;') + '" style="background:#2a5298;color:white;border:none;padding:6px 14px;border-radius:16px;cursor:pointer;font-size:0.75rem;">📋 复制链接</button>' +
-                    '</div>' +
-                    '<div style="flex:1;min-width:200px;background:#f8fafc;border-radius:14px;padding:14px;border:1px solid #eef2f6;">' +
-                        '<div style="font-weight:700;color:#1f3a6b;margin-bottom:8px;font-size:0.85rem;">📱 方式二：扫码查看</div>' +
-                        '<div id="trainQRCode" style="display:inline-block;"></div>' +
-                        '<div style="font-size:0.7rem;color:#94a3b8;margin-top:4px;">微信/飞书扫码查看</div>' +
-                    '</div>' +
-                '</div>' +
-            '</div>' +
-        '</div>';
+        var overlay = document.createElement("div");
+        overlay.className = "modal-overlay"; overlay.style.zIndex = "2000";
+        overlay.innerHTML = "<div class=\"modal-container\" style=\"max-width:700px;\">" +
+            "<div class=\"modal-header\">📄 " + escapeHtml(titleLabel) + "<button class=\"modal-close-btn\" id=\"trainClose\">✕</button></div>" +
+            "<div class=\"modal-body\" style=\"text-align:center;overflow-y:auto;flex:1;min-height:0;\">" +
+                "<div style=\"font-size:1.1rem;font-weight:700;color:#1f3a6b;margin-bottom:8px;\">共匹配 " + matched.length + " 个案例</div>" +
+                "<div style=\"font-size:0.8rem;color:#5e6f8d;margin-bottom:12px;\">涉及" + reviewerNames.length + "人 | " + Object.keys(cats).join(" / ") + "</div>" +
+                "<div style=\"display:flex;gap:16px;flex-wrap:wrap;text-align:center;\">" +
+                    "<div style=\"flex:1;min-width:200px;background:#f8fafc;border-radius:14px;padding:14px;border:1px solid #eef2f6;\">" +
+                        "<div style=\"font-weight:700;color:#1f3a6b;margin-bottom:8px;font-size:0.85rem;\">🔗 网页链接</div>" +
+                        "<div style=\"background:white;border:1px solid #eef2f6;border-radius:8px;padding:6px;font-size:0.65rem;word-break:break-all;color:#5e6f8d;margin-bottom:6px;\">" + shareUrl + "</div>" +
+                        "<button class=\"copy-train-link\" data-url=\"" + shareUrl.replace(/"/g,"&quot;") + "\" style=\"background:#2a5298;color:white;border:none;padding:6px 14px;border-radius:16px;cursor:pointer;font-size:0.75rem;\">📋 复制链接</button>" +
+                    "</div>" +
+                    "<div style=\"flex:1;min-width:200px;background:#f8fafc;border-radius:14px;padding:14px;border:1px solid #eef2f6;\">" +
+                        "<div style=\"font-weight:700;color:#1f3a6b;margin-bottom:8px;font-size:0.85rem;\">📱 扫码查看</div>" +
+                        "<div id=\"trainQRCode\" style=\"display:inline-block;\"></div>" +
+                        "<div style=\"font-size:0.7rem;color:#94a3b8;margin-top:4px;\">微信/飞书扫码查看</div>" +
+                    "</div>" +
+                "</div>" +
+                "<div style=\"display:flex;gap:8px;margin-top:12px;justify-content:center;\">" +
+                    "<button class=\"push-exam-btn\" style=\"flex:1;background:#e67e22;color:white;border:none;padding:8px 16px;border-radius:20px;cursor:pointer;font-size:0.8rem;\">📤 推送</button>" +
+                    "<button class=\"goto-exam-btn\" style=\"flex:1;border:1px solid #e2e8f0;background:#f8fafc;padding:8px 16px;border-radius:20px;cursor:pointer;font-size:0.8rem;\">📋 前往考试系统</button>" +
+                "</div>" +
+            "</div>" +
+        "</div></div>";
         document.body.appendChild(overlay);
-        overlay.querySelector('#trainClose').onclick = function() { overlay.remove(); };
+        overlay.querySelector("#trainClose").onclick = function() { overlay.remove(); };
         overlay.onclick = function(e) { if (e.target === overlay) overlay.remove(); };
-        overlay.querySelector('.copy-train-link').addEventListener('click', function() {
+        overlay.querySelector(".goto-exam-btn").onclick = function(){ overlay.remove(); switchNav("examSystem"); };
+        var pushBtn = overlay.querySelector(".push-exam-btn");
+        if (isPushedThisPeriod(reviewerNames.join(","), "train")) {
+            pushBtn.textContent = "✅ 已推送"; pushBtn.style.background = "#27ae60";
+        }
+        pushBtn.onclick = function(){
+            var btn = this;
+            confirmRepush(reviewerNames.join(","), "train", function(){
+                var tp = getTrainingPushes();
+                tp.push({reviewerName: reviewerNames.join(","), reportName: reportName, caseCount: matched.length, time: new Date().toISOString(), type: "train", scope: titleLabel});
+                saveTrainingPushes(tp);
+                btn.textContent = "✅ 已推送"; btn.style.background = "#27ae60";
+            });
+        };
+        overlay.querySelector(".copy-train-link").addEventListener("click", function() {
             navigator.clipboard.writeText(this.dataset.url);
-            this.textContent = '✅ 已复制';
-            var self = this;
-            setTimeout(function() { self.textContent = '📋 复制链接'; }, 1500);
+            this.textContent = "✅ 已复制"; setTimeout((function(b){ return function(){ b.textContent = "📋 复制链接"; }; })(this), 1500);
         });
         setTimeout(function() {
-            var qrContainer = document.getElementById('trainQRCode');
-            if (qrContainer && typeof QRCode !== 'undefined') {
-                qrContainer.innerHTML = '';
-                new QRCode(qrContainer, { text: shareUrl, width: 130, height: 130, colorDark: '#1f3a6b', colorLight: '#ffffff', correctLevel: QRCode.CorrectLevel.M });
+            var qrContainer = document.getElementById("trainQRCode");
+            if (qrContainer && typeof QRCode !== "undefined") {
+                qrContainer.innerHTML = "";
+                new QRCode(qrContainer, { text: shareUrl, width: 130, height: 130, colorDark: "#1f3a6b", colorLight: "#ffffff", correctLevel: QRCode.CorrectLevel.M });
             }
         }, 200);
     }
@@ -13240,19 +13526,21 @@ URL.revokeObjectURL(url);
                         if (!result) result = window._SITE_MAP[name] || '';
                         return result;
                     }
-                    // 智能按钮：0-5无操作, 6-10出卷, 10-15学习+考试, 15+培训+学习+考试
+                    // 智能按钮：按周期阈值
                     function getPersonActions(name, count) {
                         var btns = '';
-                        if (errorDashboardFilter.period === 'week' || errorDashboardFilter.period === 'month' || errorDashboardFilter.period === 'custom') {
-                            if (count >= 6) btns += '<button onclick="generatePrecisionExam(\'' + name.replace(/'/g, "\\'") + '\')" style="background:#c0392b;color:white;border:none;padding:2px 8px;border-radius:8px;cursor:pointer;font-size:0.65rem;white-space:nowrap;">📝 出卷</button>';
-                            if (count >= 10) btns += '<button onclick="navigateToLearningForPerson(\'' + name.replace(/'/g, "\\'") + '\')" style="background:#e67e22;color:white;border:none;padding:2px 8px;border-radius:8px;cursor:pointer;font-size:0.65rem;white-space:nowrap;margin-left:3px;">🗺️ 学习</button>';
-                            if (count > 15) btns += '<button onclick="generatePrecisionTraining(\'' + name.replace(/'/g, "\\'") + '\')" style="background:#8e44ad;color:white;border:none;padding:2px 8px;border-radius:8px;cursor:pointer;font-size:0.65rem;white-space:nowrap;margin-left:3px;" title="精准培训资料">📖 培训</button>';
+                        var thA = getLightThresholds();
+                        if (thA.actions) {
+                            var safeName = name.replace(/'/g, '');
+                            if (count >= thA.examMin) btns += '<button onclick=\"generatePrecisionExam(\'' + safeName + '\')\" style=\"background:#c0392b;color:white;border:none;padding:2px 8px;border-radius:8px;cursor:pointer;font-size:0.65rem;white-space:nowrap;\">📝 出卷</button>';
+                            if (count >= thA.learnMin) btns += '<button onclick=\"navigateToLearningForPerson(\'' + safeName + '\')\" style=\"background:#e67e22;color:white;border:none;padding:2px 8px;border-radius:8px;cursor:pointer;font-size:0.65rem;white-space:nowrap;margin-left:3px;\">🗺️ 学习</button>';
+                            if (count >= thA.trainMin) btns += '<button onclick=\"generatePrecisionTraining(\'' + safeName + '\')\" style=\"background:#8e44ad;color:white;border:none;padding:2px 8px;border-radius:8px;cursor:pointer;font-size:0.65rem;white-space:nowrap;margin-left:3px;\">📖 培训</button>';
                         }
                         return btns;
                     }
                     var allPeople = sortedReviewers.filter(function(e) { return e[1] > 0; });
                     var portraitPage = window._portraitPage || 1;
-                    var portraitPageSize = 20;
+                    var portraitPageSize = 22;
                     var portraitTotalPages = Math.ceil(allPeople.length / portraitPageSize) || 1;
                     if (portraitPage > portraitTotalPages) portraitPage = portraitTotalPages;
                     var showPeople = allPeople.slice((portraitPage - 1) * portraitPageSize, portraitPage * portraitPageSize);
@@ -13275,7 +13563,8 @@ URL.revokeObjectURL(url);
                         });
                         // 根据是否有E列使用不同列宽
                         personHtml = rowsData.map(function(r) {
-                            var lightIcon = r.count > 10 ? '🔴' : (r.count >= 6 ? '🟡' : '🟢');
+                            var thP = getLightThresholds();
+                            var lightIcon = r.count > thP.yellowMax ? '🔴' : (r.count > thP.greenMax ? '🟡' : '🟢');
                             var siteHtml = ' <span style="color:#94a3b8;font-size:0.65rem;">（' + escapeHtml(r.sites) + '）</span>';
                             return '<tr class="portrait-row" style="border-bottom:1px solid #f1f5f9;">' +
                                 '<td style="text-align:center;padding:6px 4px;"><span style="font-size:0.7rem;">' + lightIcon + '</span> <span class="clickable-tag" onclick="showErrorDetailPopup(\'reviewer\',\'' + r.name.replace(/'/g, "\\'") + '\')" style="font-weight:600;color:#2d3748;cursor:pointer;font-size:0.7rem;" title="点击查看详情">' + escapeHtml(r.name) + siteHtml + '</span></td>' +
@@ -13308,15 +13597,42 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
                                     return s.indexOf(errorDashboardFilter.site) >= 0;
                                 });
                             }
-                            var reds = allPeople2.filter(function(e){return e[1]>10;});
-                            var yellows = allPeople2.filter(function(e){return e[1]>=6&&e[1]<=10;});
-                            var greens = allPeople2.filter(function(e){return e[1]<=5;});
+                            var thL = getLightThresholds();
+                            var reds = allPeople2.filter(function(e){return e[1] > thL.yellowMax;});
+                            var yellows = allPeople2.filter(function(e){return e[1] > thL.greenMax && e[1] <= thL.yellowMax;});
+                            var greens = allPeople2.filter(function(e){return e[1] <= thL.greenMax;});
                             window._lightData = { reds: reds, yellows: yellows, greens: greens };
-                            function lightBtn(list,color,bg,icon,key) {
-                                if (list.length === 0) return '<span style=\"flex:1;padding:10px 16px;border-radius:10px;font-size:0.8rem;background:#f1f5f9;color:#94a3b8;\">'+icon+' 0人</span>';
-                                return '<span onclick=\"showLightPeoplePopup(\''+key+'\')\" style=\"flex:1;padding:10px 16px;border-radius:10px;font-size:0.8rem;background:'+bg+';color:'+color+';cursor:pointer;font-weight:600;\">'+icon+' '+list.length+'人</span>';
+                            var thL2 = getLightThresholds();
+                            var totalP = sortedReviewers.length || 1;
+                            function makeLightTip(cnt, pct, allTips) {
+                                var rules = [], warn = '';
+                                for (var i=0; i<allTips.length; i++) {
+                                    var t = allTips[i].trim();
+                                    if (!t) continue;
+                                    if (t.indexOf('⚠') >= 0) warn = t;
+                                    else rules.push(t);
+                                }
+                                var html = '<div style=\"font-size:0.78rem;line-height:1.9;\">';
+                                html += '<div>失误人数及占比：' + cnt + '人（占总人数：' + pct + '%）</div>';
+                                if (rules.length > 0) html += '<div>规则&学习推送：' + rules.join(' / ') + '</div>';
+                                html += '<div>预警模式：' + (warn || '无') + '</div>';
+                                html += '</div>';
+                                return html;
                             }
-                            return lightBtn(reds,'#991b1b','#fecaca','🔴','reds') + lightBtn(yellows,'#854d0e','#fef08a','🟡','yellows') + lightBtn(greens,'#166534','#d4edda','🟢','greens');
+                            var redTips = thL2.redTooltip.split('\n').slice(1);
+                            var yellowTips = thL2.yellowTooltip.split('\n').slice(1);
+                            var greenTips = thL2.greenTooltip.split('\n').slice(1);
+                            window._lightTipStore = {};
+                            function lightBtn(list,color,bg,icon,key,allTips) {
+                                var cnt = list.length;
+                                var pct = (cnt/totalP*100).toFixed(0);
+                                var tipHtml = makeLightTip(cnt, pct, allTips);
+                                var tipId = 'ltip_'+key;
+                                window._lightTipStore[tipId] = tipHtml;
+                                if (cnt === 0) return '<span class=\"light-block\" data-lighttip=\"'+tipId+'\" style=\"flex:1;padding:10px 16px;border-radius:10px;font-size:0.8rem;background:'+bg+';color:'+color+';font-weight:600;\">'+icon+' 0人</span>';
+                                return '<span class=\"light-block\" onclick=\"showLightPeoplePopup(\''+key+'\')\" data-lighttip=\"'+tipId+'\" style=\"flex:1;padding:10px 16px;border-radius:10px;font-size:0.8rem;background:'+bg+';color:'+color+';cursor:pointer;font-weight:600;\">'+icon+' '+cnt+'人</span>';
+                            }
+                            return lightBtn(reds,'#991b1b','#fecaca','🔴','reds',redTips) + lightBtn(yellows,'#854d0e','#fef08a','🟡','yellows',yellowTips) + lightBtn(greens,'#166534','#d4edda','🟢','greens',greenTips);
                         })() + '</div>' +
                     '</div></div>';
                 })() +
@@ -13369,7 +13685,36 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
                 }
                 return '<div style="display:flex;gap:16px;align-items:stretch;">' +
                     '<div class="report-box" style="flex:3;min-width:0;margin-bottom:0;display:flex;flex-direction:column;">' +
-                        '<div style="font-weight:700;color:#1f3a6b;margin-bottom:8px;font-size:0.85rem;">📋 失误列表</div>' +
+                        '<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">' +
+                            '<div style="font-weight:700;color:#1f3a6b;font-size:0.85rem;">📋 失误列表</div>' +
+                            '<div style="display:flex;gap:4px;align-items:stretch;">' +
+                                (function(){
+                                    // 始终基于当前周期全量数据统计，不受站点筛选影响
+                                    var oldSite = errorDashboardFilter.site;
+                                    errorDashboardFilter.site = 'all';
+                                    var allFiltered = getFilteredErrors();
+                                    errorDashboardFilter.site = oldSite;
+                                    var curStats = {};
+                                    allFiltered.forEach(function(e){ curStats[e.site] = (curStats[e.site]||0)+1; });
+                                    var totalAll = allFiltered.length || 1;
+                                    var sites = ['深圳','青岛','成都'];
+                                    var list = sites.map(function(s){ return {name:s, count:curStats[s]||0}; }).sort(function(a,b){return b.count-a.count;});
+                                    var max = Math.max(1, list[0].count);
+                                    var allBtn = '<span class=\"site-stat-btn\" data-site=\"all\" style=\"cursor:pointer;padding:3px 8px;border-radius:8px;font-size:0.65rem;font-weight:600;white-space:nowrap;background:'+(f.site==='all'?'#1f3a6b':'#f1f5f9')+';color:'+(f.site==='all'?'#fff':'#5e6f8d')+';\">🌐 全部 '+totalAll+'</span>';
+                                    return allBtn + list.map(function(item){
+                                        var pct = Math.round(item.count/totalAll*100);
+                                        var ratio = item.count/max;
+                                        var h = item.count===0 ? 120 : Math.round(40*(1-ratio));
+                                        var sat = item.count===0 ? 20 : 50;
+                                        var lit = item.count===0 ? 88 : 82;
+                                        var bgColor = item.count===0 ? '#d4edda' : 'hsl('+h+','+sat+'%,'+lit+'%)';
+                                        var txtColor = item.count===0 ? '#166534' : '#2d3748';
+                                        var isActive = f.site === item.name;
+                                        return '<span class=\"site-stat-btn\" data-site=\"'+item.name+'\" style=\"cursor:pointer;padding:3px 8px;border-radius:8px;font-size:0.65rem;font-weight:600;white-space:nowrap;background:'+bgColor+';color:'+txtColor+';'+(isActive?'border:2px solid #1f3a6b;':'')+'\">📍 '+item.name+' '+item.count+'<span style=\"font-size:0.55rem;opacity:0.8;\">('+pct+'%)</span></span>';
+                                    }).join('');
+                                })() +
+                            '</div>' +
+                        '</div>' +
                         tableBlock +
                     '</div>';
             })() +
@@ -13393,6 +13738,49 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
         html += reportBtn;
 
         document.getElementById('mainContent').innerHTML = html;
+        // 表格样式后处理：站点标签 + 类别行色
+        setTimeout(function(){
+            var tables = document.querySelectorAll('.error-table');
+            tables.forEach(function(tbl){
+                var rows = tbl.querySelectorAll('tbody tr');
+                rows.forEach(function(tr){
+                    var cells = tr.querySelectorAll('td');
+                    // 第2列是站点（索引1）
+                    if (cells.length >= 2) {
+                        var siteText = cells[1].textContent.trim();
+                        var siteMap = {'深圳':'sz','青岛':'qd','成都':'cd'};
+                        var sc = siteMap[siteText] || '';
+                        if (sc) cells[1].innerHTML = '<span class=\"site-tag '+sc+'\">'+siteText+'</span>';
+                    }
+                    // 第4列是失误类别（索引3）
+                    if (cells.length >= 4) {
+                        var catText = cells[3].textContent.trim();
+                        if (catText === '明显失误' || catText === '判错项' || catText === '扣错项') tr.classList.add('row-low');
+                        else if (catText.indexOf('低级失误')>=0) tr.classList.add('row-mid');
+                        else if (catText.indexOf('投诉')>=0) tr.classList.add('row-high');
+                    }
+                });
+            });
+            // 绑定站点统计按钮
+            document.querySelectorAll('.site-stat-btn').forEach(function(el){
+                el.addEventListener('click', function(){
+                    errorDashboardFilter.site = el.dataset.site;
+                    errorDashboardPage = 1; window._tablePage = 1;
+                    renderErrorDashboardContent();
+                });
+            });
+            // 绑定灯块悬停提示
+        }, 100);
+        setTimeout(function(){
+            document.querySelectorAll('.light-block').forEach(function(el){
+                el.addEventListener('mouseenter', function(e){
+                    var tipId = el.getAttribute('data-lighttip');
+                    var tipHtml = (window._lightTipStore || {})[tipId] || '';
+                    if (tipHtml) showLightTooltip(e, tipHtml);
+                });
+                el.addEventListener('mouseleave', hideLightTooltip);
+            });
+        }, 100);
     }
 
     function generateErrorReport() {
@@ -13414,9 +13802,44 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
         var sortedCats = Object.entries(catStats).sort(function(a,b){return b[1]-a[1];});
         var sortedReviewers = Object.entries(reviewerStats).sort(function(a,b){return b[1]-a[1];});
         // 亮灯
-        var reds = sortedReviewers.filter(function(e){return e[1]>10;});
-        var yellows = sortedReviewers.filter(function(e){return e[1]>=6&&e[1]<=10;});
-        var greens = sortedReviewers.filter(function(e){return e[1]<=5;});
+        var thR = getLightThresholds();
+        var reds = sortedReviewers.filter(function(e){return e[1] > thR.yellowMax;});
+        var yellows = sortedReviewers.filter(function(e){return e[1] > thR.greenMax && e[1] <= thR.yellowMax;});
+        var greens = sortedReviewers.filter(function(e){return e[1] <= thR.greenMax;});
+        // 上期对比
+        var prevLabel = '', prevTotal = 0, diffText = '', diffColor = '#5e6f8d';
+        if (f.period === 'week') { prevLabel = '上周'; }
+        else if (f.period === 'month') { prevLabel = '上月'; }
+        else { prevLabel = '上期'; }
+        // 粗略估算：取上期数据（从全量数据中筛）
+        (function(){
+            var now2 = new Date(); var allData = errorDashboardData;
+            if (f.period === 'day') {
+                var yesterday = new Date(now2.getFullYear(), now2.getMonth(), now2.getDate()-1);
+                var prevDay = allData.filter(function(e){ return e.date >= yesterday && e.date < new Date(now2.getFullYear(), now2.getMonth(), now2.getDate()); });
+                prevTotal = prevDay.length;
+            } else if (f.period === 'week') {
+                var dayOfWeek = now2.getDay(); var mondayOffset = dayOfWeek===0?6:dayOfWeek-1;
+                var thisMon = new Date(now2.getFullYear(),now2.getMonth(),now2.getDate()-mondayOffset);
+                var prevMon = new Date(thisMon.getTime()-7*86400000);
+                var prevSun = new Date(thisMon.getTime()-86400000);
+                var prevWeek = allData.filter(function(e){ return e.date >= prevMon && e.date <= prevSun; });
+                prevTotal = prevWeek.length;
+            } else if (f.period === 'month') {
+                var thisMonthStart = new Date(now2.getFullYear(), now2.getMonth(), 1);
+                var prevMonthStart = new Date(now2.getFullYear(), now2.getMonth()-1, 1);
+                var prevMonthEnd = new Date(now2.getFullYear(), now2.getMonth(), 0);
+                var prevMonth = allData.filter(function(e){ return e.date >= prevMonthStart && e.date <= prevMonthEnd; });
+                prevTotal = prevMonth.length;
+            } else { prevTotal = 0; }
+            if (prevTotal > 0) {
+                var diff = totalErrors - prevTotal;
+                var diffPct = prevTotal>0?(Math.abs(diff)/prevTotal*100).toFixed(0):0;
+                if (diff > 0) { diffText = '↑ 上升 ' + diffPct + '%（+' + diff + '）'; diffColor = '#c0392b'; }
+                else if (diff < 0) { diffText = '↓ 下降 ' + diffPct + '%（' + diff + '）'; diffColor = '#166534'; }
+                else { diffText = '→ 持平'; diffColor = '#5e6f8d'; }
+            }
+        })();
         // 站点分布
         var siteHtml = sortedSites.map(function(s){
             var cnt = siteStats[s];
@@ -13429,9 +13852,9 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
             return '<tr><td>'+escapeHtml(e[0])+'</td><td>'+e[1]+'</td><td>'+pct+'%</td></tr>';
         }).join('');
         // 推送人员
-        var pushExam = sortedReviewers.filter(function(e){return e[1]>=6;});
-        var pushLearn = sortedReviewers.filter(function(e){return e[1]>=10;});
-        var pushTrain = sortedReviewers.filter(function(e){return e[1]>15;});
+        var pushExam = sortedReviewers.filter(function(e){return e[1] >= thR.examMin;});
+        var pushLearn = sortedReviewers.filter(function(e){return e[1] >= thR.learnMin;});
+        var pushTrain = sortedReviewers.filter(function(e){return e[1] >= thR.trainMin;});
         // 往期对比（上一周期）
         var prevLabel = '上一周期';
         // 生成HTML报告
@@ -13459,11 +13882,19 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
         '<div class="stat-item"><div class="stat-num">'+sortedCats.length+'</div><div class="stat-lbl">🏷️ 失误类别</div></div>'+
         '<div class="stat-item"><div class="stat-num">'+sortedReviewers.length+'</div><div class="stat-lbl">👤 涉及人员</div></div>'+
         '</div></div>'+
+        // 本期vs上期
+        (prevTotal > 0 ? '<div class="card"><h2>📈 本期 vs '+prevLabel+'</h2>'+
+        '<div class="stat-grid">'+
+        '<div class="stat-item"><div class="stat-num">'+totalErrors+'</div><div class="stat-lbl">本期失误</div></div>'+
+        '<div class="stat-item"><div class="stat-num">'+prevTotal+'</div><div class="stat-lbl">'+prevLabel+'失误</div></div>'+
+        '<div class="stat-item"><div class="stat-num" style="color:'+diffColor+';">'+(totalErrors-prevTotal>0?'+':'')+(totalErrors-prevTotal)+'</div><div class="stat-lbl">变化量</div></div>'+
+        '<div class="stat-item"><div class="stat-num" style="color:'+diffColor+';">'+diffText.substring(0,6)+'</div><div class="stat-lbl">趋势</div></div>'+
+        '</div></div>' : '')+
         // 亮灯
         '<div class="card"><h2>🚦 亮灯预警</h2><div style="display:flex;gap:12px;justify-content:center;">'+
-        '<span class="light-tag red">🔴 红灯 '+reds.length+'人（>10次）</span>'+
-        '<span class="light-tag yellow">🟡 黄灯 '+yellows.length+'人（6-10次）</span>'+
-        '<span class="light-tag green">🟢 绿灯 '+greens.length+'人（≤5次）</span>'+
+        '<span class="light-tag red">🔴 红灯 '+reds.length+'人（≥'+thR.redMin+'次'+(thR.red2Min?'，其中≥'+thR.red2Min+'次：'+sortedReviewers.filter(function(e){return e[1]>=thR.red2Min;}).length+'人':'')+'）</span>'+
+        '<span class="light-tag yellow">🟡 黄灯 '+yellows.length+'人（'+(thR.greenMax+1)+'-'+thR.yellowMax+'次）</span>'+
+        '<span class="light-tag green">🟢 绿灯 '+greens.length+'人（≤'+thR.greenMax+'次）</span>'+
         '</div></div>'+
         // 站点分布
         '<div class="card"><h2>📍 站点分布</h2><table><tr><th>站点</th><th>失误数</th><th>占比</th></tr>'+siteHtml+'</table></div>'+
@@ -13530,9 +13961,9 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
         '</table></div>'+
         // 需推送人员
         '<div class="card"><h2>📤 需推送人员</h2>'+
-        '<p><b>📝 精准出卷（≥6次）：</b>'+pushExam.length+'人 — '+pushExam.map(function(e){return escapeHtml(e[0])+'('+e[1]+')';}).join('、')+'</p>'+
-        '<p><b>🗺️ 学习地图（≥10次）：</b>'+pushLearn.length+'人 — '+pushLearn.map(function(e){return escapeHtml(e[0])+'('+e[1]+')';}).join('、')+'</p>'+
-        '<p><b>📖 精准培训（>15次）：</b>'+pushTrain.length+'人 — '+pushTrain.map(function(e){return escapeHtml(e[0])+'('+e[1]+')';}).join('、')+'</p>'+
+        (thR.actions ? '<p><b>📝 精准出卷（≥'+thR.examMin+'次）：</b>'+pushExam.length+'人 — '+pushExam.map(function(e){return escapeHtml(e[0])+'('+e[1]+')';}).join('、')+'</p>'+
+        '<p><b>🗺️ 学习地图（≥'+thR.learnMin+'次）：</b>'+pushLearn.length+'人 — '+pushLearn.map(function(e){return escapeHtml(e[0])+'('+e[1]+')';}).join('、')+'</p>'+
+        '<p><b>📖 精准培训（≥'+thR.trainMin+'次）：</b>'+pushTrain.length+'人 — '+pushTrain.map(function(e){return escapeHtml(e[0])+'('+e[1]+')';}).join('、')+'</p>' : '<p style="color:#94a3b8;">月度不触发自动推送</p>')+
         '</div>'+
         // 需关注人员（红灯+黄灯前5）
         '<div class="card"><h2>🔍 需重点关注人员</h2>'+
@@ -13553,7 +13984,7 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
     // 每120分钟自动刷新
     setInterval(function() {
         if (currentNav === 'errorDashboard' && !window._isLearningPlanView) refreshErrorDashboardData(true);
-    }, 7200000);
+    }, 600000);
 
     // ==================== 考试系统模块 ====================
     const EXAM_HISTORY_KEY = 'examHistoryData';
@@ -13590,20 +14021,29 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
         document.body.style.overflow = 'auto';
 
         if (main) {
-            main.innerHTML = '<div id="examActiveArea"></div>';
+            var isRetakeExam = exam.attempts > 0 && exam.wrongAnswers && exam.wrongAnswers.length > 0;
+            var qCount = isRetakeExam ? exam.wrongAnswers.length : (exam.questions ? exam.questions.length : 0);
+            main.innerHTML = '<div style=\"max-width:500px;margin:60px auto;\"><div class=\"report-box\" style=\"text-align:center;padding:30px;\">' +
+                '<div style=\"font-size:2rem;margin-bottom:8px;\">📝</div>' +
+                '<div style=\"font-weight:800;font-size:1.1rem;color:#1f3a6b;margin-bottom:12px;\">'+escapeHtml(exam.reviewerName)+' 的试卷</div>' +
+                '<div style=\"font-size:0.85rem;color:#5e6f8d;margin-bottom:4px;\">考试码：<strong style=\"color:#c0392b;\">'+(exam.examCode||'N/A')+'</strong></div>' +
+                '<div style=\"font-size:0.85rem;color:#5e6f8d;margin-bottom:4px;\">'+qCount+' 题 | '+(exam.timeLimit||40)+' 分钟 | 满分100分</div>' +
+                '<div style=\"font-size:0.8rem;color:#5e6f8d;margin-bottom:4px;\">第'+(exam.attempts+1)+'次考试'+(isRetakeExam?'（补考·仅错题）':'')+'</div>' +
+                (exam.attempts >= (exam.maxAttempts||2) ? '<div style=\"color:#c0392b;font-size:0.8rem;margin-bottom:12px;\">⚠️ 补考次数已用完</div>' : '') +
+                '<div style=\"margin-top:16px;\">' +
+                    (exam.attempts < (exam.maxAttempts||2) || exam.status !== 'completed'
+                        ? '<button id=\"confirmStartBtn\" data-examid=\"'+exam.id+'\" style=\"background:#2563eb;color:white;border:none;padding:12px 32px;border-radius:30px;font-size:1rem;cursor:pointer;font-weight:600;\">📝 确认开始考试（计时开始）</button>'
+                        : '<span style=\"color:#94a3b8;\">该考试已完成</span>') +
+                '</div>' +
+            '</div></div>';
             main.style.overflow = 'visible';
             main.style.padding = '20px';
+            setTimeout(function(){
+                var csb = document.getElementById('confirmStartBtn');
+                if (csb) csb.onclick = function(){ startExam(csb.dataset.examid); };
+            }, 100);
         }
 
-        window._examAutoStarted = true;
-        currentExamId = exam.id;
-        // 直接调用已有的考试开始逻辑
-        setTimeout(function() {
-            startExam(exam.id);
-            // 隐藏取消按钮（独立模式不允许取消）
-            var cancelBtn = document.getElementById('cancelExamBtn');
-            if (cancelBtn) cancelBtn.style.display = 'none';
-        }, 300);
     }
 
     function generateExamCode() {
@@ -13621,8 +14061,59 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
     function saveTrainingPushes(d) { localStorage.setItem(TRAINING_PUSH_KEY, JSON.stringify(d)); }
     function getLearnPlanPushes() { try { return JSON.parse(localStorage.getItem(LEARNPLAN_PUSH_KEY)||'[]'); } catch(e) { return []; } }
     function saveLearnPlanPushes(d) { localStorage.setItem(LEARNPLAN_PUSH_KEY, JSON.stringify(d)); }
+    // 检查本期是否已推送
+    function isPushedThisPeriod(personName, type) {
+        var curWeek = getCurrentWeekKey();
+        var records = type === 'learn' ? getLearnPlanPushes() : getTrainingPushes();
+        return records.some(function(r){
+            if (getWeekKey(r.time) !== curWeek) return false;
+            if ((r.type||'') !== type) return false;
+            return r.reviewerName.indexOf(personName) >= 0 || personName.indexOf(r.reviewerName) >= 0;
+        });
+    }
+    async function confirmRepush(personName, type, callback) {
+        if (isPushedThisPeriod(personName, type)) {
+            var typeLabel = type==='exam'?'出卷':(type==='learn'?'学习地图':'培训');
+            var ok = await showConfirm(personName + ' 本期已推送过' + typeLabel + '，是否继续推送？');
+            if (ok) callback();
+        } else { callback(); }
+    }
+    // 迁移旧数据到推送记录
+    function migrateOldPushRecords() {
+        try {
+            var trainPushes = getTrainingPushes();
+            var learnPushes = getLearnPlanPushes();
+            if (trainPushes.length === 0) {
+                var reports = JSON.parse(localStorage.getItem('generatedReports')||'{}');
+                var tkeys = Object.keys(reports);
+                if (tkeys.length > 0) {
+                    tkeys.forEach(function(key){
+                        var parts = key.split('_');
+                        trainPushes.push({ reviewerName: parts[1]||'未知', reportName: key, caseCount: 0, time: new Date().toISOString() });
+                    });
+                    saveTrainingPushes(trainPushes);
+                }
+            }
+            if (learnPushes.length === 0) {
+                var plans = JSON.parse(localStorage.getItem('learningPlanData')||'{}');
+                var pkeys = Object.keys(plans);
+                if (pkeys.length > 0) {
+                    pkeys.forEach(function(code){
+                        var p = plans[code];
+                        learnPushes.push({ reviewerName: p.reviewerName||'未知', planCode: code, courseCount: p.totalCourses||0, areaCount: (p.areas||[]).length, time: p.generatedAt||new Date().toISOString() });
+                    });
+                    saveLearnPlanPushes(learnPushes);
+                }
+            }
+        } catch(e) {}
+    }
 
-    function renderExamSystem() {
+    function renderExamSystem(filterReviewer) {
+        // 记录推送人筛选
+        if (filterReviewer) window._examFilterReviewer = filterReviewer;
+        // 恢复侧边栏（从独立考试页面返回时）
+        var sidebar = document.querySelector('.sidebar');
+        if (sidebar && sidebar.style.display === 'none') sidebar.style.display = '';
         const urlParams = new URLSearchParams(window.location.search);
         const autoExam = urlParams.get('exam');
         const shouldAutoStart = autoExam && !window._examAutoStarted;
@@ -13632,10 +14123,30 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
             const exam = Object.values(history).find(e => e.examCode === autoExam);
             if (exam) {
                 window._examAutoStarted = true;
-                container.innerHTML = '<div class="report-box" style="text-align:center;padding:40px;"><div style="font-size:1.5rem;font-weight:700;color:#1f3a6b;">📝 正在进入考试...</div><div id="examActiveArea"></div></div>';
-                setTimeout(() => startExam(exam.id), 500);
+                var sidebar2 = document.querySelector('.sidebar');
+                if (sidebar2) sidebar2.style.display = 'none';
+                if (container) { container.style.padding = '0'; container.style.marginLeft = '0'; }
+                var isRetakeExam = exam.attempts > 0 && exam.wrongAnswers && exam.wrongAnswers.length > 0;
+                var qCount = isRetakeExam ? exam.wrongAnswers.length : (exam.questions ? exam.questions.length : 0);
+                container.innerHTML = '<div style=\"max-width:500px;margin:60px auto;\"><div class=\"report-box\" style=\"text-align:center;padding:30px;\">' +
+                    '<div style=\"font-size:2rem;margin-bottom:8px;\">📝</div>' +
+                    '<div style=\"font-weight:800;font-size:1.1rem;color:#1f3a6b;margin-bottom:12px;\">'+escapeHtml(exam.reviewerName)+' 的试卷</div>' +
+                    '<div style=\"font-size:0.85rem;color:#5e6f8d;margin-bottom:4px;\">考试码：<strong style=\"color:#c0392b;\">'+(exam.examCode||'N/A')+'</strong></div>' +
+                    '<div style=\"font-size:0.85rem;color:#5e6f8d;margin-bottom:4px;\">'+qCount+' 题 | '+(exam.timeLimit||40)+' 分钟 | 满分100分</div>' +
+                    '<div style=\"font-size:0.8rem;color:#5e6f8d;margin-bottom:4px;\">第'+(exam.attempts+1)+'次考试'+(isRetakeExam?'（补考·仅错题）':'')+'</div>' +
+                    (exam.attempts >= (exam.maxAttempts||2) ? '<div style=\"color:#c0392b;font-size:0.8rem;margin-bottom:12px;\">⚠️ 补考次数已用完</div>' : '') +
+                    '<div style=\"margin-top:16px;\">' +
+                        (exam.attempts < (exam.maxAttempts||2) || exam.status !== 'completed'
+                            ? '<button id=\"confirmStartBtn\" data-examid=\"'+exam.id+'\" style=\"background:#2563eb;color:white;border:none;padding:12px 32px;border-radius:30px;font-size:1rem;cursor:pointer;font-weight:600;\">📝 确认开始考试（计时开始）</button>'
+                            : '<span style=\"color:#94a3b8;\">该考试已完成</span>') +
+                    '</div>' +
+                '</div></div>';
+                setTimeout(function(){
+                    var csb = document.getElementById('confirmStartBtn');
+                    if (csb) csb.onclick = function(){ startExam(csb.dataset.examid); };
+                }, 100);
                 return;
-            } else { container.innerHTML = '<div class="report-box"><div class="empty-placeholder">❌ 考试码无效或考试已过期</div></div>'; return; }
+            } else { container.innerHTML = '<div style=\"text-align:center;padding:60px;\"><div style=\"font-size:3rem;\">❌</div><div style=\"color:#94a3b8;\">考试码无效或已过期</div></div>'; return; }
         }
         container.innerHTML = '<div class="report-box" style="margin-bottom:16px;">' +
             '<div class="report-title" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;">' +
@@ -13646,9 +14157,9 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
                 '</div>' +
             '</div>' +
             '<div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:center;margin-top:12px;">' +
-                '<button class="analysis-type-btn ' + (currentExamTab==='records'?'active':'') + '" data-examtab="records">📝 考试记录</button>' +
-                '<button class="analysis-type-btn ' + (currentExamTab==='training'?'active':'') + '" data-examtab="training">📄 培训推送记录</button>' +
-                '<button class="analysis-type-btn ' + (currentExamTab==='learnplan'?'active':'') + '" data-examtab="learnplan">🗺️ 学习地图推送记录</button>' +
+                '<button class="exam-tab-btn ' + (currentExamTab==='records'?'active':'') + '" data-examtab="records" style="padding:6px 16px;border-radius:20px;border:1px solid #e2e8f0;background:#f1f5f9;cursor:pointer;font-size:0.78rem;">📝 考试记录</button>' +
+                '<button class="exam-tab-btn ' + (currentExamTab==='training'?'active':'') + '" data-examtab="training" style="padding:6px 16px;border-radius:20px;border:1px solid #e2e8f0;background:#f1f5f9;cursor:pointer;font-size:0.78rem;">📄 培训推送记录</button>' +
+                '<button class="exam-tab-btn ' + (currentExamTab==='learnplan'?'active':'') + '" data-examtab="learnplan" style="padding:6px 16px;border-radius:20px;border:1px solid #e2e8f0;background:#f1f5f9;cursor:pointer;font-size:0.78rem;">🗺️ 学习地图推送记录</button>' +
             '</div>' +
         '</div>' +
         '<div id="examTabContent"></div>';
@@ -13660,8 +14171,8 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
                 if (!found) { alert('未找到该考试码对应的试卷'); return; }
                 startExam(found.id);
             };
-            container.querySelectorAll('[data-examtab]').forEach(btn => {
-                btn.onclick = () => { currentExamTab = btn.dataset.examtab; renderExamTabContent(); };
+            container.querySelectorAll('.exam-tab-btn').forEach(function(btn) {
+                btn.addEventListener('click', function() { currentExamTab = btn.dataset.examtab; renderExamTabContent(); });
             });
             renderExamTabContent();
         }, 100);
@@ -13670,97 +14181,258 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
     function renderExamTabContent() {
         var content = document.getElementById('examTabContent');
         if (!content) return;
+        // 更新Tab按钮状态
+        document.querySelectorAll('.exam-tab-btn').forEach(function(btn){
+            if (btn.dataset.examtab === currentExamTab) btn.classList.add('active');
+            else btn.classList.remove('active');
+        });
         if (currentExamTab === 'records') renderExamRecordsTab(content);
         else if (currentExamTab === 'training') renderTrainingPushesTab(content);
         else if (currentExamTab === 'learnplan') renderLearnPlanPushesTab(content);
     }
+    // 按周分组
+    function getWeekKey(dateStr) {
+        var d = new Date(dateStr);
+        var day = d.getDay();
+        var monday = new Date(d.getFullYear(), d.getMonth(), d.getDate() - (day===0?6:day-1));
+        return monday.getFullYear()+'-'+String(monday.getMonth()+1).padStart(2,'0')+'-'+String(monday.getDate()).padStart(2,'0');
+    }
+    function getCurrentWeekKey() {
+        var d = new Date();
+        var day = d.getDay();
+        var monday = new Date(d.getFullYear(), d.getMonth(), d.getDate() - (day===0?6:day-1));
+        return monday.getFullYear()+'-'+String(monday.getMonth()+1).padStart(2,'0')+'-'+String(monday.getDate()).padStart(2,'0');
+    }
+    function groupByWeek(list, timeField) {
+        var groups = {};
+        var curWeek = getCurrentWeekKey();
+        list.forEach(function(item){
+            var wk = getWeekKey(item[timeField]);
+            if (!groups[wk]) groups[wk] = { key: wk, items: [], isCurrent: wk===curWeek };
+            groups[wk].items.push(item);
+        });
+        return Object.values(groups).sort(function(a,b){return b.key.localeCompare(a.key);});
+    }
 
     function renderExamRecordsTab(content) {
         const history = getExamHistory();
-        const examList = Object.values(history).sort((a, b) => new Date(b.generatedAt) - new Date(a.generatedAt));
-        var cards = '';
+        var filterName = window._examFilterReviewer;
+        var examList = Object.values(history).filter(function(e){
+            return !filterName || e.reviewerName === filterName;
+        }).map(function(e){
+            // 状态和颜色
+            var isRetake = e.attempts > 0;
+            var isFailed = e._retakeFailed || (e.status==='completed' && e.attempts >= (e.maxAttempts||2) && (e.score||0)<100);
+            var isPassed = e.status==='completed' && (e.score||0)>=100;
+            var isInProgress = e.status==='in_progress';
+            var priority = isFailed ? 0 : (isRetake && !isPassed ? 1 : 2); // 0=置顶 1=补考 2=通过
+            var statusLabel = e._retakeFailed ? '❌ 补考未通过' : (isPassed ? '✅ 已通过' : (isInProgress ? '⏳ 考试中' : (isRetake ? '🔄 补考' : '📝 待考')));
+            var bgClass = isFailed ? 'exam-failed' : (isRetake && !isPassed ? 'exam-retake' : (isPassed ? 'exam-passed' : ''));
+            return { exam: e, isFailed: isFailed, isPassed: isPassed, isRetake: isRetake, isInProgress: isInProgress,
+                priority: priority, statusLabel: statusLabel, bgClass: bgClass,
+                time: e.generatedAt, weekKey: getWeekKey(e.generatedAt) };
+        }).sort(function(a,b){
+            if (a.priority !== b.priority) return a.priority - b.priority;
+            return new Date(b.time) - new Date(a.time);
+        });
         if (examList.length === 0) {
-            cards = '<div class="empty-placeholder" style="padding:40px;">暂无考试记录</div>';
-        } else {
-            cards = examList.map(exam => {
-                var isFailed = exam._retakeFailed || (exam.status==='completed' && exam.attempts>=2 && exam.score<100);
-                var bgStyle = isFailed ? 'background:#fff5f5;border:1px solid #fecaca;' : '';
-                var statusLabel = exam._retakeFailed ? '❌ 补考未通过' : (exam.status==='completed' ? (exam.score>=100?'✅ 已通过':'⚠️ 已完成') : (exam.status==='in_progress'?'⏳ 进行中':'📝 待考试'));
-                var retakeNote = isFailed ? '<div style=\"font-size:0.7rem;color:#c0392b;margin-top:2px;\">⚠️ 两次考试均未通过，需重新出卷</div>' : '';
-                return '<div class=\"exam-card\" style=\"display:flex;gap:12px;align-items:center;flex-wrap:wrap;'+bgStyle+'\">' +
-                    '<div style=\"flex:1;min-width:200px;\">' +
-                        '<div style=\"font-weight:700;color:#1f3a6b;\">📋 '+escapeHtml(fmtRvGlobal(exam.reviewerName))+' 的试卷</div>' +
-                        '<div style=\"font-size:0.8rem;color:#5e6f8d;\">考试码：<strong style=\"font-size:1.2rem;color:#c0392b;\">'+(exam.examCode||'N/A')+'</strong> '+statusLabel+' | 得分：'+(exam.score||0)+'/100 | 次数：'+(exam.attempts||0)+'</div>' +
-                        retakeNote +
-                        '<div style=\"font-size:0.75rem;color:#94a3b8;\">生成时间：'+new Date(exam.generatedAt).toLocaleString('zh-CN')+' | 题目数：'+(exam.questions?exam.questions.length:0)+'</div>' +
-                        (exam.mistakeCategories ? '<div style=\"font-size:0.7rem;margin-top:4px;\">关联类别：'+exam.mistakeCategories.map(function(c){return '<span class=\"tag-badge category\">'+escapeHtml(c)+'</span>';}).join(' ')+'</div>' : '') +
-                    '</div>' +
-                    '<div style=\"display:flex;gap:8px;flex-wrap:wrap;\">' +
-                        '<button class=\"primary\" data-startexam=\"'+exam.id+'\">📝 '+(exam.status==='completed'?'查看详情':'开始考试')+'</button>' +
-                        '<button class=\"small-outline\" data-viewexam=\"'+exam.id+'\">📊 考试记录</button>' +
-                        '<button class=\"action-btn danger\" data-delexam=\"'+exam.id+'\">🗑️</button>' +
-                    '</div></div>';
-            }).join('');
+            content.innerHTML = '<div class=\"report-box\"><div class=\"empty-placeholder\" style=\"padding:40px;\">暂无考试记录</div></div>';
+            return;
         }
-        content.innerHTML = '<div class=\"report-box\">'+cards+'</div>';
+        // 状态筛选按钮
+        var statusFilters = [
+            {key:'all', label:'全部', count:examList.length},
+            {key:'pending', label:'📝 待考', count:examList.filter(function(x){return !x.isRetake && !x.isPassed && !x.isInProgress && !x.isFailed;}).length},
+            {key:'inprogress', label:'⏳ 考试中', count:examList.filter(function(x){return x.isInProgress;}).length},
+            {key:'retake', label:'🔄 补考', count:examList.filter(function(x){return x.isRetake && !x.isPassed && !x.isFailed;}).length},
+            {key:'passed', label:'✅ 已通过', count:examList.filter(function(x){return x.isPassed;}).length},
+            {key:'failed', label:'❌ 未通过', count:examList.filter(function(x){return x.isFailed;}).length}
+        ];
+        var curFilter = window._examStatusFilter || 'all';
+        var filterHtml = '<div style=\"display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px;\">';
+        statusFilters.forEach(function(sf){
+            var isActive = curFilter === sf.key;
+            filterHtml += '<span class=\"exam-filter\" data-filter=\"'+sf.key+'\" style=\"cursor:pointer;padding:4px 12px;border-radius:14px;font-size:0.72rem;font-weight:600;'+(isActive?'background:#1f3a6b;color:#fff;':'background:#f1f5f9;color:#5e6f8d;')+'\">'+sf.label+' ('+sf.count+')</span>';
+        });
+        filterHtml += '<input type=\"text\" id=\"examSearchInput\" placeholder=\"🔍 搜索姓名或考试码\" style=\"padding:4px 10px;border:1px solid #e2e8f0;border-radius:14px;font-size:0.7rem;width:160px;margin-left:auto;\" value=\"'+(window._examSearch||'')+'\">';
+        filterHtml += '</div>';
+        // 搜索
+        var searchText = (window._examSearch || '').trim().toLowerCase();
+        var baseList = examList;
+        if (searchText) {
+            baseList = examList.filter(function(x){
+                var e = x.exam;
+                var st = x.statusLabel || '';
+                var all = [e.reviewerName, e.examCode, st, new Date(e.generatedAt).toLocaleDateString('zh-CN')].join(' ').toLowerCase();
+                return all.indexOf(searchText) >= 0;
+            });
+        }
+        // 状态筛选
+        var filteredList = baseList;
+        if (curFilter !== 'all') {
+            filteredList = baseList.filter(function(x){
+                if (curFilter === 'pending') return !x.isRetake && !x.isPassed && !x.isInProgress && !x.isFailed;
+                if (curFilter === 'inprogress') return x.isInProgress;
+                if (curFilter === 'retake') return x.isRetake && !x.isPassed && !x.isFailed;
+                if (curFilter === 'passed') return x.isPassed;
+                if (curFilter === 'failed') return x.isFailed;
+                return true;
+            });
+        }
+        var curWeek = getCurrentWeekKey();
+        var groups = groupByWeek(filteredList, 'time');
+        var html = '';
+        groups.forEach(function(g){
+            g.items.sort(function(a,b){ return new Date(b.time) - new Date(a.time); });
+            var weekLabel = g.isCurrent ? '本周' : g.key;
+            var disp = g.isCurrent ? 'block' : 'none';
+            html += '<div style=\"margin-bottom:12px;\">' +
+                '<div class="week-toggle" onclick="toggleWeekGroup(this)" style="cursor:pointer;font-weight:700;color:#1f3a6b;font-size:0.85rem;padding:8px 12px;background:#f1f5f9;border-radius:8px;">📅 ' + weekLabel + '（' + g.items.length + '条） ' + (g.isCurrent ? '' : '▸ 展开') + '</div>' +
+                '<div style=\"display:' + disp + ';\">' +
+                g.items.map(function(item){
+                    var e = item.exam;
+                    var statusColor = item.isFailed ? '#c0392b' : (item.isRetake && !item.isPassed ? '#e67e22' : (item.isPassed ? '#27ae60' : '#5e6f8d'));
+                    var statusBg = item.isFailed ? '#fecaca' : (item.isRetake && !item.isPassed ? '#fef08a' : (item.isPassed ? '#bbf7d0' : '#e2e8f0'));
+                    return '<div class=\"exam-card '+item.bgClass+'\" style=\"display:flex;gap:12px;align-items:center;flex-wrap:wrap;\">' +
+                        '<div style=\"flex:1;min-width:200px;\">' +
+                            '<div style=\"font-weight:700;color:#1f3a6b;margin-bottom:4px;\">📋 '+escapeHtml(fmtRvGlobal(e.reviewerName))+'</div>' +
+                            '<div style=\"font-size:0.8rem;color:#5e6f8d;\">考试码：<strong style=\"font-size:1.1rem;color:#c0392b;\">'+(e.examCode||'N/A')+'</strong> | 得分：'+(e.score||0)+'/100 | 次数：'+(e.attempts||0)+'</div>' +
+                            (item.isFailed ? '<div style=\"font-size:0.7rem;color:#c0392b;\">⚠️ 两次考试均未通过</div>' : '') +
+                            '<div style=\"font-size:0.7rem;color:#94a3b8;\">'+new Date(e.generatedAt).toLocaleString('zh-CN')+' | '+(e.questions?e.questions.length:0)+'题</div>' +
+                        '</div>' +
+                        '<div style=\"text-align:center;min-width:80px;\">' +
+                            '<div style=\"background:'+statusBg+';color:'+statusColor+';padding:8px 12px;border-radius:12px;font-size:0.85rem;font-weight:700;\">'+item.statusLabel+'</div>' +
+                        '</div>' +
+                        '<div style=\"display:flex;gap:8px;flex-wrap:wrap;\">' +
+                            (e.status==='completed'
+                                ? '<button class=\"small-outline\" data-viewexam=\"'+e.id+'\">📊 查看详情</button>'
+                                : '<a class=\"primary\" href=\"?exam='+(e.examCode||'')+'\" target=\"_blank\" style=\"text-decoration:none;display:inline-block;padding:6px 16px;border-radius:20px;font-size:0.8rem;background:#2563eb;color:#fff;\">📝 开始考试</a>') +
+                            '<button class=\"action-btn danger\" data-delexam=\"'+e.id+'\">🗑️</button>' +
+                        '</div></div>';
+                }).join('') +
+                '</div></div>';
+        });
+        content.innerHTML = '<div class=\"report-box\"><style>.exam-failed{background:#fff0f0;border:1px solid #fecaca;}.exam-retake{background:#fffdf0;border:1px solid #fef08a;}.exam-passed{background:#f0fdf4;border:1px solid #bbf7d0;}</style>'+filterHtml+html+'</div>';
+        bindExamCardEvents(content);
+    }
+    function bindExamCardEvents(content) {
+        var searchInput = document.getElementById('examSearchInput');
+        if (searchInput) {
+            searchInput.oninput = function(){
+                window._examSearch = this.value;
+                renderExamRecordsTab(document.getElementById('examTabContent'));
+            };
+        }
+        content.querySelectorAll('.exam-filter').forEach(function(btn){
+            btn.onclick = function(){ window._examStatusFilter = btn.dataset.filter; renderExamRecordsTab(document.getElementById('examTabContent')); };
+        });
         content.querySelectorAll('[data-startexam]').forEach(function(btn){ btn.onclick = function(){ startExam(btn.dataset.startexam); }; });
         content.querySelectorAll('[data-viewexam]').forEach(function(btn){ btn.onclick = function(){ viewExamRecords(btn.dataset.viewexam); }; });
         content.querySelectorAll('[data-delexam]').forEach(function(btn){
             btn.onclick = async function(){
                 if (!await confirmDelete('考试记录')) return;
-                var d = getExamHistory(); delete d[btn.dataset.delexam]; saveExamHistory(d); renderExamRecordsTab(content);
+                var d = getExamHistory(); delete d[btn.dataset.delexam]; saveExamHistory(d); renderExamRecordsTab(document.getElementById('examTabContent'));
             };
         });
     }
 
     function renderTrainingPushesTab(content) {
         var pushes = getTrainingPushes();
+        var filterName = window._examFilterReviewer;
+        if (filterName) pushes = pushes.filter(function(p){ return p.reviewerName === filterName; });
         var reports = JSON.parse(localStorage.getItem('generatedReports')||'{}');
         if (pushes.length === 0) {
             content.innerHTML = '<div class=\"report-box\"><div class=\"empty-placeholder\" style=\"padding:40px;\">暂无培训推送记录</div></div>';
             return;
         }
-        var cards = pushes.sort(function(a,b){return new Date(b.time)-new Date(a.time);}).map(function(p){
-            var reportExists = !!reports[p.reportName];
-            return '<div class=\"exam-card\" style=\"display:flex;gap:12px;align-items:center;flex-wrap:wrap;\">' +
-                '<div style=\"flex:1;min-width:200px;\">' +
-                    '<div style=\"font-weight:700;color:#1f3a6b;\">📄 '+escapeHtml(p.reviewerName)+' 的培训资料</div>' +
-                    '<div style=\"font-size:0.8rem;color:#5e6f8d;\">生成时间：'+new Date(p.time).toLocaleString('zh-CN')+' | 案例数：'+(p.caseCount||0)+'</div>' +
-                '</div>' +
-                '<div style=\"display:flex;gap:8px;\">' +
-                    (reportExists ? '<button class=\"primary\" data-openreport=\"'+p.reportName+'\">📄 查看培训资料</button>' : '<span style=\"color:#94a3b8;font-size:0.75rem;\">已清理</span>') +
+        var list = pushes.map(function(p){ p._sortTime = p.time; return p; });
+        var groups = groupByWeek(list, 'time');
+        var html = '';
+        groups.forEach(function(g){
+            g.items.sort(function(a,b){ return new Date(b._sortTime||b.time) - new Date(a._sortTime||a.time); });
+            var disp2 = g.isCurrent ? "block" : "none";
+            html += '<div style=\"margin-bottom:12px;\">' +
+                '<div onclick=\"toggleWeekGroup(this)\" style=\"cursor:pointer;font-weight:700;color:#1f3a6b;font-size:0.85rem;padding:8px 12px;background:#f1f5f9;border-radius:8px;\">📅 '+(g.isCurrent?'本周':g.key)+'（'+g.items.length+'条） '+(g.isCurrent?'':'▸ 展开')+'</div>' +
+                '<div style=\"display:'+disp2+';\">' +
+                g.items.map(function(p){
+                    var reportExists = !!reports[p.reportName];
+                    var scopeLabel = p.scope || '培训资料';
+                    var titleText = scopeLabel.indexOf('个人')>=0 ? escapeHtml(p.reviewerName)+' 的培训资料' :
+                        (scopeLabel.indexOf('全站')>=0 ? '全站培训资料（'+p.reviewerName.split(',').length+'人）' :
+                        scopeLabel.replace('站点培训资料','站点培训资料')+'（'+p.reviewerName.split(',').length+'人）');
+                    var isPushed = isPushedThisPeriod(p.reviewerName, 'train');
+                    var pushTag = isPushed ? '<span style=\"background:#d4edda;color:#166534;padding:2px 8px;border-radius:8px;font-size:0.65rem;\">✅ 已推送</span> ' : '';
+                    return '<div class=\"exam-card\" style=\"display:flex;gap:12px;align-items:center;flex-wrap:wrap;\">' +
+                        '<div style=\"flex:1;\"><div style=\"font-weight:700;\">📄 '+pushTag+escapeHtml(titleText)+'</div>' +
+                        '<div style=\"font-size:0.75rem;color:#5e6f8d;\">'+new Date(p.time).toLocaleString('zh-CN')+' | '+p.caseCount+'案例 | '+escapeHtml(scopeLabel)+'</div></div>' +
+                        '<div style=\"display:flex;gap:6px;flex-wrap:wrap;\">' +
+                            (reportExists
+                                ? '<button class=\"primary\" data-openreport=\"'+p.reportName+'\">👁️ 查看</button><button class=\"small-outline\" data-download=\"'+p.reportName+'\">📥 下载</button>'
+                                : '<span style=\"color:#94a3b8;font-size:0.7rem;\">📌 已清理</span>') +
+                            '<button class=\"small-outline\" data-dltrain=\"'+p.reportName+'\">🗑️ 删除</button>' +
+                        '</div>' +
+                    '</div>';
+                }).join('') +
                 '</div></div>';
-        }).join('');
-        content.innerHTML = '<div class=\"report-box\">'+cards+'</div>';
-        content.querySelectorAll('[data-openreport]').forEach(function(btn){
-            btn.onclick = function(){ openTrainingReport(btn.dataset.openreport); };
+        });
+        content.innerHTML = '<div class=\"report-box\">'+html+'</div>';
+        content.querySelectorAll('[data-openreport]').forEach(function(btn){ btn.onclick = function(){ openTrainingReport(btn.dataset.openreport); }; });
+        content.querySelectorAll('[data-download]').forEach(function(btn){
+            btn.onclick = function(){
+                var reports = JSON.parse(localStorage.getItem('generatedReports')||'{}');
+                var html = reports[btn.dataset.download];
+                if (!html) return;
+                var blob = new Blob([html], {type:'text/html;charset=UTF-8'});
+                var a = document.createElement('a');
+                a.href = URL.createObjectURL(blob);
+                a.download = btn.dataset.download + '.html';
+                a.click();
+            };
+        });
+        content.querySelectorAll('[data-dltrain]').forEach(function(btn){
+            btn.onclick = async function(){
+                if (!await confirmDelete('该培训推送记录')) return;
+                deleteReport(btn.dataset.dltrain);
+                var tp = getTrainingPushes().filter(function(r){ return r.reportName !== btn.dataset.dltrain; });
+                saveTrainingPushes(tp);
+                renderTrainingPushesTab(document.getElementById('examTabContent'));
+            };
         });
     }
 
     function renderLearnPlanPushesTab(content) {
         var pushes = getLearnPlanPushes();
+        var filterName = window._examFilterReviewer;
+        if (filterName) pushes = pushes.filter(function(p){ return p.reviewerName === filterName; });
         if (pushes.length === 0) {
             content.innerHTML = '<div class=\"report-box\"><div class=\"empty-placeholder\" style=\"padding:40px;\">暂无学习地图推送记录</div></div>';
             return;
         }
-        var cards = pushes.sort(function(a,b){return new Date(b.time)-new Date(a.time);}).map(function(p){
-            return '<div class=\"exam-card\" style=\"display:flex;gap:12px;align-items:center;flex-wrap:wrap;\">' +
-                '<div style=\"flex:1;min-width:200px;\">' +
-                    '<div style=\"font-weight:700;color:#1f3a6b;\">🗺️ '+escapeHtml(p.reviewerName)+' 的学习地图</div>' +
-                    '<div style=\"font-size:0.8rem;color:#5e6f8d;\">推送时间：'+new Date(p.time).toLocaleString('zh-CN')+' | '+p.courseCount+'节课 · '+p.areaCount+'领域</div>' +
-                '</div>' +
-                '<div style=\"display:flex;gap:8px;\">' +
-                    '<button class=\"primary\" data-openplan=\"'+p.planCode+'\">🔗 打开学习地图</button>' +
+        var list = pushes.map(function(p){ p._sortTime = p.time; return p; });
+        var groups = groupByWeek(list, 'time');
+        var html = '';
+        groups.forEach(function(g){
+            g.items.sort(function(a,b){ return new Date(b._sortTime||b.time) - new Date(a._sortTime||a.time); });
+            var disp2 = g.isCurrent ? "block" : "none";
+            html += '<div style=\"margin-bottom:12px;\">' +
+                '<div onclick=\"toggleWeekGroup(this)\" style=\"cursor:pointer;font-weight:700;color:#1f3a6b;font-size:0.85rem;padding:8px 12px;background:#f1f5f9;border-radius:8px;\">📅 '+(g.isCurrent?'本周':g.key)+'（'+g.items.length+'条） '+(g.isCurrent?'':'▸ 展开')+'</div>' +
+                '<div style=\"display:'+disp2+';\">' +
+                g.items.map(function(p){
+                    return '<div class=\"exam-card\" style=\"display:flex;gap:12px;align-items:center;flex-wrap:wrap;\">' +
+                        '<div style=\"flex:1;\"><div style=\"font-weight:700;\">🗺️ '+escapeHtml(p.reviewerName)+' 的学习地图</div>' +
+                        '<div style=\"font-size:0.75rem;color:#5e6f8d;\">'+new Date(p.time).toLocaleString('zh-CN')+' | '+p.courseCount+'课/'+p.areaCount+'领域</div></div>' +
+                        '<button class=\"primary\" data-openplan=\"'+p.planCode+'\">🔗 打开</button>' +
+                    '</div>';
+                }).join('') +
                 '</div></div>';
-        }).join('');
-        content.innerHTML = '<div class=\"report-box\">'+cards+'</div>';
+        });
+        content.innerHTML = '<div class=\"report-box\">'+html+'</div>';
         content.querySelectorAll('[data-openplan]').forEach(function(btn){
-            btn.onclick = function(){
-                window.open(location.origin+location.pathname+'?learnPlan='+btn.dataset.openplan, '_blank');
-            };
+            btn.onclick = function(){ window.open(location.origin+location.pathname+'?learnPlan='+btn.dataset.openplan, '_blank'); };
         });
     }
 
+    function toggleWeekGroup(el) { var n = el.nextElementSibling; if (n) n.style.display = n.style.display === "none" ? "" : "none"; }
     function openTrainingReport(name) {
         var reports = JSON.parse(localStorage.getItem('generatedReports')||'{}');
         var html = reports[name];
@@ -13816,7 +14488,18 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
         }).join('');
 
         const timeLimit = exam.timeLimit || 30;
-        document.getElementById('examActiveArea').style.display = 'block';
+        var examArea = document.getElementById('examActiveArea');
+        if (!examArea) {
+            var main = document.getElementById('mainContent');
+            main.innerHTML = '<div id=\"examActiveArea\"></div>';
+            examArea = document.getElementById('examActiveArea');
+        }
+        examArea.style.display = 'block';
+        // 检查是否已过截止时间（关闭页面后重新打开的情况）
+        if (exam._examStartTime && Date.now() > exam._examStartTime + (exam.timeLimit||40)*60*1000) {
+            showAlert('⏱️ 考试时间已过，系统将自动提交答卷', '⏰').then(function() { submitExam(); });
+            return;
+        }
         document.getElementById('examActiveArea').innerHTML = `
             <div class="report-box">
                 <div class="report-title">📝 ${escapeHtml(exam.reviewerName)} 的考试 <span style="font-size:0.8rem;color:#5e6f8d;">(共${questions.length}题，100分制，满分通过)</span></div>
@@ -13837,22 +14520,34 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
         `;
 
         // 倒计时
-        let timeLeft = timeLimit * 60;
-        const timerEl = document.getElementById('examTimer');
-        const timerBar = document.getElementById('examTimerBar');
-        exam._timerInterval = setInterval(() => {
-            timeLeft--;
-            const min = Math.floor(timeLeft / 60);
-            const sec = timeLeft % 60;
+        // 基于系统时间的倒计时（关闭页面也不影响）
+        // 补考或首次考试均重新计时，刷新页面则保留原计时（未过期的话）
+        var isRetake = exam.attempts > 0;
+        if (!exam._examStartTime || isRetake) {
+            exam._examStartTime = Date.now(); saveExamHistory(history);
+        } else if (exam._examStartTime + (exam.timeLimit||40)*60*1000 < Date.now()) {
+            exam._examStartTime = Date.now(); saveExamHistory(history);
+        }
+        var endTime = exam._examStartTime + timeLimit * 60 * 1000;
+        var timerEl = document.getElementById('examTimer');
+        var timerBar = document.getElementById('examTimerBar');
+        var submitted = false;
+        function updateTimerDisplay() {
+            var left = Math.max(0, Math.ceil((endTime - Date.now()) / 1000));
+            var min = Math.floor(left / 60);
+            var sec = left % 60;
             if (timerEl) timerEl.textContent = min + ':' + String(sec).padStart(2, '0');
-            if (timerBar) timerBar.style.width = (timeLeft / (timeLimit * 60) * 100) + '%';
-            if (timeLeft <= 300 && timerEl) timerEl.style.color = '#e67e22';
-            if (timeLeft <= 60 && timerEl) timerEl.style.color = '#c0392b';
-            if (timeLeft <= 0) {
+            if (timerBar) timerBar.style.width = (left / (timeLimit * 60) * 100) + '%';
+            if (left <= 300 && timerEl) timerEl.style.color = '#e67e22';
+            if (left <= 60 && timerEl) timerEl.style.color = '#c0392b';
+            if (left <= 0 && !submitted) {
+                submitted = true;
                 clearInterval(exam._timerInterval);
                 showAlert('⏱️ 考试时间到，系统将自动提交答卷', '⏰').then(function() { submitExam(); });
             }
-        }, 1000);
+        }
+        updateTimerDisplay();
+        exam._timerInterval = setInterval(updateTimerDisplay, 1000);
 
         setTimeout(() => {
             document.querySelectorAll('.exam-option').forEach(opt => {
@@ -13996,9 +14691,9 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
                 '</div>' +
             '</div></div>';
         document.body.appendChild(resultOverlay);
-        resultOverlay.querySelector('#resultCloseBtn').onclick = function() { resultOverlay.remove(); renderExamSystem(); };
-        resultOverlay.onclick = function(e) { if (e.target === resultOverlay) { resultOverlay.remove(); renderExamSystem(); } };
-        resultOverlay.querySelector('#backToListPopupBtn').onclick = function() { resultOverlay.remove(); renderExamSystem(); };
+        resultOverlay.querySelector('#resultCloseBtn').onclick = function() { resultOverlay.remove(); renderExamSystem(exam.reviewerName); };
+        resultOverlay.onclick = function(e) { if (e.target === resultOverlay) { resultOverlay.remove(); renderExamSystem(exam.reviewerName); } };
+        resultOverlay.querySelector('#backToListPopupBtn').onclick = function() { resultOverlay.remove(); renderExamSystem(exam.reviewerName); };
         if (canRetry) {
             resultOverlay.querySelector('#retryExamPopupBtn').onclick = function() {
                 resultOverlay.remove();
@@ -14226,10 +14921,16 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
                 if (_justAuthorized) { switchNav('errorDashboard'); } // 刚授权完→跳失误看板
                 else { renderSubContent('dashboard'); } // 正常打开→仪表盘
             }
-            // 后台静默预加载（只拉数据，不渲染页面）
-            fetchLearningMapData(false);
-            refreshErrorDashboardData(true, true);
         });
+        // 打开页面立刻后台预加载（不等云端同步，让失误看板秒开）
+        // 先确保token就绪，再加载数据
+        setTimeout(function(){
+            migrateOldPushRecords();
+            getFeishuToken().then(function(){
+                fetchLearningMapData(false).then(function(){ buildLMCache(); });
+                refreshErrorDashboardData(true, true);
+            });
+        }, 300);
     })();
 
     // 全局图片兜底：加载失败显示占位，点击通过代理加载
