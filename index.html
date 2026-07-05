@@ -1145,17 +1145,51 @@
                     </div>
                 </div>
             </div>
-            <div class="report-box" style="margin-bottom:20px;">
-            <div class="report-box" style="margin-bottom:20px;">
-                <div class="report-title">👥 人员变动管理</div>
-                <p style="color:#64748b;font-size:0.9rem;margin:8px 0 16px;">离职日期后不计入活跃人数 | 入职日期前不参与排名</p>
-                <div style="display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap;margin-bottom:16px;background:#f8fafc;border-radius:16px;padding:16px;">
-                    <div style="flex:1;min-width:180px;"><label style="font-size:0.8rem;font-weight:600;color:#1f3a6b;display:block;margin-bottom:4px;">姓名</label><input id="hrNameInput" type="text" placeholder="输入姓名" style="width:100%;padding:8px 12px;border:1px solid #cbd5e1;border-radius:10px;font-size:0.85rem;"></div>
-                    <div style="flex:1;min-width:160px;"><label style="font-size:0.8rem;font-weight:600;color:#1f3a6b;display:block;margin-bottom:4px;">日期</label><input id="hrDateInput" type="date" style="width:100%;padding:8px 12px;border:1px solid #cbd5e1;border-radius:10px;font-size:0.85rem;"></div>
-                    <div style="display:flex;gap:6px;"><button id="btnHrJoin" onclick="document.getElementById('hrTypeVal').value='join';this.style.background='#27ae60';this.style.color='white';document.getElementById('btnHrLeave').style.background='#f1f5f9';document.getElementById('btnHrLeave').style.color='#5e6f8d';" style="padding:8px 16px;border:none;border-radius:20px;cursor:pointer;font-size:0.82rem;background:#27ae60;color:white;font-weight:600;">✅ 入职</button><button id="btnHrLeave" onclick="document.getElementById('hrTypeVal').value='leave';this.style.background='#c0392b';this.style.color='white';document.getElementById('btnHrJoin').style.background='#f1f5f9';document.getElementById('btnHrJoin').style.color='#5e6f8d';" style="padding:8px 16px;border:none;border-radius:20px;cursor:pointer;font-size:0.82rem;background:#f1f5f9;color:#5e6f8d;">🚪 离职</button><input type="hidden" id="hrTypeVal" value="join"></div>
-                    <button id="addHrBtn" class="primary" style="background:#1f3a6b;border-radius:30px;padding:8px 24px;height:fit-content;">➕ 确认添加</button>
+            <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:16px;">
+                <!-- 人员变动卡片 -->
+                <div class="stat-card" id="hrCard" style="cursor:pointer;" onclick="toggleAdminDetail('hrDetail')">
+                    <div class="stat-card-header">
+                        <div class="stat-card-icon" style="background:#eef2ff;">👥</div>
+                        <span class="stat-card-trend up" id="hrBadge">--</span>
+                    </div>
+                    <div class="stat-card-value" id="hrCount">--</div>
+                    <div class="stat-card-label">人员变动记录</div>
                 </div>
-                <div id="hrCombinedList" style="max-height:400px;overflow-y:auto;"><div style="text-align:center;color:#94a3b8;padding:20px;">加载中...</div></div>
+                <!-- 邮箱管理卡片 -->
+                <div class="stat-card" id="emailCard" style="cursor:pointer;" onclick="toggleAdminDetail('emailDetail')">
+                    <div class="stat-card-header">
+                        <div class="stat-card-icon" style="background:#fef3c7;">📧</div>
+                        <span class="stat-card-trend up" id="emailBadge">--</span>
+                    </div>
+                    <div class="stat-card-value" id="emailCount">--</div>
+                    <div class="stat-card-label">邮箱地址管理</div>
+                </div>
+            </div>
+            <!-- 人员变动详情 -->
+            <div id="hrDetail" class="report-box" style="display:none;margin-top:16px;">
+                <div class="report-title" style="display:flex;justify-content:space-between;align-items:center;">👥 人员变动管理 <span style="font-size:0.7rem;color:#94a3b8;cursor:pointer;" onclick="toggleAdminDetail('hrDetail')">收起 ▲</span></div>
+                <p style="color:#64748b;font-size:0.85rem;margin:8px 0 12px;">离职日期后不计入活跃人数 | 入职日期前不参与排名</p>
+                <div style="display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap;margin-bottom:12px;background:#f8fafc;border-radius:14px;padding:14px;">
+                    <div style="flex:1;min-width:160px;"><label style="font-size:0.78rem;font-weight:600;color:#1f3a6b;display:block;margin-bottom:4px;">姓名</label><input id="hrNameInput" type="text" placeholder="输入姓名" style="width:100%;padding:8px 12px;border:1px solid #cbd5e1;border-radius:10px;font-size:0.85rem;"></div>
+                    <div style="flex:1;min-width:140px;"><label style="font-size:0.78rem;font-weight:600;color:#1f3a6b;display:block;margin-bottom:4px;">日期</label><input id="hrDateInput" type="date" style="width:100%;padding:8px 12px;border:1px solid #cbd5e1;border-radius:10px;font-size:0.85rem;"></div>
+                    <div style="display:flex;gap:6px;"><button id="btnHrJoin" onclick="document.getElementById('hrTypeVal').value='join';this.style.background='#27ae60';this.style.color='white';document.getElementById('btnHrLeave').style.background='#f1f5f9';document.getElementById('btnHrLeave').style.color='#5e6f8d';" style="padding:8px 14px;border:none;border-radius:20px;cursor:pointer;font-size:0.8rem;background:#27ae60;color:white;font-weight:600;">✅ 入职</button><button id="btnHrLeave" onclick="document.getElementById('hrTypeVal').value='leave';this.style.background='#c0392b';this.style.color='white';document.getElementById('btnHrJoin').style.background='#f1f5f9';document.getElementById('btnHrJoin').style.color='#5e6f8d';" style="padding:8px 14px;border:none;border-radius:20px;cursor:pointer;font-size:0.8rem;background:#f1f5f9;color:#5e6f8d;">🚪 离职</button><input type="hidden" id="hrTypeVal" value="join"></div>
+                    <button id="addHrBtn" class="primary" style="background:#1f3a6b;border-radius:30px;padding:8px 22px;height:fit-content;">➕ 确认添加</button>
+                </div>
+                <div id="hrCombinedList" style="max-height:300px;overflow-y:auto;"><div style="text-align:center;color:#94a3b8;padding:20px;">加载中...</div></div>
+            </div>
+            <!-- 邮箱管理详情 -->
+            <div id="emailDetail" class="report-box" style="display:none;margin-top:16px;">
+                <div class="report-title" style="display:flex;justify-content:space-between;align-items:center;">📧 邮箱地址管理 <span style="font-size:0.7rem;color:#94a3b8;cursor:pointer;" onclick="toggleAdminDetail('emailDetail')">收起 ▲</span></div>
+                <p style="color:#64748b;font-size:0.85rem;margin:8px 0 12px;">维护初审人邮箱，用于邮件推送。点击单元格可直接编辑。</p>
+                <div style="margin-bottom:8px;display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+                    <input id="emailSearchInput" type="text" placeholder="🔍 搜索姓名或邮箱..." oninput="window.refreshEmailTable&&window.refreshEmailTable(this.value)" style="flex:1;min-width:160px;padding:6px 12px;border:1px solid #cbd5e1;border-radius:8px;font-size:0.8rem;">
+                    <button id="addEmailRowBtn" style="background:#f1f5f9;border:1px solid #cbd5e1;padding:6px 16px;border-radius:8px;cursor:pointer;font-size:0.8rem;">➕ 添加行</button>
+                    <button id="importEmailBtn" style="background:#eef2ff;border:1px solid #2a5298;color:#2a5298;padding:6px 16px;border-radius:8px;cursor:pointer;font-size:0.8rem;">📥 批量导入</button>
+                    <button id="saveEmailsBtn" class="primary" style="background:#27ae60;border-radius:20px;padding:6px 20px;">💾 保存</button>
+                </div>
+                <div style="max-height:350px;overflow-y:auto;">
+                <table id="adminEmailTable" style="width:100%;border-collapse:collapse;border:1px solid #e2e8f0;"><thead><tr style="background:#f8fafc;"><th style="text-align:center;padding:8px;font-size:0.8rem;color:#5e6f8d;width:80px;border:1px solid #e2e8f0;">姓名</th><th style="text-align:center;padding:8px;font-size:0.8rem;color:#5e6f8d;border:1px solid #e2e8f0;">邮箱</th><th style="text-align:center;width:50px;border:1px solid #e2e8f0;">修改</th><th style="text-align:center;width:50px;border:1px solid #e2e8f0;">删除</th></tr></thead><tbody id="adminEmailBody"><tr><td colspan="4" style="text-align:center;color:#94a3b8;padding:20px;">加载中...</td></tr></tbody></table>
+                </div>
             </div>
         </div>`;
 
@@ -1179,9 +1213,224 @@
             else { var od = getOnboardingReviewers(); od[name] = date; saveOnboardingReviewers(od); showToast('✅ ' + name + ' 入职日期已设为 ' + date, 'success'); }
             document.getElementById('hrNameInput').value = ''; document.getElementById('hrDateInput').value = '';
             refreshHRCombinedList();
+            updateAdminCards();
         });
+
+        // 卡片详情展开/收起
+        window.toggleAdminDetail = function(id) {
+            var el = document.getElementById(id);
+            if (!el) return;
+            // 先收起其他详情
+            ['hrDetail','emailDetail'].forEach(function(d){
+                if (d !== id) { var other = document.getElementById(d); if (other) other.style.display = 'none'; }
+            });
+            el.style.display = el.style.display === 'none' ? 'block' : 'none';
+            if (id === 'emailDetail' && el.style.display === 'block') refreshEmailTable();
+            if (id === 'hrDetail' && el.style.display === 'block') refreshHRCombinedList();
+        };
+        // 更新卡片数字
+        function updateAdminCards() {
+            var hr = document.getElementById('hrCount'), hrBadge = document.getElementById('hrBadge');
+            if (hr) {
+                var d = Object.keys(getDepartedReviewers()).length, o = Object.keys(getOnboardingReviewers()).length;
+                hr.textContent = (d + o) || '0';
+                if (hrBadge) hrBadge.textContent = d + '离 ' + o + '入';
+            }
+            var ec = document.getElementById('emailCount'), eb = document.getElementById('emailBadge');
+            if (ec) {
+                var n = Object.keys(getPersonnelEmails()).length;
+                ec.textContent = n || '0';
+                if (eb) eb.textContent = n > 0 ? n + '人' : '待配置';
+            }
+        }
+        updateAdminCards();
         window.refreshHRCombinedList = refreshHRCombinedList;
         refreshHRCombinedList();
+
+        // 邮箱管理
+        function refreshEmailTable(filter) {
+            filter = (filter || '').toLowerCase();
+            var tbody = document.getElementById('adminEmailBody');
+            if (!tbody) return;
+            var emails = getPersonnelEmails();
+            var names = Object.keys(emails).filter(function(n) {
+                return !filter || n.toLowerCase().indexOf(filter) >= 0 || (emails[n]||'').toLowerCase().indexOf(filter) >= 0;
+            }).sort();
+            if (names.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="4" style="text-align:center;color:#94a3b8;padding:20px;">' + (filter ? '未找到匹配项' : '暂无邮箱数据') + '</td></tr>';
+                return;
+            }
+            tbody.innerHTML = names.map(function(n) {
+                return '<tr>' +
+                    '<td style="text-align:center;padding:8px 6px;font-size:0.82rem;font-weight:600;width:80px;border:1px solid #eef2f6;">' + escapeHtml(n) + '</td>' +
+                    '<td style="text-align:center;padding:8px 6px;font-size:0.78rem;color:#5e6f8d;border:1px solid #eef2f6;">' + escapeHtml(emails[n]) + '</td>' +
+                    '<td style="text-align:center;padding:4px;width:50px;border:1px solid #eef2f6;"><button class="ae-edit" data-name="' + escapeHtml(n) + '" data-email="' + escapeHtml(emails[n]) + '" style="background:#eef2ff;color:#2a5298;border:none;padding:3px 10px;border-radius:6px;cursor:pointer;font-size:0.7rem;">✏️</button></td>' +
+                    '<td style="text-align:center;padding:4px;width:50px;border:1px solid #eef2f6;"><button class="ae-del" data-name="' + escapeHtml(n) + '" style="background:#ffedea;color:#c0392b;border:none;padding:3px 10px;border-radius:6px;cursor:pointer;font-size:0.7rem;">🗑️</button></td>' +
+                '</tr>';
+            }).join('');
+            // 删除按钮
+            tbody.querySelectorAll('.ae-del').forEach(function(b) {
+                b.onclick = function() {
+                    var nm = this.dataset.name;
+                    showConfirm('确定删除「' + nm + '」的邮箱吗？\n删除后需点 💾 保存 才会生效', '🗑️', true).then(function(ok) {
+                        if (ok) { b.closest('tr').remove(); }
+                    });
+                };
+            });
+            // 修改按钮 — 弹出编辑框
+            tbody.querySelectorAll('.ae-edit').forEach(function(b) {
+                b.onclick = function() {
+                    var nm = this.dataset.name, em = this.dataset.email;
+                    showEditEmailDialog(nm, em, this.closest('tr'));
+                };
+            });
+        }
+        // 邮箱编辑弹窗
+        function showEditEmailDialog(name, email, tr) {
+            var ov = document.createElement('div');
+            ov.className = 'modal-overlay'; ov.style.zIndex = '6000';
+            ov.innerHTML = '<div class="modal-container" style="max-width:420px;">' +
+                '<div class="modal-header">✏️ 编辑邮箱<button class="modal-close-btn" id="eedClose">✕</button></div>' +
+                '<div class="modal-body" style="padding:20px;">' +
+                    '<label style="font-size:0.8rem;font-weight:600;color:#1f3a6b;display:block;margin-bottom:4px;">姓名</label>' +
+                    '<input id="eedName" value="' + escapeHtml(name) + '" style="width:100%;padding:8px 12px;border:1px solid #cbd5e1;border-radius:10px;font-size:0.85rem;margin-bottom:12px;">' +
+                    '<label style="font-size:0.8rem;font-weight:600;color:#1f3a6b;display:block;margin-bottom:4px;">邮箱</label>' +
+                    '<input id="eedEmail" value="' + escapeHtml(email) + '" style="width:100%;padding:8px 12px;border:1px solid #cbd5e1;border-radius:10px;font-size:0.85rem;margin-bottom:16px;">' +
+                    '<div style="display:flex;gap:8px;">' +
+                        '<button id="eedSave" style="flex:1;background:#2a5298;color:white;border:none;padding:10px;border-radius:10px;cursor:pointer;font-weight:600;">💾 保存</button>' +
+                        '<button id="eedCancel" style="flex:1;background:#f1f5f9;border:1px solid #cbd5e1;padding:10px;border-radius:10px;cursor:pointer;">取消</button>' +
+                    '</div></div></div>';
+            document.body.appendChild(ov);
+            var close = function() { ov.remove(); };
+            ov.querySelector('#eedClose').onclick = close;
+            ov.querySelector('#eedCancel').onclick = close;
+            ov.addEventListener('click', function(e) { if (e.target === ov) close(); });
+            ov.querySelector('#eedSave').onclick = function() {
+                var nn = document.getElementById('eedName').value.trim();
+                var ne = document.getElementById('eedEmail').value.trim();
+                if (!nn) { alert('姓名不能为空'); return; }
+                if (!ne || ne.indexOf('@') < 0) { alert('请输入有效的邮箱地址'); return; }
+                // 更新当前行显示
+                if (tr) {
+                    var cells = tr.querySelectorAll('td');
+                    if (cells.length >= 2) {
+                        cells[0].textContent = nn;
+                        cells[1].textContent = ne;
+                        var eb = tr.querySelector('.ae-edit');
+                        if (eb) { eb.dataset.name = nn; eb.dataset.email = ne; }
+                        var db = tr.querySelector('.ae-del');
+                        if (db) db.dataset.name = nn;
+                    }
+                }
+                close();
+            };
+        }
+        document.getElementById('addEmailRowBtn').addEventListener('click', function() {
+            var tbody = document.getElementById('adminEmailBody');
+            var tr = document.createElement('tr');
+            tr.innerHTML = '<td style="text-align:center;padding:8px 6px;"><input class="ae-name" style="width:100%;padding:4px;border:1px solid #cbd5e1;border-radius:6px;font-size:0.78rem;text-align:center;"></td><td style="text-align:center;padding:8px 6px;"><input class="ae-email" style="width:100%;padding:4px;border:1px solid #cbd5e1;border-radius:6px;font-size:0.78rem;text-align:center;"></td><td style="text-align:center;">—</td><td style="text-align:center;"><button class="ae-del-new" style="background:#ffedea;color:#c0392b;border:none;padding:3px 10px;border-radius:6px;cursor:pointer;font-size:0.7rem;">🗑️</button></td>';
+            tbody.appendChild(tr);
+            tr.querySelector('.ae-del-new').onclick = function() { showConfirm('确定删除此行吗？', '🗑️', true).then(function(ok) { if (ok) tr.remove(); }); };
+        });
+        document.getElementById('saveEmailsBtn').addEventListener('click', function() {
+            var rows = document.querySelectorAll('#adminEmailBody tr');
+            var newEmails = {};
+            rows.forEach(function(tr) {
+                var cells = tr.querySelectorAll('td');
+                if (cells.length < 2) return;
+                // 已有数据行：从 cells 文本读取；新添加行：从 input 读取
+                var nameInput = tr.querySelector('.ae-name');
+                var emailInput = tr.querySelector('.ae-email');
+                var n = nameInput ? nameInput.value : (cells[0].textContent || '').trim();
+                var e = emailInput ? emailInput.value : (cells[1].textContent || '').trim();
+                if (n && e && e.indexOf('@') > 0) newEmails[n] = e;
+            });
+            savePersonnelEmails(newEmails);
+            refreshEmailTable();
+            updateAdminCards();
+            showToast('✅ 邮箱列表已保存（' + Object.keys(newEmails).length + '人）', 'success');
+        });
+        // 批量导入邮箱
+        document.getElementById('importEmailBtn').addEventListener('click', function() {
+            var ov = document.createElement('div');
+            ov.className = 'modal-overlay'; ov.style.zIndex = '5000';
+            ov.innerHTML = '<div class="modal-container" style="max-width:600px;">' +
+                '<div class="modal-header">📥 批量导入邮箱<button class="modal-close-btn" id="ieClose">✕</button></div>' +
+                '<div class="modal-body" style="padding:16px;">' +
+                    '<p style="font-size:0.8rem;color:#5e6f8d;margin-bottom:8px;">支持格式：<b>姓名 邮箱</b>（空格/制表符/逗号分隔，每行一条）</p>' +
+                    '<textarea id="ieText" placeholder="陈文彬 chenwenbin02@zhuanzhuan.com&#10;陈毅军 chenyijun02@zhuanzhuan.com&#10;..." style="width:100%;height:200px;padding:10px;border:1px solid #cbd5e1;border-radius:10px;font-size:0.8rem;font-family:monospace;"></textarea>' +
+                    '<div style="margin-top:8px;font-size:0.75rem;color:#94a3b8;">或上传 Excel/CSV 文件（前两列：姓名、邮箱） <a href="#" onclick="var t=document.getElementById(\'ieText\');fetch(\'emails.json\').then(r=>r.json()).then(d=>{var lines=[];Object.keys(d).forEach(function(k){lines.push(k+\' \'+d[k])});t.value=lines.join(\'\\n\');document.getElementById(\'iePreview\').textContent=\'加载了 \'+lines.length+\' 条\'}).catch(function(){alert(\'请确保 emails.json 和 index.html 在同一目录\')});return false;" style="color:#2a5298;">📂 快速加载 emails.json</a></div>' +
+                    '<input type="file" id="ieFile" accept=".xlsx,.xls,.csv,.json" style="margin-top:4px;font-size:0.8rem;">' +
+                    '<div id="iePreview" style="margin-top:8px;font-size:0.75rem;color:#5e6f8d;max-height:100px;overflow-y:auto;"></div>' +
+                    '<div style="display:flex;gap:8px;margin-top:12px;">' +
+                        '<button id="ieConfirm" style="flex:1;background:#2a5298;color:white;border:none;padding:10px;border-radius:10px;cursor:pointer;font-weight:600;">📥 导入并合并</button>' +
+                        '<button id="ieCancel" style="flex:1;background:#f1f5f9;border:1px solid #cbd5e1;padding:10px;border-radius:10px;cursor:pointer;">取消</button>' +
+                    '</div></div></div>';
+            document.body.appendChild(ov);
+            ov.querySelector('#ieClose').onclick = function() { ov.remove(); };
+            ov.querySelector('#ieCancel').onclick = function() { ov.remove(); };
+            ov.addEventListener('click', function(e) { if (e.target === ov) ov.remove(); });
+            // 文件解析
+            document.getElementById('ieFile').addEventListener('change', function(e) {
+                var file = e.target.files[0]; if (!file) return;
+                var fname = file.name.toLowerCase();
+                var reader = new FileReader();
+                reader.onload = function(ev) {
+                    var pairs = [];
+                    if (fname.endsWith('.json')) {
+                        try {
+                            var obj = JSON.parse(ev.target.result);
+                            Object.keys(obj).forEach(function(k) {
+                                if (k && obj[k] && String(obj[k]).indexOf('@') > 0) pairs.push(k + ' ' + obj[k]);
+                            });
+                        } catch(ex) { alert('JSON解析失败: ' + ex.message); }
+                    } else if (fname.endsWith('.csv')) {
+                        ev.target.result.split('\n').forEach(function(line) {
+                            var parts = line.split(/[,\t]/);
+                            if (parts.length >= 2) pairs.push(parts[0].trim() + ' ' + parts[1].trim());
+                        });
+                    } else {
+                        try {
+                            var wb = XLSX.read(ev.target.result, {type:'array'});
+                            var sheet = wb.Sheets[wb.SheetNames[0]];
+                            var rows = XLSX.utils.sheet_to_json(sheet, {header:1});
+                            rows.forEach(function(r) { if (r.length >= 2 && r[0] && r[1]) pairs.push(String(r[0]).trim() + ' ' + String(r[1]).trim()); });
+                        } catch(ex) {}
+                    }
+                    document.getElementById('ieText').value = pairs.join('\n');
+                    document.getElementById('iePreview').textContent = '识别到 ' + pairs.length + ' 条';
+                };
+                if (fname.endsWith('.json') || fname.endsWith('.csv')) reader.readAsText(file);
+                else reader.readAsArrayBuffer(file);
+            });
+            document.getElementById('ieConfirm').addEventListener('click', function() {
+                var text = document.getElementById('ieText').value.trim();
+                if (!text) { showToast('请输入数据', 'warning'); return; }
+                var pairs = text.split('\n'), count = 0;
+                var emails = getPersonnelEmails();
+                pairs.forEach(function(line) {
+                    line = line.trim(); if (!line) return;
+                    // 支持：空格、制表符、逗号、中文逗号、多个空格分隔
+                    var parts = line.split(/[,，\t]+|\s{2,}|\s+/);
+                    if (parts.length >= 2) {
+                        var name = parts[0].trim(), email = parts[1].trim();
+                        if (name && email && email.indexOf('@') > 0) { emails[name] = email; count++; }
+                    }
+                });
+                savePersonnelEmails(emails);
+                refreshEmailTable();
+                updateAdminCards();
+                ov.remove();
+                showToast('✅ 成功导入 ' + count + ' 条邮箱', 'success');
+            });
+        });
+        // 暴露到全局，确保 oninput 能访问
+        window.refreshEmailTable = refreshEmailTable;
+
+        // 邮箱表刷新时也更新卡片
+        var _origRefreshEmail = refreshEmailTable;
+        refreshEmailTable = function() { _origRefreshEmail(); updateAdminCards(); };
+        refreshEmailTable();
 
         // 导出备份（自动捕获全部 localStorage 数据，未来新增模块无需手动更新）
         document.getElementById('exportDataBtn')?.addEventListener('click',()=>{
@@ -12070,6 +12319,7 @@ URL.revokeObjectURL(url);
     }
 
     // ==================== 失误分析看板 ====================
+    const DEPLOYED_URL = 'https://jimu-111.github.io/youxuetang/';
     const FEISHU_CONFIG = {
         appId: 'cli_aab1fa4e87bbdbd3',
         appSecret: '1uLKmOkzQpoac6Ixw3Qhsb6KR1gCrcTn',
@@ -12408,30 +12658,26 @@ URL.revokeObjectURL(url);
                 if (!storedToken) reason = '<p style="color:#94a3b8;font-size:0.8rem;">未检测到已保存的授权</p>';
                 else if (storedToken.expiresAt <= Date.now()) reason = '<p style="color:#e67e22;font-size:0.8rem;">授权已过期，请重新授权</p>';
                 else reason = '<p style="color:#94a3b8;font-size:0.8rem;">授权信息异常，请重新授权</p>';
-                var authUrl = 'https://open.feishu.cn/open-apis/authen/v1/authorize?app_id=' + FEISHU_CONFIG.appId + '&redirect_uri=https%3A%2F%2Fjimu-111.github.io%2Fyouxuetang%2Fauth.html&scope=sheets:spreadsheet:readonly%20drive:drive:readonly%20wiki:wiki:readonly%20im:message.send_as_user%20contact:user.employee:readonly';
+                var authUrl = 'https://open.feishu.cn/open-apis/authen/v1/authorize?app_id=' + FEISHU_CONFIG.appId + '&redirect_uri=https%3A%2F%2Fjimu-111.github.io%2Fyouxuetang%2F&scope=sheets:spreadsheet:readonly%20drive:drive:readonly%20wiki:wiki:readonly%20im:message.send_as_user%20contact:user.employee:readonly';
                 document.getElementById('mainContent').innerHTML =
                 '<div class="panorama-card" style="text-align:center;padding:40px;max-width:600px;margin:40px auto;">' +
                     '<div style="font-size:1.5rem;margin-bottom:8px;">🔐 需要飞书授权</div>' + reason +
-                    // 三列布局：电脑端链接 | 二维码 | 手动粘贴
+                    // 授权方式：链接 | 扫码 | 手动粘贴
                     '<div style="display:flex;gap:24px;justify-content:center;align-items:flex-start;flex-wrap:wrap;margin-top:8px;">' +
-                        // 方式1：电脑端直接点
                         '<div style="flex:1;min-width:160px;text-align:center;">' +
                             '<div style="font-size:0.75rem;color:#5e6f8d;margin-bottom:8px;">💻 电脑端</div>' +
                             '<a href="' + authUrl + '" style="display:inline-block;background:#1f3a6b;color:white;padding:12px 24px;border-radius:30px;text-decoration:none;font-size:0.9rem;font-weight:600;">🔗 前往飞书授权</a>' +
-                            '<p style="font-size:0.65rem;color:#94a3b8;margin-top:6px;">授权后复制地址栏 code</p>' +
+                            '<p style="font-size:0.65rem;color:#94a3b8;margin-top:6px;">授权后复制 code 到右侧激活</p>' +
                         '</div>' +
-                        // 方式2：手机扫码
                         '<div style="flex:1;min-width:160px;text-align:center;">' +
                             '<div style="font-size:0.75rem;color:#5e6f8d;margin-bottom:8px;">📱 手机扫码</div>' +
                             '<div id="authQrcode" style="display:inline-block;background:white;padding:8px;border-radius:12px;border:1px solid #eef2f6;"></div>' +
-                            '<p style="font-size:0.65rem;color:#94a3b8;margin-top:6px;">用飞书/微信扫码授权</p>' +
-                            '<p id="qrcodePolling" style="font-size:0.7rem;color:#2a5298;margin-top:4px;display:none;">⏳ 等待手机端完成授权…</p>' +
+                            '<p style="font-size:0.65rem;color:#94a3b8;margin-top:6px;">飞书扫码授权</p>' +
                         '</div>' +
-                        // 方式3：手动粘贴
                         '<div style="flex:1;min-width:160px;text-align:center;">' +
                             '<div style="font-size:0.75rem;color:#5e6f8d;margin-bottom:8px;">📝 手动激活</div>' +
                             '<input id="manualCodeInput" type="text" placeholder="粘贴授权码…" style="width:100%;padding:8px 12px;border:1px solid #cbd5e1;border-radius:10px;font-size:0.8rem;text-align:center;font-family:monospace;margin-bottom:8px;">' +
-                            '<button id="manualCodeBtn" onclick="var code=document.getElementById(\'manualCodeInput\').value;var btn=this;btn.disabled=true;btn.textContent=\'⏳\';exchangeCodeForToken(code).then(function(r){if(r.success){clearInterval(window._qrPollTimer);errorDashboardData=[];errorDashboardSheetStatus={};errorDashboardAllFailed=false;localStorage.removeItem(\'errorDashboardCache\');refreshErrorDashboardData(true,false);}else{btn.disabled=false;btn.textContent=\'🔓 激活\';alert(\'❌ \'+r.error);}}).catch(function(e){btn.disabled=false;btn.textContent=\'🔓 激活\';alert(\'❌ \'+e.message);});" style="width:100%;padding:8px;background:#2a5298;color:white;border:none;border-radius:10px;cursor:pointer;font-size:0.8rem;font-weight:600;">🔓 激活</button>' +
+                            '<button id="manualCodeBtn" onclick="var code=document.getElementById(\'manualCodeInput\').value;var btn=this;btn.disabled=true;btn.textContent=\'⏳\';exchangeCodeForToken(code).then(function(r){if(r.success){errorDashboardData=[];errorDashboardSheetStatus={};errorDashboardAllFailed=false;localStorage.removeItem(\'errorDashboardCache\');refreshErrorDashboardData(true,false);}else{btn.disabled=false;btn.textContent=\'🔓 激活\';alert(\'❌ \'+r.error);}}).catch(function(e){btn.disabled=false;btn.textContent=\'🔓 激活\';alert(\'❌ \'+e.message);});" style="width:100%;padding:8px;background:#2a5298;color:white;border:none;border-radius:10px;cursor:pointer;font-size:0.8rem;font-weight:600;">🔓 激活</button>' +
                             '<div id="manualCodeMsg" style="margin-top:6px;font-size:0.7rem;min-height:18px;"></div>' +
                         '</div>' +
                     '</div>' +
@@ -12441,28 +12687,6 @@ URL.revokeObjectURL(url);
                     var qrEl = document.getElementById('authQrcode');
                     if (qrEl && typeof QRCode !== 'undefined') {
                         new QRCode(qrEl, { text: authUrl, width: 160, height: 160, correctLevel: QRCode.CorrectLevel.L });
-                        // 启动轮询：每3秒检查Supabase是否有新token
-                        var pollEl = document.getElementById('qrcodePolling');
-                        if (pollEl) pollEl.style.display = 'block';
-                        var pollCount = 0;
-                        window._qrPollTimer = setInterval(async function() {
-                            pollCount++;
-                            if (pollEl) pollEl.textContent = '⏳ 等待手机端完成授权…（' + pollCount * 3 + 's）';
-                            var cloudToken = await getCloudToken();
-                            if (cloudToken) {
-                                clearInterval(window._qrPollTimer);
-                                if (pollEl) pollEl.textContent = '✅ 检测到授权！正在加载数据…';
-                                errorDashboardData = [];
-                                errorDashboardSheetStatus = {};
-                                errorDashboardAllFailed = false;
-                                localStorage.removeItem('errorDashboardCache');
-                                setTimeout(function() { refreshErrorDashboardData(true, false); }, 500);
-                            }
-                            if (pollCount > 40) { // 2分钟后停止
-                                clearInterval(window._qrPollTimer);
-                                if (pollEl) pollEl.textContent = '⏰ 超时，请用其他方式授权';
-                            }
-                        }, 3000);
                     }
                 }, 200);
                 errorDashboardRefreshing = false;
@@ -13312,36 +13536,43 @@ URL.revokeObjectURL(url);
                 '<div style="font-size:1.3rem;font-weight:700;color:#1f3a6b;">考试码：<span style="color:#c0392b;font-size:1.8rem;">' + examCode + '</span></div>' +
                 '<div style="font-size:0.85rem;color:#5e6f8d;margin-top:4px;">共 ' + selectedQuestions.length + ' 题 | 100分制 | ⏱️40分钟 | 支持补考</div>' +
                 '<div style="font-size:0.75rem;color:#94a3b8;margin-top:4px;">' + categories.slice(0, 5).map(function(e) { return e[0] + '(' + (catQuestions[e[0]] || 0) + '题)'; }).join(' / ') + '</div>' +
-                '<div style="display:flex;gap:16px;flex-wrap:wrap;margin-top:12px;text-align:center;">' +
-                    '<div style="flex:1;min-width:200px;background:#f8fafc;border-radius:14px;padding:14px;border:1px solid #eef2f6;">' +
-                        '<div style="font-weight:700;color:#1f3a6b;margin-bottom:8px;font-size:0.85rem;">🔗 方式一：网页链接</div>' +
-                        '<div style="background:white;border:1px solid #eef2f6;border-radius:8px;padding:6px;font-size:0.65rem;word-break:break-all;color:#5e6f8d;margin-bottom:6px;">' + examUrl + '</div>' +
-                        '<button onclick="navigator.clipboard.writeText(\'' + examUrl.replace(/'/g, "\\'") + '\');this.textContent=\'✅ 已复制\';setTimeout(function(){this.textContent=\'📋 复制链接\'}.bind(this),1500)" style="background:#2a5298;color:white;border:none;padding:6px 14px;border-radius:16px;cursor:pointer;font-size:0.75rem;">📋 复制链接</button>' +
-                    '</div>' +
-                    '<div style="flex:1;min-width:200px;background:#f8fafc;border-radius:14px;padding:14px;border:1px solid #eef2f6;">' +
-                        '<div style="font-weight:700;color:#1f3a6b;margin-bottom:8px;font-size:0.85rem;">📱 方式二：扫码进入</div>' +
-                        '<div id="genExamQRCode" style="display:inline-block;"></div>' +
-                        '<div style="font-size:0.7rem;color:#94a3b8;margin-top:4px;">微信/飞书扫码考试</div>' +
-                    '</div>' +
+                '<div style="background:#f8fafc;border-radius:14px;padding:14px;border:1px solid #eef2f6;text-align:center;">' +
+                    '<div style="font-weight:700;color:#1f3a6b;margin-bottom:8px;font-size:0.85rem;">🔗 考试链接</div>' +
+                    '<div style="background:white;border:1px solid #eef2f6;border-radius:8px;padding:8px;font-size:0.65rem;word-break:break-all;color:#5e6f8d;margin-bottom:6px;">' + DEPLOYED_URL + '?exam=' + examCode + '</div>' +
+                    '<button onclick="navigator.clipboard.writeText(\'' + examUrl.replace(/'/g, "\\'") + '\');this.textContent=\'✅ 已复制\';setTimeout(function(){this.textContent=\'📋 复制链接\'}.bind(this),1500)" style="background:#2a5298;color:white;border:none;padding:6px 14px;border-radius:16px;cursor:pointer;font-size:0.75rem;">📋 复制链接</button>' +
                 '</div>' +
-                '<div style=\"display:flex;gap:8px;margin-top:12px;\">' +
-                    '<button class=\"push-exam-btn\" style=\"flex:1;background:#e67e22;color:white;border:none;padding:8px 16px;border-radius:20px;cursor:pointer;font-size:0.8rem;\">📤 推送</button>' +
-                    '<button class=\"goto-exam-btn\" style=\"flex:1;border:1px solid #e2e8f0;background:#f8fafc;padding:8px 16px;border-radius:20px;cursor:pointer;font-size:0.8rem;\">📋 前往考试系统</button>' +
+                '<div style="display:flex;gap:8px;margin-top:12px;">' +
+                    '<button class="push-exam-btn" style="flex:1;background:#e67e22;color:white;border:none;padding:10px 16px;border-radius:20px;cursor:pointer;font-size:0.85rem;font-weight:600;">📤 飞书推送</button>' +
+                    '<button class="goto-exam-btn" style="flex:1;border:1px solid #e2e8f0;background:#f8fafc;padding:10px 16px;border-radius:20px;cursor:pointer;font-size:0.85rem;">📋 前往考试系统</button>' +
                 '</div>' +
             '</div>' +
         '</div>';
         document.body.appendChild(overlay);
         overlay.querySelector('#genExamClose').onclick = function() { overlay.remove(); };
         overlay.onclick = function(e) { if (e.target === overlay) overlay.remove(); };
-        if (Object.values(getExamHistory()).some(function(e){return e.examCode===examCode})) { overlay.querySelector('.push-exam-btn').textContent = '✅ 已保存'; overlay.querySelector('.push-exam-btn').style.background = '#27ae60'; }
-        overlay.querySelector('.push-exam-btn').onclick = function() { saveExamHistory(examData); this.textContent = '✅ 已保存'; this.style.background = '#27ae60'; };
-        setTimeout(function() {
-            var qrContainer = document.getElementById('genExamQRCode');
-            if (qrContainer && typeof QRCode !== 'undefined') {
-                qrContainer.innerHTML = '';
-                new QRCode(qrContainer, { text: examUrl, width: 130, height: 130, colorDark: '#1f3a6b', colorLight: '#ffffff', correctLevel: QRCode.CorrectLevel.M });
-            }
-        }, 200);
+        overlay.querySelector('.goto-exam-btn').onclick = function(){ overlay.remove(); switchNav('examSystem'); };
+        var examPushBtn = overlay.querySelector('.push-exam-btn');
+        if (isPushedThisPeriod('通用出卷', 'exam')) {
+            examPushBtn.textContent = '✅ 已推送'; examPushBtn.style.background = '#27ae60';
+        }
+        examPushBtn.onclick = function() {
+            var btn = this;
+            confirmRepush('通用出卷', 'exam', function() {
+                btn.textContent = '⏳ 推送中…'; btn.style.background = '#e67e22';
+                feishuPushWorkflow('exam', {
+                    pushId: '通用出卷',
+                    title: '按比例出卷',
+                    examCode: examCode,
+                    questionCount: selectedQuestions.length,
+                    examUrl: DEPLOYED_URL + '?exam=' + examCode
+                }, {
+                    onSuccess: function() {
+                        saveExamHistory(examData);
+                        btn.textContent = '✅ 已推送'; btn.style.background = '#27ae60';
+                    }
+                });
+            });
+        };
     }
 
     // 精准出卷：根据某人失误画像匹配题目
@@ -13425,21 +13656,14 @@ URL.revokeObjectURL(url);
                 '<div style="font-size:1.3rem;font-weight:700;color:#1f3a6b;">考试码：<span style="color:#c0392b;font-size:1.8rem;">' + examCode + '</span></div>' +
                 '<div style="font-size:0.85rem;color:#5e6f8d;margin-top:4px;">' + selected.length + '题 | 100分制 | ⏱️40分钟 | 支持补考</div>' +
                 '<div style="font-size:0.7rem;color:#94a3b8;margin-top:4px;">' + categories.map(function(e) { return e[0] + '(' + (catQuestions[e[0]] || 0) + '题)'; }).join(' / ') + '</div>' +
-                '<div style="display:flex;gap:16px;flex-wrap:wrap;margin-top:12px;text-align:center;">' +
-                    '<div style="flex:1;min-width:200px;background:#f8fafc;border-radius:14px;padding:14px;border:1px solid #eef2f6;">' +
-                        '<div style="font-weight:700;color:#1f3a6b;margin-bottom:8px;font-size:0.85rem;">🔗 方式一：网页链接</div>' +
-                        '<div style="background:white;border:1px solid #eef2f6;border-radius:8px;padding:6px;font-size:0.65rem;word-break:break-all;color:#5e6f8d;margin-bottom:6px;">' + examUrl + '</div>' +
-                        '<button onclick="navigator.clipboard.writeText(\'' + examUrl.replace(/'/g, "\\'") + '\');this.textContent=\'✅ 已复制\';setTimeout(function(){this.textContent=\'📋 复制链接\'}.bind(this),1500)" style="background:#2a5298;color:white;border:none;padding:6px 14px;border-radius:16px;cursor:pointer;font-size:0.75rem;">📋 复制链接</button>' +
-                    '</div>' +
-                    '<div style="flex:1;min-width:200px;background:#f8fafc;border-radius:14px;padding:14px;border:1px solid #eef2f6;">' +
-                        '<div style="font-weight:700;color:#1f3a6b;margin-bottom:8px;font-size:0.85rem;">📱 方式二：扫码进入</div>' +
-                        '<div id="pexamQRCode" style="display:inline-block;"></div>' +
-                        '<div style="font-size:0.7rem;color:#94a3b8;margin-top:4px;">微信/飞书扫码考试</div>' +
-                    '</div>' +
+                '<div style="background:#f8fafc;border-radius:14px;padding:14px;border:1px solid #eef2f6;text-align:center;">' +
+                    '<div style="font-weight:700;color:#1f3a6b;margin-bottom:8px;font-size:0.85rem;">🔗 考试链接</div>' +
+                    '<div style="background:white;border:1px solid #eef2f6;border-radius:8px;padding:8px;font-size:0.65rem;word-break:break-all;color:#5e6f8d;margin-bottom:6px;">' + DEPLOYED_URL + '?exam=' + examCode + '</div>' +
+                    '<button onclick="navigator.clipboard.writeText(\'' + examUrl.replace(/'/g, "\\'") + '\');this.textContent=\'✅ 已复制\';setTimeout(function(){this.textContent=\'📋 复制链接\'}.bind(this),1500)" style="background:#2a5298;color:white;border:none;padding:6px 14px;border-radius:16px;cursor:pointer;font-size:0.75rem;">📋 复制链接</button>' +
                 '</div>' +
-                '<div style=\"display:flex;gap:8px;margin-top:12px;\">' +
-                    '<button class=\"push-exam-btn\" style=\"flex:1;background:#e67e22;color:white;border:none;padding:8px 16px;border-radius:20px;cursor:pointer;font-size:0.8rem;\">📤 推送</button>' +
-                    '<button class=\"goto-exam-btn\" style=\"flex:1;border:1px solid #e2e8f0;background:#f8fafc;padding:8px 16px;border-radius:20px;cursor:pointer;font-size:0.8rem;\">📋 前往考试系统</button>' +
+                '<div style="display:flex;gap:8px;margin-top:12px;">' +
+                    '<button class="push-exam-btn" style="flex:1;background:#e67e22;color:white;border:none;padding:10px 16px;border-radius:20px;cursor:pointer;font-size:0.85rem;font-weight:600;">📤 飞书推送</button>' +
+                    '<button class="goto-exam-btn" style="flex:1;border:1px solid #e2e8f0;background:#f8fafc;padding:10px 16px;border-radius:20px;cursor:pointer;font-size:0.85rem;">📋 前往考试系统</button>' +
                 '</div>' +
             '</div>' +
         '</div>';
@@ -13447,27 +13671,48 @@ URL.revokeObjectURL(url);
         modal.querySelector('#pexamClose').onclick = function() { modal.remove(); };
         modal.onclick = function(e) { if (e.target === modal) modal.remove(); };
         modal.querySelector('.goto-exam-btn').onclick = function(){ modal.remove(); switchNav('examSystem'); };
-        if (isPushedThisPeriod(reviewerName, 'exam') || Object.values(getExamHistory()).some(function(e){return e.examCode===examCode})) {
-            modal.querySelector('.push-exam-btn').textContent = '✅ 已保存';
-            modal.querySelector('.push-exam-btn').style.background = '#27ae60';
+        var pexamPushBtn = modal.querySelector('.push-exam-btn');
+        if (isPushedThisPeriod(reviewerName, 'exam')) {
+            pexamPushBtn.textContent = '✅ 已推送'; pexamPushBtn.style.background = '#27ae60';
         }
-        modal.querySelector('.push-exam-btn').onclick = function(){
+        pexamPushBtn.onclick = function(){
             var btn = this;
-            saveExamHistory(examData); btn.textContent = '✅ 已保存'; btn.style.background = '#27ae60';
+            confirmRepush(reviewerName, 'exam', function() {
+            btn.textContent = '⏳ 推送中…'; btn.style.background = '#e67e22';
+            feishuPushWorkflow('exam', {
+                pushId: reviewerName,
+                title: reviewerName + ' · 精准试卷',
+                examCode: examCode,
+                questionCount: selected.length,
+                examUrl: DEPLOYED_URL + '?exam=' + examCode,
+                reviewerName: reviewerName
+            }, {
+                reviewerName: reviewerName,
+                onSuccess: function() {
+                    saveExamHistory(examData);
+                    btn.textContent = '✅ 已推送'; btn.style.background = '#27ae60';
+                }
+            });
+            }); // confirmRepush
         };
-        // 生成二维码
-        setTimeout(function() {
-            var qrContainer = document.getElementById('pexamQRCode');
-            if (qrContainer && typeof QRCode !== 'undefined') {
-                qrContainer.innerHTML = '';
-                new QRCode(qrContainer, { text: examUrl, width: 130, height: 130, colorDark: '#1f3a6b', colorLight: '#ffffff', correctLevel: QRCode.CorrectLevel.M });
-            }
-        }, 200);
     }
 
-    function openSharedReport(name) {
+    async function openSharedReport(name) {
         var reports = JSON.parse(localStorage.getItem('generatedReports') || '{}');
         var html = reports[name];
+        if (!html) {
+            try {
+                var resp = await fetch(SUPABASE_URL + '/rest/v1/app_data?select=value&key=eq.generatedReports', {
+                    headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY }
+                });
+                var rows = await resp.json();
+                if (Array.isArray(rows) && rows.length > 0 && rows[0].value) {
+                    localStorage.setItem('generatedReports', rows[0].value);
+                    reports = JSON.parse(rows[0].value);
+                    html = reports[name];
+                }
+            } catch(e) {}
+        }
         if (!html) {
             document.body.innerHTML = '<div style="text-align:center;padding:60px;font-family:sans-serif;"><h1>📄 培训资料不存在</h1><p style="color:#94a3b8;">可能已被删除或链接失效</p></div>';
             return;
@@ -13728,7 +13973,17 @@ URL.revokeObjectURL(url);
     function getLearningPlans() {
         try { return JSON.parse(localStorage.getItem(LEARNING_PLAN_KEY) || '{}'); } catch(e) { return {}; }
     }
-    function saveLearningPlans(data) { localStorage.setItem(LEARNING_PLAN_KEY, JSON.stringify(data)); }
+    function saveLearningPlans(data) {
+        var val = JSON.stringify(data);
+        localStorage.setItem(LEARNING_PLAN_KEY, val);
+        try {
+            fetch(SUPABASE_URL + '/rest/v1/app_data', {
+                method: 'POST',
+                headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY, 'Content-Type': 'application/json', 'Prefer': 'resolution=merge-duplicates' },
+                body: JSON.stringify({ key: LEARNING_PLAN_KEY, value: val, updated_at: new Date().toISOString() })
+            }).catch(function() {});
+        } catch(e) {}
+    }
 
     async function generateLearningPlanForPerson(reviewerName) {
         if (!window._lmReady || window._lmCategories.length === 0) {
@@ -13834,34 +14089,51 @@ URL.revokeObjectURL(url);
                 '<div style="font-size:1.1rem;font-weight:700;color:#1f3a6b;margin-bottom:8px;">👤 ' + escapeHtml(planData.reviewerName) + ' 的定制学习地图</div>' +
                 '<div style="font-size:0.78rem;color:#5e6f8d;margin-bottom:4px;">' + planData.totalCourses + ' 节课程 · ' + planData.areas.length + ' 个知识领域</div>' +
                 '<div style="margin-bottom:12px;">' + areaTags + '</div>' +
-                '<div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:12px;padding:8px 12px;margin-bottom:12px;word-break:break-all;font-size:0.7rem;color:#166534;">' + escapeHtml(shareUrl) + '</div>' +
+                '<div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:12px;padding:8px 12px;margin-bottom:12px;word-break:break-all;font-size:0.7rem;color:#166534;">' + escapeHtml(DEPLOYED_URL + '?learnPlan=' + planData.code) + '</div>' +
                 '<div style="display:flex;gap:8px;justify-content:center;flex-wrap:wrap;">' +
                     '<button onclick="copyLearningPlanLink(\'' + planData.code + '\', this)" style="background:#2563eb;color:white;border:none;padding:8px 16px;border-radius:20px;cursor:pointer;font-size:0.8rem;">📋 复制链接</button>' +
                     '<a href=\"?learnPlan=' + planData.code + '\" target=\"_blank\" style=\"background:#16a34a;color:white;padding:8px 16px;border-radius:20px;cursor:pointer;font-size:0.8rem;text-decoration:none;display:inline-block;\">👁️ 预览学习地图</a>' +
                 '</div>' +
                 '<div style=\"display:flex;gap:8px;margin-top:8px;justify-content:center;\">' +
-                    '<button class=\"push-exam-btn\" style=\"flex:1;background:#e67e22;color:white;border:none;padding:8px 16px;border-radius:20px;cursor:pointer;font-size:0.8rem;\">📤 推送</button>' +
-                    '<button class=\"goto-exam-btn\" style=\"flex:1;border:1px solid #e2e8f0;background:#f8fafc;padding:8px 16px;border-radius:20px;cursor:pointer;font-size:0.8rem;\">📋 前往考试系统</button>' +
+                    '<button class=\"push-exam-btn\" style=\"flex:1;background:#e67e22;color:white;border:none;padding:10px 16px;border-radius:20px;cursor:pointer;font-size:0.85rem;font-weight:600;\">📤 飞书推送</button>' +
+                    '<button class=\"goto-exam-btn\" style=\"flex:1;border:1px solid #e2e8f0;background:#f8fafc;padding:10px 16px;border-radius:20px;cursor:pointer;font-size:0.85rem;\">📋 前往考试系统</button>' +
                 '</div>' +
             '</div></div>';
         document.body.appendChild(overlay);
         overlay.querySelector('#lpCloseBtn').onclick = function() { overlay.remove(); };
         overlay.onclick = function(e) { if (e.target === overlay) overlay.remove(); };
         overlay.querySelector('.goto-exam-btn').onclick = function(){ overlay.remove(); switchNav('examSystem'); };
-        if (isPushedThisPeriod(planData.reviewerName, 'learn')) {
-            overlay.querySelector('.push-exam-btn').textContent = '✅ 已保存';
-            overlay.querySelector('.push-exam-btn').style.background = '#27ae60';
+        var learnPushBtn = overlay.querySelector('.push-exam-btn');
+        if (isPushedThisPeriod(planData.reviewerName, 'learning')) {
+            learnPushBtn.textContent = '✅ 已推送'; learnPushBtn.style.background = '#27ae60';
         }
-        overlay.querySelector('.push-exam-btn').onclick = function(){
-            var records = getLearnPlanPushes();
-            records.push({ time: new Date().toISOString(), type: 'learn', reviewerName: planData.reviewerName });
-            saveLearnPlanPushes(records);
-            this.textContent = '✅ 已保存'; this.style.background = '#27ae60';
+        learnPushBtn.onclick = function(){
+            var btn = this;
+            confirmRepush(planData.reviewerName, 'learning', function() {
+            btn.textContent = '⏳ 推送中…'; btn.style.background = '#e67e22';
+            feishuPushWorkflow('learning', {
+                pushId: planData.reviewerName,
+                title: planData.reviewerName + ' 的定制学习地图',
+                planCode: planData.code,
+                reviewerName: planData.reviewerName,
+                courseCount: planData.totalCourses,
+                areaCount: planData.areas.length,
+                shareUrl: DEPLOYED_URL + '?learnPlan=' + planData.code
+            }, {
+                reviewerName: planData.reviewerName,
+                onSuccess: function() {
+                    var records = getLearnPlanPushes();
+                    records.push({ time: new Date().toISOString(), type: 'learn', reviewerName: planData.reviewerName });
+                    saveLearnPlanPushes(records);
+                    btn.textContent = '✅ 已推送'; btn.style.background = '#27ae60';
+                }
+            });
+            }); // confirmRepush
         };
     }
 
     function copyLearningPlanLink(code, btn) {
-        var url = location.origin + location.pathname + '?learnPlan=' + code;
+        var url = DEPLOYED_URL + '?learnPlan=' + code;
         navigator.clipboard.writeText(url).then(function() {
             btn.textContent = '✅ 已复制';
             setTimeout(function() { btn.textContent = '📋 复制链接'; }, 2000);
@@ -13900,9 +14172,24 @@ URL.revokeObjectURL(url);
         }
     }
 
-    function renderLearningPlanView(code) {
+    async function renderLearningPlanView(code) {
         var plans = getLearningPlans();
         var plan = plans[code];
+        // 本地没找到，尝试从云端拉取
+        if (!plan) {
+            try {
+                var resp = await fetch(SUPABASE_URL + '/rest/v1/app_data?select=value&key=eq.' + LEARNING_PLAN_KEY, {
+                    headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY }
+                });
+                var rows = await resp.json();
+                if (Array.isArray(rows) && rows.length > 0 && rows[0].value) {
+                    var cloudPlans = JSON.parse(rows[0].value);
+                    localStorage.setItem(LEARNING_PLAN_KEY, rows[0].value);
+                    plans = cloudPlans;
+                    plan = plans[code];
+                }
+            } catch(e) {}
+        }
         if (!plan) {
             document.getElementById('mainContent').innerHTML = '<div style="text-align:center;padding:60px;"><div style="font-size:3rem;">🗺️</div><div style="color:#94a3b8;">学习地图已过期或不存在</div></div>';
             return;
@@ -14104,21 +14391,14 @@ URL.revokeObjectURL(url);
             "<div class=\"modal-body\" style=\"text-align:center;overflow-y:auto;flex:1;min-height:0;\">" +
                 "<div style=\"font-size:1.1rem;font-weight:700;color:#1f3a6b;margin-bottom:8px;\">共匹配 " + matched.length + " 个案例</div>" +
                 "<div style=\"font-size:0.8rem;color:#5e6f8d;margin-bottom:12px;\">涉及" + reviewerNames.length + "人 | " + Object.keys(cats).join(" / ") + "</div>" +
-                "<div style=\"display:flex;gap:16px;flex-wrap:wrap;text-align:center;\">" +
-                    "<div style=\"flex:1;min-width:200px;background:#f8fafc;border-radius:14px;padding:14px;border:1px solid #eef2f6;\">" +
-                        "<div style=\"font-weight:700;color:#1f3a6b;margin-bottom:8px;font-size:0.85rem;\">🔗 网页链接</div>" +
-                        "<div style=\"background:white;border:1px solid #eef2f6;border-radius:8px;padding:6px;font-size:0.65rem;word-break:break-all;color:#5e6f8d;margin-bottom:6px;\">" + shareUrl + "</div>" +
-                        "<button class=\"copy-train-link\" data-url=\"" + shareUrl.replace(/"/g,"&quot;") + "\" style=\"background:#2a5298;color:white;border:none;padding:6px 14px;border-radius:16px;cursor:pointer;font-size:0.75rem;\">📋 复制链接</button>" +
-                    "</div>" +
-                    "<div style=\"flex:1;min-width:200px;background:#f8fafc;border-radius:14px;padding:14px;border:1px solid #eef2f6;\">" +
-                        "<div style=\"font-weight:700;color:#1f3a6b;margin-bottom:8px;font-size:0.85rem;\">📱 扫码查看</div>" +
-                        "<div id=\"trainQRCode\" style=\"display:inline-block;\"></div>" +
-                        "<div style=\"font-size:0.7rem;color:#94a3b8;margin-top:4px;\">微信/飞书扫码查看</div>" +
-                    "</div>" +
+                "<div style=\"background:#f8fafc;border-radius:14px;padding:14px;border:1px solid #eef2f6;text-align:center;\">" +
+                    "<div style=\"font-weight:700;color:#1f3a6b;margin-bottom:8px;font-size:0.85rem;\">🔗 培训链接</div>" +
+                    "<div style=\"background:white;border:1px solid #eef2f6;border-radius:8px;padding:8px;font-size:0.65rem;word-break:break-all;color:#5e6f8d;margin-bottom:6px;\">" + DEPLOYED_URL + '?report=' + encodeURIComponent(reportName) + "</div>" +
+                    "<button class=\"copy-train-link\" data-url=\"" + (DEPLOYED_URL + '?report=' + encodeURIComponent(reportName)).replace(/"/g,"&quot;") + "\" style=\"background:#2a5298;color:white;border:none;padding:6px 14px;border-radius:16px;cursor:pointer;font-size:0.75rem;\">📋 复制链接</button>" +
                 "</div>" +
                 "<div style=\"display:flex;gap:8px;margin-top:12px;justify-content:center;\">" +
-                    "<button class=\"push-exam-btn\" style=\"flex:1;background:#e67e22;color:white;border:none;padding:8px 16px;border-radius:20px;cursor:pointer;font-size:0.8rem;\">📤 推送</button>" +
-                    "<button class=\"goto-exam-btn\" style=\"flex:1;border:1px solid #e2e8f0;background:#f8fafc;padding:8px 16px;border-radius:20px;cursor:pointer;font-size:0.8rem;\">📋 前往考试系统</button>" +
+                    "<button class=\"push-exam-btn\" style=\"flex:1;background:#e67e22;color:white;border:none;padding:10px 16px;border-radius:20px;cursor:pointer;font-size:0.85rem;font-weight:600;\">📤 飞书推送</button>" +
+                    "<button class=\"goto-exam-btn\" style=\"flex:1;border:1px solid #e2e8f0;background:#f8fafc;padding:10px 16px;border-radius:20px;cursor:pointer;font-size:0.85rem;\">📋 前往考试系统</button>" +
                 "</div>" +
             "</div>" +
         "</div></div>";
@@ -14126,27 +14406,36 @@ URL.revokeObjectURL(url);
         overlay.querySelector("#trainClose").onclick = function() { overlay.remove(); };
         overlay.onclick = function(e) { if (e.target === overlay) overlay.remove(); };
         overlay.querySelector(".goto-exam-btn").onclick = function(){ overlay.remove(); switchNav("examSystem"); };
-        var pushBtn = overlay.querySelector(".push-exam-btn");
-        if (isPushedThisPeriod(reviewerNames.join(', '), 'train')) {
-            pushBtn.textContent = "✅ 已保存"; pushBtn.style.background = "#27ae60";
-        }
-        pushBtn.onclick = function(){
-            var records = getTrainingPushes();
-            records.push({ time: new Date().toISOString(), type: 'train', reviewerName: reviewerNames.join(',') });
-            saveTrainingPushes(records);
-            this.textContent = '✅ 已保存'; this.style.background = '#27ae60';
-        };
         overlay.querySelector(".copy-train-link").addEventListener("click", function() {
             navigator.clipboard.writeText(this.dataset.url);
             this.textContent = "✅ 已复制"; setTimeout((function(b){ return function(){ b.textContent = "📋 复制链接"; }; })(this), 1500);
         });
-        setTimeout(function() {
-            var qrContainer = document.getElementById("trainQRCode");
-            if (qrContainer && typeof QRCode !== "undefined") {
-                qrContainer.innerHTML = "";
-                new QRCode(qrContainer, { text: shareUrl, width: 130, height: 130, colorDark: "#1f3a6b", colorLight: "#ffffff", correctLevel: QRCode.CorrectLevel.M });
-            }
-        }, 200);
+        var trainPushBtn = overlay.querySelector(".push-exam-btn");
+        if (isPushedThisPeriod(titleLabel, 'train')) {
+            trainPushBtn.textContent = '✅ 已推送'; trainPushBtn.style.background = '#27ae60';
+        }
+        trainPushBtn.onclick = function(){
+            var btn = this;
+            confirmRepush(titleLabel, 'training', function() {
+            btn.textContent = '⏳ 推送中…'; btn.style.background = '#e67e22';
+            feishuPushWorkflow('training', {
+                pushId: titleLabel,
+                title: titleLabel,
+                planCode: titleLabel,
+                scope: titleLabel,
+                caseCount: matched.length,
+                reviewerNames: reviewerNames.join('、'),
+                shareUrl: DEPLOYED_URL + '?report=' + encodeURIComponent(reportName)
+            }, {
+                onSuccess: function() {
+                    var records = getTrainingPushes();
+                    records.push({ time: new Date().toISOString(), type: 'train', reviewerName: reviewerNames.join(',') });
+                    saveTrainingPushes(records);
+                    btn.textContent = '✅ 已推送'; btn.style.background = '#27ae60';
+                }
+            });
+            }); // confirmRepush
+        };
     }
 
     // 本地缓存：避免每次打开看板都白等
@@ -14220,7 +14509,7 @@ URL.revokeObjectURL(url);
         // 表格行
         var tableRows = '';
         if (errorDashboardAllFailed) {
-            tableRows = '<tr><td colspan="7" style="padding:40px;text-align:center;"><div style="font-size:1.2rem;color:#c0392b;margin-bottom:12px;">⚠️ 飞书授权已过期</div><div style="color:#5e6f8d;font-size:0.8rem;margin-bottom:16px;">无法从飞书表格加载数据，请重新授权</div><a href="https://open.feishu.cn/open-apis/authen/v1/authorize?app_id=' + FEISHU_CONFIG.appId + '&redirect_uri=https%3A%2F%2Fjimu-111.github.io%2Fyouxuetang%2Fauth.html&scope=sheets:spreadsheet:readonly%20drive:drive:readonly%20wiki:wiki:readonly%20im:message.send_as_user%20contact:user.employee:readonly" style="display:inline-block;background:#1f3a6b;color:white;padding:10px 24px;border-radius:30px;text-decoration:none;font-size:0.85rem;">🔗 前往飞书授权</a></td></tr>';
+            tableRows = '<tr><td colspan="7" style="padding:40px;text-align:center;"><div style="font-size:1.2rem;color:#c0392b;margin-bottom:12px;">⚠️ 飞书授权已过期</div><div style="color:#5e6f8d;font-size:0.8rem;margin-bottom:16px;">无法从飞书表格加载数据，请重新授权</div><a href="https://open.feishu.cn/open-apis/authen/v1/authorize?app_id=' + FEISHU_CONFIG.appId + '&redirect_uri=https%3A%2F%2Fjimu-111.github.io%2Fyouxuetang%2F&scope=sheets:spreadsheet:readonly%20drive:drive:readonly%20wiki:wiki:readonly%20im:message.send_as_user%20contact:user.employee:readonly" style="display:inline-block;background:#1f3a6b;color:white;padding:10px 24px;border-radius:30px;text-decoration:none;font-size:0.85rem;">🔗 前往飞书授权</a></td></tr>';
         } else if (pageData.length === 0) {
             tableRows = '<tr><td colspan="7" style="padding:30px;color:#94a3b8;">暂无匹配的失误记录</td></tr>';
         } else {
@@ -14412,8 +14701,8 @@ URL.revokeObjectURL(url);
                     '</div>' +
                 '</div>' +
                 '<div class="sheet-status">' + statusDots + '<span style="margin-left:12px;font-size:0.75rem;color:#5e6f8d;">总失误数（' + errorDashboardData.length + '条）</span></div>' +
-                (errorDashboardAllFailed ? '<div style="background:#fff5f5;border-left:4px solid #c0392b;padding:12px 16px;border-radius:12px;margin-top:12px;"><div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;"><span style="font-size:1.2rem;">⚠️</span><span style="color:#c0392b;font-weight:600;font-size:0.85rem;">飞书授权已过期，无法从飞书表格加载最新数据</span><a href="https://open.feishu.cn/open-apis/authen/v1/authorize?app_id=' + FEISHU_CONFIG.appId + '&redirect_uri=https%3A%2F%2Fjimu-111.github.io%2Fyouxuetang%2Fauth.html&scope=sheets:spreadsheet:readonly%20drive:drive:readonly%20wiki:wiki:readonly%20im:message.send_as_user%20contact:user.employee:readonly" style="display:inline-block;background:#c0392b;color:white;padding:8px 20px;border-radius:30px;text-decoration:none;font-size:0.8rem;font-weight:600;white-space:nowrap;">🔗 前往飞书授权</a><span onclick="var s=document.getElementById(\'bannerQrSection\');var show=s.style.display===\'block\';s.style.display=show?\'none\':\'block\';this.textContent=show?\'📱 扫码授权\':\'收起\'" style="color:#2a5298;cursor:pointer;font-size:0.75rem;text-decoration:underline;white-space:nowrap;">📱 扫码授权</span></div><div id="bannerQrSection" style="display:none;margin-top:10px;padding-top:10px;border-top:1px dashed #f5c6cb;"><div style="display:flex;gap:16px;align-items:center;flex-wrap:wrap;justify-content:center;"><div id="bannerQrcode" style="background:white;padding:6px;border-radius:8px;border:1px solid #eef2f6;"></div><div style="flex:1;min-width:160px;"><p style="font-size:0.7rem;color:#5e6f8d;margin-bottom:6px;">📱 手机扫码授权 → token自动上传云端 → 本机自动检测</p><p id="bannerPolling" style="font-size:0.68rem;color:#2a5298;"></p><div style="margin-top:8px;"><input id="manualCodeInput2" type="text" placeholder="或粘贴授权码…" style="width:100%;padding:6px 10px;border:1px solid #cbd5e1;border-radius:8px;font-size:0.75rem;font-family:monospace;margin-bottom:4px;"><button id="manualCodeBtn2" onclick="var code=document.getElementById(\'manualCodeInput2\').value;var btn=this;btn.disabled=true;btn.textContent=\'⏳\';exchangeCodeForToken(code).then(function(r){if(r.success){clearInterval(window._bannerQrPoll);errorDashboardData=[];errorDashboardSheetStatus={};errorDashboardAllFailed=false;localStorage.removeItem(\'errorDashboardCache\');refreshErrorDashboardData(true,false);}else{btn.disabled=false;btn.textContent=\'🔓\';alert(\'❌ \'+r.error);}}).catch(function(e){btn.disabled=false;btn.textContent=\'🔓\';alert(\'❌ \'+e.message);});" style="width:100%;padding:6px;background:#2a5298;color:white;border:none;border-radius:8px;cursor:pointer;font-size:0.75rem;font-weight:600;">🔓 激活</button></div></div></div></div></div>' +
-                '<script>setTimeout(function(){var qr=document.getElementById(\'bannerQrcode\');if(qr&&typeof QRCode!==\'undefined\'){var au="https://open.feishu.cn/open-apis/authen/v1/authorize?app_id=' + FEISHU_CONFIG.appId + '&redirect_uri=https%3A%2F%2Fjimu-111.github.io%2Fyouxuetang%2Fauth.html&scope=sheets:spreadsheet:readonly%20drive:drive:readonly%20wiki:wiki:readonly%20im:message.send_as_user%20contact:user.employee:readonly";new QRCode(qr,{text:au,width:130,height:130,correctLevel:QRCode.CorrectLevel.L});var p=document.getElementById(\'bannerPolling\'),c=0;window._bannerQrPoll=setInterval(async function(){c++;if(p)p.textContent=\'⏳ 等待授权…（\'+c*3+\'s）\';var t=await getCloudToken();if(t){clearInterval(window._bannerQrPoll);if(p)p.textContent=\'✅ 检测到授权！\';setTimeout(function(){errorDashboardData=[];errorDashboardSheetStatus={};errorDashboardAllFailed=false;localStorage.removeItem(\'errorDashboardCache\');refreshErrorDashboardData(true,false)},500)}if(c>40){clearInterval(window._bannerQrPoll);if(p)p.textContent=\'⏰ 超时\'}},3000)}},200);<\/script>' : '') +
+                (errorDashboardAllFailed ? '<div style="background:#fff5f5;border-left:4px solid #c0392b;padding:12px 16px;border-radius:12px;margin-top:12px;"><div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;"><span style="font-size:1.2rem;">⚠️</span><span style="color:#c0392b;font-weight:600;font-size:0.85rem;">飞书授权已过期，无法从飞书表格加载最新数据</span><a href="https://open.feishu.cn/open-apis/authen/v1/authorize?app_id=' + FEISHU_CONFIG.appId + '&redirect_uri=https%3A%2F%2Fjimu-111.github.io%2Fyouxuetang%2F&scope=sheets:spreadsheet:readonly%20drive:drive:readonly%20wiki:wiki:readonly%20im:message.send_as_user%20contact:user.employee:readonly" style="display:inline-block;background:#c0392b;color:white;padding:8px 20px;border-radius:30px;text-decoration:none;font-size:0.8rem;font-weight:600;white-space:nowrap;">🔗 前往飞书授权</a><span onclick="var s=document.getElementById(\'bannerQrSection\');var show=s.style.display===\'block\';s.style.display=show?\'none\':\'block\';this.textContent=show?\'📱 扫码授权\':\'收起\'" style="color:#2a5298;cursor:pointer;font-size:0.75rem;text-decoration:underline;white-space:nowrap;">📱 扫码授权</span></div><div id="bannerQrSection" style="display:none;margin-top:10px;padding-top:10px;border-top:1px dashed #f5c6cb;"><div style="display:flex;gap:16px;align-items:center;flex-wrap:wrap;justify-content:center;"><div id="bannerQrcode" style="background:white;padding:6px;border-radius:8px;border:1px solid #eef2f6;"></div><div style="flex:1;min-width:160px;"><p style="font-size:0.7rem;color:#5e6f8d;margin-bottom:6px;">📱 手机扫码授权 → token自动上传云端 → 本机自动检测</p><p id="bannerPolling" style="font-size:0.68rem;color:#2a5298;"></p><div style="margin-top:8px;"><input id="manualCodeInput2" type="text" placeholder="或粘贴授权码…" style="width:100%;padding:6px 10px;border:1px solid #cbd5e1;border-radius:8px;font-size:0.75rem;font-family:monospace;margin-bottom:4px;"><button id="manualCodeBtn2" onclick="var code=document.getElementById(\'manualCodeInput2\').value;var btn=this;btn.disabled=true;btn.textContent=\'⏳\';exchangeCodeForToken(code).then(function(r){if(r.success){clearInterval(window._bannerQrPoll);errorDashboardData=[];errorDashboardSheetStatus={};errorDashboardAllFailed=false;localStorage.removeItem(\'errorDashboardCache\');refreshErrorDashboardData(true,false);}else{btn.disabled=false;btn.textContent=\'🔓\';alert(\'❌ \'+r.error);}}).catch(function(e){btn.disabled=false;btn.textContent=\'🔓\';alert(\'❌ \'+e.message);});" style="width:100%;padding:6px;background:#2a5298;color:white;border:none;border-radius:8px;cursor:pointer;font-size:0.75rem;font-weight:600;">🔓 激活</button></div></div></div></div></div>' +
+                '' : '') +
                 // ② 筛选看板 + 人员画像（置顶）
                 (function() {
                     var top5People = sortedReviewers.slice(0, 5);
@@ -14575,7 +14864,7 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
                 var totalFiltered = filtered.length;
                 var tableBlock;
                 if (errorDashboardAllFailed) {
-                    tableBlock = '<div style="flex:1;overflow:auto;min-height:0;"><div class="error-table-wrapper"><table class="error-table"><thead><tr><th>日期</th><th>站点</th><th>来源</th><th>失误类别</th><th>初审人</th><th>失误备注</th><th>质检码</th></tr></thead><tbody><tr><td colspan="7" style="padding:40px;text-align:center;"><div style="font-size:1.2rem;color:#c0392b;margin-bottom:12px;">⚠️ 飞书授权已过期</div><div style="color:#5e6f8d;font-size:0.8rem;margin-bottom:16px;">无法从飞书表格加载最新数据，请重新授权</div><a href="https://open.feishu.cn/open-apis/authen/v1/authorize?app_id=' + FEISHU_CONFIG.appId + '&redirect_uri=https%3A%2F%2Fjimu-111.github.io%2Fyouxuetang%2Fauth.html&scope=sheets:spreadsheet:readonly%20drive:drive:readonly%20wiki:wiki:readonly%20im:message.send_as_user%20contact:user.employee:readonly" style="display:inline-block;background:#1f3a6b;color:white;padding:10px 24px;border-radius:30px;text-decoration:none;font-size:0.85rem;">🔗 前往飞书授权</a></td></tr></tbody></table></div></div>';
+                    tableBlock = '<div style="flex:1;overflow:auto;min-height:0;"><div class="error-table-wrapper"><table class="error-table"><thead><tr><th>日期</th><th>站点</th><th>来源</th><th>失误类别</th><th>初审人</th><th>失误备注</th><th>质检码</th></tr></thead><tbody><tr><td colspan="7" style="padding:40px;text-align:center;"><div style="font-size:1.2rem;color:#c0392b;margin-bottom:12px;">⚠️ 飞书授权已过期</div><div style="color:#5e6f8d;font-size:0.8rem;margin-bottom:16px;">无法从飞书表格加载最新数据，请重新授权</div><a href="https://open.feishu.cn/open-apis/authen/v1/authorize?app_id=' + FEISHU_CONFIG.appId + '&redirect_uri=https%3A%2F%2Fjimu-111.github.io%2Fyouxuetang%2F&scope=sheets:spreadsheet:readonly%20drive:drive:readonly%20wiki:wiki:readonly%20im:message.send_as_user%20contact:user.employee:readonly" style="display:inline-block;background:#1f3a6b;color:white;padding:10px 24px;border-radius:30px;text-decoration:none;font-size:0.85rem;">🔗 前往飞书授权</a></td></tr></tbody></table></div></div>';
                 } else if (totalFiltered === 0) {
                     tableBlock = '<div style="flex:1;overflow:auto;min-height:0;"><div class="error-table-wrapper"><table class="error-table"><thead><tr><th>日期</th><th>站点</th><th>来源</th><th>失误类别</th><th>初审人</th><th>失误备注</th><th>质检码</th></tr></thead><tbody><tr><td colspan="7" style="padding:30px;color:#94a3b8;">暂无匹配的失误记录</td></tr></tbody></table></div></div>';
                 } else if (totalFiltered <= PG_SIZE) {
@@ -14660,6 +14949,33 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
         html += reportBtn;
 
         document.getElementById('mainContent').innerHTML = html;
+        // 生成横幅二维码
+        setTimeout(function() {
+            var qr = document.getElementById('bannerQrcode');
+            if (errorDashboardAllFailed && qr && typeof QRCode !== 'undefined') {
+                qr.innerHTML = '';
+                var au = 'https://open.feishu.cn/open-apis/authen/v1/authorize?app_id=' + FEISHU_CONFIG.appId + '&redirect_uri=https%3A%2F%2Fjimu-111.github.io%2Fyouxuetang%2F&scope=sheets:spreadsheet:readonly%20drive:drive:readonly%20wiki:wiki:readonly%20im:message.send_as_user%20contact:user.employee:readonly';
+                new QRCode(qr, { text: au, width: 130, height: 130, correctLevel: QRCode.CorrectLevel.L });
+                var pollEl = document.getElementById('bannerPolling');
+                var pollCount = 0;
+                if (window._bannerQrPoll) clearInterval(window._bannerQrPoll);
+                window._bannerQrPoll = setInterval(async function() {
+                    pollCount++;
+                    if (pollEl) pollEl.textContent = '⏳ 等待授权…（' + pollCount * 3 + 's）';
+                    var ct = await getCloudToken();
+                    if (ct) {
+                        clearInterval(window._bannerQrPoll);
+                        if (pollEl) pollEl.textContent = '✅ 检测到授权！加载中…';
+                        errorDashboardData = [];
+                        errorDashboardSheetStatus = {};
+                        errorDashboardAllFailed = false;
+                        localStorage.removeItem('errorDashboardCache');
+                        setTimeout(function() { refreshErrorDashboardData(true, false); }, 500);
+                    }
+                    if (pollCount > 40) { clearInterval(window._bannerQrPoll); if (pollEl) pollEl.textContent = '⏰ 超时'; }
+                }, 3000);
+            }
+        }, 300);
         // 表格样式后处理：站点标签 + 类别行色
         setTimeout(function(){
             var tables = document.querySelectorAll('.error-table');
@@ -15107,6 +15423,34 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
         return Object.keys(allReviewers).length;
     }
 
+    // ==================== 邮件推送（Resend + Supabase Edge Function） ====================
+    const PERSONNEL_EMAILS_KEY = 'personnelEmails';
+    function getPersonnelEmails() {
+        try { return JSON.parse(localStorage.getItem(PERSONNEL_EMAILS_KEY) || '{}'); } catch(e) {}
+        // 本地为空时尝试从云端拉取
+        try {
+            fetch(SUPABASE_URL + '/rest/v1/app_data?select=value&key=eq.' + PERSONNEL_EMAILS_KEY, {
+                headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY }
+            }).then(function(r) { return r.json(); }).then(function(rows) {
+                if (Array.isArray(rows) && rows.length > 0 && rows[0].value) {
+                    localStorage.setItem(PERSONNEL_EMAILS_KEY, rows[0].value);
+                }
+            }).catch(function() {});
+        } catch(e) {}
+        return {};
+    }
+    function savePersonnelEmails(d) {
+        var val = JSON.stringify(d);
+        localStorage.setItem(PERSONNEL_EMAILS_KEY, val);
+        // 同步到云端
+        try {
+            fetch(SUPABASE_URL + '/rest/v1/app_data', {
+                method: 'POST',
+                headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY, 'Content-Type': 'application/json', 'Prefer': 'resolution=merge-duplicates' },
+                body: JSON.stringify({ key: PERSONNEL_EMAILS_KEY, value: val, updated_at: new Date().toISOString() })
+            }).catch(function() {});
+        } catch(e) {}
+    }
     const FEISHU_PUSH_KEY = 'feishuPushRecords';
     function getFeishuPushRecords() { try { return JSON.parse(localStorage.getItem(FEISHU_PUSH_KEY) || '[]'); } catch(e) { return []; } }
     function saveFeishuPushRecords(d) { localStorage.setItem(FEISHU_PUSH_KEY, JSON.stringify(d)); }
@@ -15169,86 +15513,131 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
         options = options || {};
         var type = options.type || 'exam';
         var meta = options.meta || {};
+        var data = options.data || {};
         var onConfirm = options.onConfirm || function() {};
         var overlay = document.createElement('div');
         overlay.className = 'modal-overlay'; overlay.style.zIndex = '4000';
         overlay.innerHTML = '<div class="modal-container" style="max-width:520px;">' +
-            '<div class="modal-header">📤 推送到飞书<button class="modal-close-btn" id="fpClose">✕</button></div>' +
+            '<div class="modal-header">📤 飞书推送<button class="modal-close-btn" id="fpClose">✕</button></div>' +
             '<div class="modal-body" style="padding:16px;">' +
-                '<div style="margin-bottom:12px;"><input type="text" id="fpSearchInput" placeholder="🔍 搜索姓名..." style="width:100%;padding:10px 14px;border:1px solid #cbd5e1;border-radius:12px;font-size:0.9rem;"></div>' +
+                '<div id="fpSearchArea"><input type="text" id="fpSearchInput" placeholder="🔍 搜索姓名..." style="width:100%;padding:10px 14px;border:1px solid #cbd5e1;border-radius:12px;font-size:0.9rem;"></div>' +
+                '<div style="margin-bottom:8px;font-size:0.7rem;color:#94a3b8;">共 <span id="fpEmailCount">0</span> 个邮箱地址 &nbsp;<span style="color:#2a5298;cursor:pointer;text-decoration:underline;" onclick="window._editEmails &amp;&amp; window._editEmails()">📝 管理邮箱</span></div>' +
                 '<div id="fpUserList" style="max-height:360px;overflow-y:auto;"></div>' +
-                '<div id="fpSelectedArea" style="margin-top:8px;display:flex;flex-wrap:wrap;gap:4px;min-height:28px;"></div>' +
                 '<div style="display:flex;gap:8px;margin-top:12px;">' +
                     '<button id="fpConfirmBtn" style="flex:1;background:#e67e22;color:white;border:none;padding:10px;border-radius:14px;cursor:pointer;font-weight:600;font-size:0.85rem;">📤 推送给所选联系人</button>' +
                     '<button id="fpCancelBtn" style="flex:1;background:#f1f5f9;border:1px solid #cbd5e1;padding:10px;border-radius:14px;cursor:pointer;font-size:0.85rem;">取消</button>' +
                 '</div></div></div>';
         document.body.appendChild(overlay);
-        var siteName = meta.site || '';
         overlay._fpSelected = [];
         overlay._fpOnConfirm = onConfirm;
+        overlay._fpType = type;
+        overlay._fpData = data;
         window.renderFeishuSelected = function(ov) {
             var area = ov.querySelector('#fpSelectedArea');
             if (!area) return;
             var us = ov._fpSelected || [];
             area.innerHTML = us.map(function(u) {
                 return '<span style="background:#eef2ff;padding:4px 10px;border-radius:14px;font-size:0.75rem;display:flex;align-items:center;gap:4px;">' +
-                    escapeHtml(u.name) +
-                    '<span onclick="event.stopPropagation();var s=this.closest(\'.modal-overlay\');var uu=s._fpSelected||[];uu=uu.filter(function(x){return x.userId!==\'' + u.userId + '\';});s._fpSelected=uu;window.renderFeishuSelected(s);" style="cursor:pointer;color:#c0392b;">✕</span></span>';
+                    escapeHtml(u.name) + ' <span style="color:#94a3b8;">' + escapeHtml(u.email || '') + '</span>' +
+                    '<span onclick="event.stopPropagation();var s=this.closest(\'.modal-overlay\');var uu=s._fpSelected||[];uu=uu.filter(function(x){return x.name!==\'' + u.name.replace(/'/g,"\\'") + '\';});s._fpSelected=uu;window.renderFeishuSelected(s);" style="cursor:pointer;color:#c0392b;">✕</span></span>';
             }).join('');
         };
-        function renderUserList(users) {
+        function updateEmailCount() {
+            var el = document.getElementById('fpEmailCount');
+            if (el) el.textContent = Object.keys(getPersonnelEmails()).length;
+        }
+        function renderEmailList(filter) {
             var listEl = document.getElementById('fpUserList');
             if (!listEl) return;
-            if (users.length === 0) {
-                listEl.innerHTML = '<div style="text-align:center;color:#94a3b8;padding:20px;">未找到匹配的用户</div>';
+            var emails = getPersonnelEmails();
+            var selNames = (overlay._fpSelected || []).map(function(s){ return s.name; });
+            var allNames = Object.keys(emails).filter(function(n) {
+                return !filter || n.toLowerCase().indexOf(filter.toLowerCase()) >= 0 || (emails[n]||'').toLowerCase().indexOf(filter.toLowerCase()) >= 0;
+            });
+            // 选中的置顶
+            var topNames = allNames.filter(function(n){ return selNames.indexOf(n) >= 0; }).sort();
+            var otherNames = allNames.filter(function(n){ return selNames.indexOf(n) < 0; }).sort();
+            var names = topNames.concat(otherNames);
+            if (names.length === 0) {
+                listEl.innerHTML = '<div style="text-align:center;color:#94a3b8;padding:20px;">' + (filter ? '未找到匹配的联系人' : '暂无邮箱数据，点击上方"📝 管理邮箱"添加') + '</div>';
                 return;
             }
-            var html = '';
-            users.forEach(function(u) {
-                var p = _parseFeishuUser(u);
-                var isSelected = overlay._fpSelected.some(function(s) { return s.userId === p.userId; });
-                html += '<div class="fp-user-item" data-uid="' + p.userId + '" style="display:flex;align-items:center;gap:10px;padding:10px;border-radius:10px;cursor:pointer;margin-bottom:4px;' + (isSelected ? 'background:#eef2ff;border:1px solid #2a5298;' : 'background:#f8fafc;') + '">' +
-                    (p.avatar ? '<img src="' + p.avatar + '" style="width:36px;height:36px;border-radius:50%;object-fit:cover;">' : '<div style="width:36px;height:36px;border-radius:50%;background:#d9e2ef;display:flex;align-items:center;justify-content:center;">👤</div>') +
-                    '<div style="flex:1;"><div style="font-weight:600;font-size:0.85rem;">' + escapeHtml(p.name) + '</div><div style="font-size:0.7rem;color:#94a3b8;">' + escapeHtml(p.department) + '</div></div></div>';
-            });
-            listEl.innerHTML = html;
-            listEl.querySelectorAll('.fp-user-item').forEach(function(item) {
+            listEl.innerHTML = names.map(function(n) {
+                var em = emails[n] || '';
+                var isSel = selNames.indexOf(n) >= 0;
+                return '<div class="fp-user-item-email" data-name="' + n.replace(/"/g,'&quot;') + '" style="display:flex;align-items:center;gap:10px;padding:10px;border-radius:10px;cursor:pointer;margin-bottom:4px;' + (isSel ? 'background:#1f3a6b;color:white;' : 'background:#f8fafc;') + '">' +
+                    (isSel ? '<span style="width:24px;height:24px;border-radius:50%;background:#27ae60;display:flex;align-items:center;justify-content:center;font-size:0.9rem;color:white;flex-shrink:0;">✓</span>' : '<span style="width:24px;height:24px;border-radius:50%;border:2px solid #cbd5e1;flex-shrink:0;"></span>') +
+                    '<div style="width:36px;height:36px;border-radius:50%;background:'+(isSel?'rgba(255,255,255,0.2)':'#d9e2ef')+';display:flex;align-items:center;justify-content:center;">👤</div>' +
+                    '<div style="flex:1;"><div style="font-weight:'+(isSel?'700':'600')+';font-size:0.85rem;color:'+(isSel?'white':'')+';">' + escapeHtml(n) + '</div><div style="font-size:0.7rem;color:'+(isSel?'rgba(255,255,255,0.7)':'#94a3b8')+';">' + escapeHtml(em) + '</div></div>' +
+                '</div>';
+            }).join('');
+            listEl.querySelectorAll('.fp-user-item-email').forEach(function(item) {
                 item.addEventListener('click', function() {
-                    var uid = this.dataset.uid;
-                    var idx = overlay._fpSelected.findIndex(function(s) { return s.userId === uid; });
+                    var nm = this.dataset.name;
+                    var idx = overlay._fpSelected.findIndex(function(s) { return s.name === nm; });
                     if (idx >= 0) { overlay._fpSelected.splice(idx, 1); }
-                    else {
-                        var pUser = users.find(function(u) { var pp = _parseFeishuUser(u); return pp.userId === uid; });
-                        if (pUser) overlay._fpSelected.push(_parseFeishuUser(pUser));
-                    }
+                    else { var em = getPersonnelEmails()[nm] || ''; overlay._fpSelected.push({ name: nm, email: em }); }
                     window.renderFeishuSelected(overlay);
-                    renderUserList(users);
+                    renderEmailList(document.getElementById('fpSearchInput').value.trim());
                 });
             });
         }
-        (async function() {
-            var deptUsers = [];
-            var needAuth = false;
-            if (siteName) {
-                try { var deptName = siteName + '复核组'; deptUsers = await searchFeishuUserByDepartment(deptName); } catch(e) { if (e.message === 'NEED_AUTH') needAuth = true; }
-                if (deptUsers.length === 0 && !needAuth) { try { deptUsers = await searchFeishuUser(''); } catch(e) { if (e.message === 'NEED_AUTH') needAuth = true; } }
-                deptUsers.forEach(function(u) {
-                    var p = _parseFeishuUser(u);
-                    if (!overlay._fpSelected.some(function(s) { return s.userId === p.userId; })) overlay._fpSelected.push(p);
+        // 邮箱管理弹窗
+        window._editEmails = function() {
+            var eOverlay = document.createElement('div');
+            eOverlay.className = 'modal-overlay'; eOverlay.style.zIndex = '5000';
+            var emails = getPersonnelEmails();
+            var rows = Object.keys(emails).sort().map(function(n) {
+                return '<tr><td><input type="text" class="ee-name" value="' + escapeHtml(n) + '" style="width:100%;padding:4px;border:1px solid #cbd5e1;border-radius:6px;font-size:0.8rem;"></td><td><input type="text" class="ee-email" value="' + escapeHtml(emails[n]) + '" style="width:100%;padding:4px;border:1px solid #cbd5e1;border-radius:6px;font-size:0.8rem;"></td><td><button class="ee-del" style="background:#ffedea;color:#c0392b;border:none;padding:4px 10px;border-radius:6px;cursor:pointer;font-size:0.75rem;">删除</button></td></tr>';
+            }).join('');
+            eOverlay.innerHTML = '<div class="modal-container" style="max-width:640px;">' +
+                '<div class="modal-header">📝 管理邮箱地址<button class="modal-close-btn" id="eeClose">✕</button></div>' +
+                '<div class="modal-body" style="padding:16px;">' +
+                    '<div style="overflow:auto;max-height:50vh;"><table style="width:100%;border-collapse:collapse;"><thead><tr><th style="text-align:left;padding:6px;font-size:0.8rem;">姓名</th><th style="text-align:left;padding:6px;font-size:0.8rem;">邮箱</th><th style="width:60px;"></th></tr></thead><tbody id="eeTableBody">' + rows + '</tbody></table></div>' +
+                    '<button id="eeAddRow" style="margin-top:8px;background:#f1f5f9;border:1px solid #cbd5e1;padding:6px 16px;border-radius:8px;cursor:pointer;font-size:0.8rem;">➕ 添加行</button>' +
+                    '<div style="display:flex;gap:8px;margin-top:12px;">' +
+                        '<button id="eeSave" style="flex:1;background:#27ae60;color:white;border:none;padding:10px;border-radius:10px;cursor:pointer;font-weight:600;">💾 保存</button>' +
+                        '<button id="eeCancel" style="flex:1;background:#f1f5f9;border:1px solid #cbd5e1;padding:10px;border-radius:10px;cursor:pointer;">取消</button>' +
+                    '</div></div></div>';
+            document.body.appendChild(eOverlay);
+            eOverlay.querySelector('#eeClose').onclick = function() { eOverlay.remove(); };
+            eOverlay.querySelector('#eeCancel').onclick = function() { eOverlay.remove(); };
+            eOverlay.addEventListener('click', function(e) { if (e.target === eOverlay) eOverlay.remove(); });
+            eOverlay.querySelector('#eeAddRow').onclick = function() {
+                var tbody = eOverlay.querySelector('#eeTableBody');
+                var tr = document.createElement('tr');
+                tr.innerHTML = '<td><input type="text" class="ee-name" style="width:100%;padding:4px;border:1px solid #cbd5e1;border-radius:6px;font-size:0.8rem;"></td><td><input type="text" class="ee-email" style="width:100%;padding:4px;border:1px solid #cbd5e1;border-radius:6px;font-size:0.8rem;"></td><td><button class="ee-del" style="background:#ffedea;color:#c0392b;border:none;padding:4px 10px;border-radius:6px;cursor:pointer;font-size:0.75rem;">删除</button></td>';
+                tbody.appendChild(tr);
+                tr.querySelector('.ee-del').onclick = function() { tr.remove(); };
+            };
+            eOverlay.querySelector('#eeTableBody').querySelectorAll('.ee-del').forEach(function(b) {
+                b.onclick = function() { b.closest('tr').remove(); };
+            });
+            eOverlay.querySelector('#eeSave').onclick = function() {
+                var newEmails = {};
+                var rows2 = eOverlay.querySelectorAll('#eeTableBody tr');
+                rows2.forEach(function(tr) {
+                    var n = (tr.querySelector('.ee-name')||{}).value;
+                    var e = (tr.querySelector('.ee-email')||{}).value;
+                    if (n && n.trim() && e && e.trim()) newEmails[n.trim()] = e.trim();
                 });
-                window.renderFeishuSelected(overlay);
-            }
-            if (needAuth) { document.getElementById('fpUserList').innerHTML = '<div style="text-align:center;padding:20px;color:#e67e22;">⚠️ 需要飞书授权才能搜索联系人<br><span style="font-size:0.75rem;color:#94a3b8;">请先在失误分析看板页面点击飞书授权</span></div>'; }
-            else { renderUserList(deptUsers); }
-        })();
-        var searchTimer;
+                savePersonnelEmails(newEmails);
+                updateEmailCount();
+                renderEmailList(document.getElementById('fpSearchInput') ? document.getElementById('fpSearchInput').value.trim() : '');
+                eOverlay.remove();
+                showToast('✅ 邮箱列表已保存（' + Object.keys(newEmails).length + '人）', 'success');
+            };
+        };
+        // 初始加载
+        var initReviewer = meta.reviewerName || '';
+        if (initReviewer && getPersonnelEmails()[initReviewer]) {
+            overlay._fpSelected.push({ name: initReviewer, email: getPersonnelEmails()[initReviewer] });
+            window.renderFeishuSelected(overlay);
+        }
+        renderEmailList('');
+        updateEmailCount();
         document.getElementById('fpSearchInput').addEventListener('input', function() {
-            clearTimeout(searchTimer);
-            var kw = this.value.trim();
-            searchTimer = setTimeout(async function() {
-                try { var users = await searchFeishuUser(kw || undefined); renderUserList(users); }
-                catch(e) { if (e.message === 'NEED_AUTH') { document.getElementById('fpUserList').innerHTML = '<div style="text-align:center;padding:20px;color:#e67e22;">⚠️ 需要飞书授权才能搜索联系人<br><span style="font-size:0.75rem;color:#94a3b8;">请先在失误分析看板页面点击飞书授权</span></div>'; } else { document.getElementById('fpUserList').innerHTML = '<div style="text-align:center;padding:20px;color:#c0392b;">搜索失败：' + escapeHtml(e.message) + '</div>'; } }
-            }, 300);
+            renderEmailList(this.value.trim());
         });
         document.getElementById('fpConfirmBtn').addEventListener('click', function() {
             if (overlay._fpSelected.length === 0) { showToast('请至少选择一位联系人', 'warning'); return; }
@@ -15285,10 +15674,10 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
     }
 
     async function sendFeishuCard(userId, card) {
-        var token = getErrorDashboardToken() || await feishuRefreshToken() || await getFeishuToken();
+        var token = await getFeishuToken(); // 用应用身份 token（im:message:send_as_bot）
         if (!token) throw new Error('未获取到飞书令牌');
         var body = JSON.stringify({ receive_id: userId, msg_type: 'interactive', content: JSON.stringify(card) });
-        var resp = await feishuApiFetch('https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=user_id', {
+        var resp = await feishuApiFetch('https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=email', {
             method: 'POST', headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' }, body: body });
         var data = await resp.json();
         if (data.code !== 0) throw new Error(data.msg || '发送失败');
@@ -15297,21 +15686,25 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
 
     async function feishuPushWorkflow(type, data, meta) {
         meta = meta || {};
-        var pushKey = type + '_' + (data.examCode || data.reportName || data.planCode || Date.now());
+        var pushKey = type + '_' + (data.pushId || data.examCode || data.planCode || data.reportName || Date.now());
         var site = meta.site || '';
         var onSuccess = meta.onSuccess || null;
         showFeishuContactPicker({
-            type: type, meta: meta,
+            type: type, meta: meta, data: data,
             onConfirm: async function(selectedUsers) {
                 var card = buildFeishuCard(type, data);
                 var successCount = 0, failCount = 0;
                 for (var i = 0; i < selectedUsers.length; i++) {
-                    try { await sendFeishuCard(selectedUsers[i].userId, card); successCount++; } catch(e) { failCount++; }
+                    var rid = selectedUsers[i].email || selectedUsers[i].userId || '';
+                    console.log('发送给:', rid, rid ? '✅有值' : '❌空');
+                    if (!rid) { failCount++; continue; }
+                    try { await sendFeishuCard(rid, card); successCount++; } catch(e) { console.error('飞书发送失败:', e.message); failCount++; }
                 }
                 if (successCount > 0) {
                     markFeishuPushed(pushKey, { type: type, title: data.title || '', reviewerName: meta.reviewerName || '', users: selectedUsers.map(function(u) { return u.name; }), site: site });
-                    if (onSuccess) onSuccess();
-                }
+                    console.log('✅ 推送记录已保存 pushKey=' + pushKey);
+                    if (onSuccess) { console.log('调用 onSuccess'); onSuccess(); } else { console.log('onSuccess 为空'); }
+                } else { console.log('successCount=0，不触发 onSuccess'); }
                 if (failCount > 0 && successCount === 0) { showToast('推送失败，请检查飞书权限', 'error'); }
                 else if (failCount > 0) { showToast('已推送给 ' + successCount + ' 人，' + failCount + ' 人失败', 'warning'); }
                 else { showToast('✅ 已成功推送给 ' + successCount + ' 人', 'success'); }
@@ -15334,15 +15727,38 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
     function getExamHistory() {
         try { return JSON.parse(localStorage.getItem(EXAM_HISTORY_KEY) || '{}'); } catch(e) { return {}; }
     }
-    function saveExamHistory(data) { localStorage.setItem(EXAM_HISTORY_KEY, JSON.stringify(data)); }
+    function saveExamHistory(data) {
+        var val = JSON.stringify(data);
+        localStorage.setItem(EXAM_HISTORY_KEY, val);
+        try {
+            fetch(SUPABASE_URL + '/rest/v1/app_data', {
+                method: 'POST',
+                headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY, 'Content-Type': 'application/json', 'Prefer': 'resolution=merge-duplicates' },
+                body: JSON.stringify({ key: EXAM_HISTORY_KEY, value: val, updated_at: new Date().toISOString() })
+            }).catch(function() {});
+        } catch(e) {}
+    }
 
     let currentExamId = null;
     let currentExamAnswers = {};
 
     // 独立考试模式（扫码/链接直达，不显示管理后台）
-    function startStandaloneExam(examCode) {
-        const history = getExamHistory();
-        const exam = Object.values(history).find(e => e.examCode === examCode);
+    async function startStandaloneExam(examCode) {
+        var history = getExamHistory();
+        var exam = Object.values(history).find(e => e.examCode === examCode);
+        if (!exam) {
+            try {
+                var resp = await fetch(SUPABASE_URL + '/rest/v1/app_data?select=value&key=eq.' + EXAM_HISTORY_KEY, {
+                    headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY }
+                });
+                var rows = await resp.json();
+                if (Array.isArray(rows) && rows.length > 0 && rows[0].value) {
+                    localStorage.setItem(EXAM_HISTORY_KEY, rows[0].value);
+                    history = JSON.parse(rows[0].value);
+                    exam = Object.values(history).find(e => e.examCode === examCode);
+                }
+            } catch(e) {}
+        }
         if (!exam) {
             document.body.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100vh;font-family:sans-serif;"><div style="text-align:center;"><h1 style="color:#c0392b;">❌ 考试不存在</h1><p>考试码无效或已过期</p></div></div>';
             return;
@@ -15405,18 +15821,23 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
     function getLearnPlanPushes() { try { return JSON.parse(localStorage.getItem(LEARNPLAN_PUSH_KEY)||'[]'); } catch(e) { return []; } }
     function saveLearnPlanPushes(d) { localStorage.setItem(LEARNPLAN_PUSH_KEY, JSON.stringify(d)); }
     // 检查本期是否已推送
-    function isPushedThisPeriod(personName, type) {
+    function isPushedThisPeriod(identifier, type) {
         var curWeek = getCurrentWeekKey();
-        var records = type === 'learn' ? getLearnPlanPushes() : getTrainingPushes();
+        var records = getFeishuPushRecords();
+        var targetKey = type + '_' + identifier;
+        console.log('isPushedThisPeriod 查找 pushKey=' + targetKey + ' 本周=' + curWeek + ' 记录数=' + records.length);
         return records.some(function(r){
-            if (getWeekKey(r.time) !== curWeek) return false;
-            if ((r.type||'') !== type) return false;
-            return r.reviewerName.indexOf(personName) >= 0 || personName.indexOf(r.reviewerName) >= 0;
+            var wk = getWeekKey(r.time);
+            var rtype = (r.meta && r.meta.type) || r.type || '';
+            console.log('  对比: r.pushKey=' + r.pushKey + ' r.week=' + wk + ' r.type=' + rtype + ' targetKey=' + targetKey + ' targetType=' + type);
+            if (wk !== curWeek) return false;
+            if (rtype !== type) return false;
+            return r.pushKey === targetKey;
         });
     }
     async function confirmRepush(personName, type, callback) {
         if (isPushedThisPeriod(personName, type)) {
-            var typeLabel = type==='exam'?'出卷':(type==='learn'?'学习地图':'培训');
+            var typeLabel = type==='exam'?'出卷':(type==='learning'?'学习地图':'培训');
             var ok = await showConfirm(personName + ' 本期已推送过' + typeLabel + '，是否继续推送？');
             if (ok) callback();
         } else { callback(); }
