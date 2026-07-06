@@ -11,6 +11,7 @@
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; font-family: 'Microsoft YaHei', 'SimHei', 'PingFang SC', 'Helvetica Neue', sans-serif; }
         body { background: #f0f2f6; height: 100vh; overflow: hidden; }
+        body.guest-mode .admin-only { display: none !important; }
         .sidebar { width: 220px; min-width: 220px; height: 100vh; overflow-y: auto; overflow-x: hidden; }
         .nav-buttons { display: flex; flex-direction: column; gap: 4px; padding: 12px 12px; flex-wrap: nowrap; }
         .nav-btn { background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.1); color: #cbd5e6; padding: 10px 16px; border-radius: 12px; cursor: pointer; transition: all 0.2s; font-size: 0.85rem; font-weight: 500; width: 100%; text-align: left; white-space: nowrap; }
@@ -298,6 +299,7 @@
         .error-dashboard .site-tag.sz { background:#e3f2fd; color:#1565c0; }
         .error-dashboard .site-tag.qd { background:#fff3e0; color:#e67e22; }
         .error-dashboard .site-tag.cd { background:#e8f5e9; color:#2e7d32; }
+        .error-dashboard .product-tag { display:inline-block; padding:2px 8px; border-radius:10px; font-size:0.7rem; font-weight:500; }
         .error-dashboard tr.row-low { background:#fff0f0; }
         .error-dashboard tr.row-low td { color:#2d3748; }
         .error-dashboard tr.row-mid { background:#ffe0e0; }
@@ -322,9 +324,12 @@
             <h2 style="font-weight:700; font-size:1.2rem; background: linear-gradient(135deg, #b3e5fc, #ffffff); -webkit-background-clip: text; background-clip: text; color: transparent;">📚 优学堂</h2>
         </div>
         <div class="nav-buttons" id="navAccordion" style="display:flex; flex-direction:column; gap:2px; flex-wrap:nowrap;"></div>
-        <div style="margin-top:auto;padding:8px 12px;border-top:1px solid rgba(255,255,255,0.08);display:flex;align-items:stretch;gap:6px;">
-            <button class="nav-btn" data-nav="admin" style="font-size:0.72rem;flex:1;text-align:center;padding:6px 8px;display:flex;align-items:center;justify-content:center;">⚙️ 管理后台</button>
-            <span id="syncStatus" style="flex:1;display:flex;align-items:center;justify-content:center;font-size:0.7rem;color:#4fc3f7;border-radius:8px 0 0 8px;background:rgba(255,255,255,0.04);cursor:pointer;" title="点击手动同步" onclick="var s=document.getElementById('syncStatus');s.textContent='☁️ 同步中';s.style.color='#4fc3f7';_syncPushAll().then(function(){s.textContent='☁️ 已同步';s.style.color='#27ae60';}).catch(function(){s.textContent='☁️ 失败';s.style.color='#c0392b';});">☁️ 同步中</span>
+        <div style="margin-top:auto;padding:8px 12px;border-top:1px solid rgba(255,255,255,0.08);display:flex;flex-direction:column;gap:4px;">
+            <button id="adminLoginBtn" class="nav-btn" style="font-size:0.75rem;text-align:center;padding:8px;background:rgba(255,255,255,0.12);border:1px solid rgba(255,255,255,0.25);color:#fff;border-radius:10px;cursor:pointer;font-weight:600;">🔒 游客模式</button>
+            <div style="display:flex;align-items:stretch;gap:6px;">
+                <button class="nav-btn" data-nav="admin" style="font-size:0.72rem;flex:1;text-align:center;padding:6px 8px;display:flex;align-items:center;justify-content:center;">⚙️ 管理后台</button>
+                <span id="syncStatus" style="flex:1;display:flex;align-items:center;justify-content:center;font-size:0.7rem;color:#4fc3f7;border-radius:8px;background:rgba(255,255,255,0.04);cursor:pointer;" title="点击手动同步" onclick="var s=document.getElementById('syncStatus');s.textContent='☁️ 同步中';s.style.color='#4fc3f7';_syncPushAll().then(function(){s.textContent='☁️ 已同步';s.style.color='#27ae60';}).catch(function(){s.textContent='☁️ 失败';s.style.color='#c0392b';});">☁️ 同步中</span>
+            </div>
         </div>
     </div>
     <div class="main-content" id="mainContent" style="flex:1; overflow-y:auto; padding:20px 28px;"></div>
@@ -396,7 +401,19 @@
 
     // ==================== 强提醒删除确认（卡片式弹窗） ====================
     async function confirmDelete(itemName) {
-        return await showConfirm('确认删除「' + itemName + '」？\n\n此操作不可撤销，云端数据也将同步删除！', '🗑️', true);
+        return new Promise(function(resolve) {
+            var ov = document.createElement('div');
+            ov.className = 'custom-dialog-overlay';
+            ov.innerHTML = '<div class="custom-dialog-card" style="border:2px solid #c0392b;">' +
+                '<div class="custom-dialog-icon">⚠️</div>' +
+                '<div class="custom-dialog-msg" style="color:#c0392b;font-weight:700;">确认删除「' + escapeHtml(itemName).replace(/\n/g, '<br>') + '」？</div>' +
+                '<p style="font-size:0.8rem;color:#e67e22;margin-bottom:16px;">⚠️ 此操作不可撤销，云端数据也将同步删除！</p>' +
+                '<div class="custom-dialog-btns"><button class="custom-dialog-btn cancel dialog-cancel-btn">取消</button><button class="custom-dialog-btn danger dialog-ok-btn" style="font-weight:700;">确认删除</button></div></div>';
+            document.body.appendChild(ov);
+            ov.querySelector('.dialog-ok-btn').onclick = function() { ov.remove(); resolve(true); };
+            ov.querySelector('.dialog-cancel-btn').onclick = function() { ov.remove(); resolve(false); };
+            ov.onclick = function(e) { if (e.target === ov) { ov.remove(); resolve(false); } };
+        });
     }
     // 全局异步删除函数（供内联 onclick 调用）
     async function deleteCaseFile(period, idx) {
@@ -426,6 +443,152 @@
     
     // ==================== 新人进度模块 ====================
     const ADMIN_PASSWORD = "888888";
+    const ADMIN_ACCOUNT = { user: 'admin', pass: 'admin123' };
+    // ==================== 游客/管理员双模式 ====================
+    const ADMIN_MODE_KEY = 'adminMode';
+    const AUDIT_LOG_KEY = 'adminAuditLog';
+    function isAdminMode() { return sessionStorage.getItem(ADMIN_MODE_KEY) === '1'; }
+    function loginAdmin(user, pass) {
+        if (user !== ADMIN_ACCOUNT.user || pass !== ADMIN_ACCOUNT.pass) return false;
+        sessionStorage.setItem(ADMIN_MODE_KEY, '1');
+        logAdminAction('系统', '登录', '管理员 ' + user + ' 登录成功');
+        return true;
+    }
+    function logoutAdmin() {
+        logAdminAction('系统', '登出', '管理员登出');
+        sessionStorage.removeItem(ADMIN_MODE_KEY);
+    }
+    function logAdminAction(action, target, details) {
+        var log = getAuditLog();
+        log.push({ time: new Date().toISOString(), action: action, target: target || '', details: details || '', ip: '' });
+        saveAuditLog(log);
+    }
+    function getAuditLog() { try { return JSON.parse(localStorage.getItem(AUDIT_LOG_KEY) || '[]'); } catch(e) { return []; } }
+    function saveAuditLog(data) {
+        var val = JSON.stringify(data);
+        localStorage.setItem(AUDIT_LOG_KEY, val);
+        try {
+            fetch(SUPABASE_URL + '/rest/v1/app_data', { method: 'POST',
+                headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY, 'Content-Type': 'application/json', 'Prefer': 'resolution=merge-duplicates' },
+                body: JSON.stringify({ key: AUDIT_LOG_KEY, value: val, updated_at: new Date().toISOString() })
+            }).catch(function() {});
+        } catch(e) {}
+    }
+    // 管理员登录弹窗
+    const RECOVERY_KEY = 'youxuetang2026';
+    function showRecoveryDialog() {
+        return new Promise(function(resolve) {
+            var ov = document.createElement('div');
+            ov.className = 'custom-dialog-overlay'; ov.style.zIndex = '9999';
+            ov.innerHTML = '<div class="custom-dialog-card" style="max-width:380px;">' +
+                '<div class="custom-dialog-icon">🔑</div>' +
+                '<div class="custom-dialog-msg" style="font-weight:700;">找回管理员密码</div>' +
+                '<p style="font-size:0.78rem;color:#5e6f8d;margin-bottom:10px;">请输入找回密钥</p>' +
+                '<input id="recoveryInput" type="password" placeholder="找回密钥" style="width:100%;padding:10px 14px;border:1px solid #cbd5e1;border-radius:10px;font-size:0.9rem;margin-bottom:8px;text-align:center;">' +
+                '<div id="recoveryMsg" style="color:#c0392b;font-size:0.75rem;margin-bottom:8px;display:none;"></div>' +
+                '<div id="recoveryResult" style="display:none;background:#f0fdf4;border-radius:10px;padding:12px;margin-bottom:10px;">' +
+                    '<div style="font-weight:600;color:#166534;margin-bottom:4px;">✅ 管理员凭据：</div>' +
+                    '<div style="font-size:0.8rem;color:#166534;">账号：<strong>admin</strong></div>' +
+                    '<div style="font-size:0.8rem;color:#166534;">密码：<strong>admin123</strong></div>' +
+                '</div>' +
+                '<div class="custom-dialog-btns"><button class="custom-dialog-btn cancel dialog-cancel-btn">返回登录</button><button class="custom-dialog-btn primary dialog-ok-btn">验证</button></div></div>';
+            document.body.appendChild(ov);
+            ov.querySelector('.dialog-ok-btn').onclick = function() {
+                var v = document.getElementById('recoveryInput').value.trim();
+                if (v === RECOVERY_KEY) {
+                    document.getElementById('recoveryResult').style.display = 'block';
+                    document.getElementById('recoveryMsg').style.display = 'none';
+                    document.querySelector('#recoveryInput').style.display = 'none';
+                    ov.querySelector('.dialog-ok-btn').style.display = 'none';
+                    ov.querySelector('.dialog-cancel-btn').textContent = '返回登录';
+                } else {
+                    var m = document.getElementById('recoveryMsg');
+                    m.textContent = '❌ 找回密钥错误';
+                    m.style.display = 'block';
+                }
+            };
+            ov.querySelector('.dialog-cancel-btn').onclick = function() { ov.remove(); resolve(false); };
+            ov.onclick = function(e) { if (e.target === ov) { ov.remove(); resolve(false); } };
+            setTimeout(function() { var inp = document.getElementById('recoveryInput'); if (inp) inp.focus(); }, 100);
+        });
+    }
+    // 管理员登录弹窗
+    function showLoginDialog() {
+        return new Promise(function(resolve) {
+            var ov = document.createElement('div');
+            ov.className = 'custom-dialog-overlay'; ov.style.zIndex = '9999';
+            ov.innerHTML = '<div class="custom-dialog-card" style="max-width:380px;">' +
+                '<div class="custom-dialog-icon">🔐</div>' +
+                '<div class="custom-dialog-msg" style="font-weight:700;font-size:1rem;">管理员登录</div>' +
+                '<input id="loginUserInput" type="text" placeholder="账号" style="width:100%;padding:10px 14px;border:1px solid #cbd5e1;border-radius:10px;font-size:0.9rem;margin-bottom:8px;text-align:center;">' +
+                '<input id="loginPassInput" type="password" placeholder="密码" style="width:100%;padding:10px 14px;border:1px solid #cbd5e1;border-radius:10px;font-size:0.9rem;margin-bottom:12px;text-align:center;">' +
+                '<div id="loginMsg" style="color:#c0392b;font-size:0.75rem;margin-bottom:6px;display:none;"></div>' +
+                '<div style="font-size:0.7rem;color:#94a3b8;margin-bottom:12px;"><span id="forgotPwdLink" style="color:#2a5298;cursor:pointer;text-decoration:underline;">忘记密码？</span></div>' +
+                '<div class="custom-dialog-btns"><button class="custom-dialog-btn cancel dialog-cancel-btn">取消</button><button class="custom-dialog-btn primary dialog-ok-btn">登录</button></div></div>';
+            document.body.appendChild(ov);
+            ov.querySelector('.dialog-ok-btn').onclick = function() {
+                var u = document.getElementById('loginUserInput').value.trim();
+                var p = document.getElementById('loginPassInput').value;
+                if (loginAdmin(u, p)) { ov.remove(); resolve(true); }
+                else { var m = document.getElementById('loginMsg'); m.textContent = '❌ 账号或密码错误'; m.style.display = 'block'; }
+            };
+            ov.querySelector('#forgotPwdLink').onclick = function() {
+                ov.remove();
+                showRecoveryDialog().then(function(ok) { if (ok) resolve(true); else showLoginDialog().then(resolve); });
+            };
+            ov.querySelector('.dialog-cancel-btn').onclick = function() { ov.remove(); resolve(false); };
+            ov.onclick = function(e) { if (e.target === ov) { ov.remove(); resolve(false); } };
+            setTimeout(function() { var inp = document.getElementById('loginUserInput'); if (inp) inp.focus(); }, 100);
+        });
+    }
+    // 需管理员确认的敏感操作（弹密码框 + 记日志）
+    async function requireAdmin(actionName, targetName, callback) {
+        if (!isAdminMode()) { showToast('❌ 请先登录管理员', 'warning'); return; }
+        var pwd = await showPrompt('请输入管理密码以执行「' + actionName + '」', 'password');
+        if (pwd !== ADMIN_ACCOUNT.pass && pwd !== ADMIN_PASSWORD) { showToast('❌ 密码错误，操作已拒绝', 'error'); return; }
+        logAdminAction(actionName, targetName, '');
+        if (callback) callback();
+    }
+    // 密码输入弹窗
+    function showPrompt(msg, type) {
+        return new Promise(function(resolve) {
+            var ov = document.createElement('div');
+            ov.className = 'custom-dialog-overlay'; ov.style.zIndex = '9999';
+            ov.innerHTML = '<div class="custom-dialog-card" style="max-width:380px;">' +
+                '<div class="custom-dialog-icon">🔒</div>' +
+                '<div class="custom-dialog-msg">' + msg.replace(/\n/g, '<br>') + '</div>' +
+                '<input id="promptInput" type="' + (type === 'password' ? 'password' : 'text') + '" style="width:100%;padding:10px 14px;border:1px solid #cbd5e1;border-radius:10px;font-size:0.9rem;margin-bottom:16px;text-align:center;">' +
+                '<div class="custom-dialog-btns"><button class="custom-dialog-btn cancel dialog-cancel-btn">取消</button><button class="custom-dialog-btn primary dialog-ok-btn">确定</button></div></div>';
+            document.body.appendChild(ov);
+            ov.querySelector('.dialog-ok-btn').onclick = function() { var v = document.getElementById('promptInput').value; ov.remove(); resolve(v); };
+            ov.querySelector('.dialog-cancel-btn').onclick = function() { ov.remove(); resolve(null); };
+            ov.onclick = function(e) { if (e.target === ov) { ov.remove(); resolve(null); } };
+            setTimeout(function() { var inp = document.getElementById('promptInput'); if (inp) inp.focus(); }, 100);
+        });
+    }
+    // 更新侧栏登录状态
+    function updateAdminUI() {
+        var btn = document.getElementById('adminLoginBtn');
+        if (btn) {
+            btn.textContent = isAdminMode() ? '🔓 管理员模式' : '🔒 游客模式';
+            btn.style.background = isAdminMode() ? 'rgba(39,174,96,0.25)' : 'rgba(255,255,255,0.12)';
+        }
+        if (isAdminMode()) { document.body.classList.remove('guest-mode'); }
+        else { document.body.classList.add('guest-mode'); }
+        // 游客模式顶部横幅
+        var banner = document.getElementById('guestModeBanner');
+        if (!isAdminMode()) {
+            if (!banner) {
+                banner = document.createElement('div');
+                banner.id = 'guestModeBanner';
+                banner.style.cssText = 'background:#fff3e0;color:#e67e22;text-align:center;padding:6px;font-size:0.78rem;font-weight:600;position:sticky;top:0;z-index:100;border-bottom:1px solid #fed7aa;';
+                banner.innerHTML = '🔒 当前为游客模式，仅可浏览。点击侧栏底部「🔒 游客模式」登录管理员';
+                document.querySelector('.main-content').prepend(banner);
+            }
+        } else {
+            if (banner) banner.remove();
+        }
+    }
     // 数据分析模块共享变量（renderDataAnalysis写入，renderAnalysisResult读取）
     let currentWorkbook = null;
     let currentSheetNames = null;
@@ -1092,7 +1255,9 @@
 
     function renderAdminContent(){ 
         const container = document.getElementById('mainContent'); 
-        // 先显示密码验证界面
+        // 已登录管理员直接进入，不用重复输密码
+        if (isAdminMode()) { renderAdminPanel(container); return; }
+        // 游客需输入管理密码
         container.innerHTML = `
         <div style="max-width:500px;margin:80px auto;text-align:center;">
             <div style="background:white;border-radius:24px;padding:40px;box-shadow:0 4px 20px rgba(0,0,0,0.08);">
@@ -1108,7 +1273,7 @@
         const confirmBtn = document.getElementById('adminPwdConfirmBtn');
         const errorDiv = document.getElementById('adminPwdError');
         function tryEnter() {
-            if(pwdInput.value === ADMIN_PASSWORD) {
+            if(pwdInput.value === ADMIN_PASSWORD || pwdInput.value === ADMIN_ACCOUNT.pass) {
                 renderAdminPanel(container);
             } else {
                 errorDiv.style.display = 'block';
@@ -1164,6 +1329,15 @@
                     <div class="stat-card-value" id="emailCount">--</div>
                     <div class="stat-card-label">邮箱地址管理</div>
                 </div>
+                <!-- 审计日志卡片 -->
+                <div class="stat-card" id="auditCard" style="cursor:pointer;" onclick="toggleAdminDetail('auditDetail')">
+                    <div class="stat-card-header">
+                        <div class="stat-card-icon" style="background:#fef2f2;">📋</div>
+                        <span class="stat-card-trend down" id="auditBadge">--</span>
+                    </div>
+                    <div class="stat-card-value" id="auditCount">--</div>
+                    <div class="stat-card-label">审计日志</div>
+                </div>
             </div>
             <!-- 人员变动详情 -->
             <div id="hrDetail" class="report-box" style="display:none;margin-top:16px;">
@@ -1190,6 +1364,12 @@
                 <div style="max-height:350px;overflow-y:auto;">
                 <table id="adminEmailTable" style="width:100%;border-collapse:collapse;border:1px solid #e2e8f0;"><thead><tr style="background:#f8fafc;"><th style="text-align:center;padding:8px;font-size:0.8rem;color:#5e6f8d;width:80px;border:1px solid #e2e8f0;">姓名</th><th style="text-align:center;padding:8px;font-size:0.8rem;color:#5e6f8d;border:1px solid #e2e8f0;">邮箱</th><th style="text-align:center;width:50px;border:1px solid #e2e8f0;">修改</th><th style="text-align:center;width:50px;border:1px solid #e2e8f0;">删除</th></tr></thead><tbody id="adminEmailBody"><tr><td colspan="4" style="text-align:center;color:#94a3b8;padding:20px;">加载中...</td></tr></tbody></table>
                 </div>
+            </div>
+            <!-- 审计日志详情 -->
+            <div id="auditDetail" class="report-box" style="display:none;margin-top:16px;">
+                <div class="report-title" style="display:flex;justify-content:space-between;align-items:center;">📋 审计日志 <span style="font-size:0.7rem;color:#94a3b8;cursor:pointer;" onclick="toggleAdminDetail('auditDetail')">收起 ▲</span></div>
+                <p style="color:#64748b;font-size:0.85rem;margin:8px 0 12px;">所有管理员敏感操作记录</p>
+                <div id="auditLogList" style="max-height:400px;overflow-y:auto;"><div style="text-align:center;color:#94a3b8;padding:20px;">加载中...</div></div>
             </div>
         </div>`;
 
@@ -1227,6 +1407,7 @@
             el.style.display = el.style.display === 'none' ? 'block' : 'none';
             if (id === 'emailDetail' && el.style.display === 'block') refreshEmailTable();
             if (id === 'hrDetail' && el.style.display === 'block') refreshHRCombinedList();
+            if (id === 'auditDetail' && el.style.display === 'block') refreshAuditLog();
         };
         // 更新卡片数字
         function updateAdminCards() {
@@ -1242,6 +1423,27 @@
                 ec.textContent = n || '0';
                 if (eb) eb.textContent = n > 0 ? n + '人' : '待配置';
             }
+            var ac = document.getElementById('auditCount'), ab = document.getElementById('auditBadge');
+            if (ac) {
+                var n2 = getAuditLog().length;
+                ac.textContent = n2 || '0';
+                if (ab) ab.textContent = n2 + '条';
+            }
+        }
+        function refreshAuditLog() {
+            var el = document.getElementById('auditLogList'); if (!el) return;
+            var log = getAuditLog();
+            if (log.length === 0) { el.innerHTML = '<div style="text-align:center;color:#94a3b8;padding:20px;">暂无审计记录</div>'; return; }
+            el.innerHTML = log.reverse().map(function(l) {
+                var d = new Date(l.time);
+                return '<div style="border-bottom:1px solid #eef2f6;padding:8px 12px;display:flex;gap:12px;align-items:center;font-size:0.78rem;">' +
+                    '<span style="color:#94a3b8;white-space:nowrap;">' + d.toLocaleString('zh-CN') + '</span>' +
+                    '<span style="font-weight:600;color:#1f3a6b;">' + escapeHtml(l.action) + '</span>' +
+                    '<span style="color:#5e6f8d;">' + escapeHtml(l.target) + '</span>' +
+                    (l.details ? '<span style="color:#94a3b8;">' + escapeHtml(l.details) + '</span>' : '') +
+                '</div>';
+            }).join('');
+            updateAdminCards();
         }
         updateAdminCards();
         window.refreshHRCombinedList = refreshHRCombinedList;
@@ -6867,10 +7069,10 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
 
     function _splitCaseImages(c, prefix) {
         var setFn = prefix === 'ci' ? _ciSet : _kiSet;
-        ['issuePhotos', 'dirPhotos'].forEach(function(field) {
+        ['issuePhotos', 'dirPhotos', 'files'].forEach(function(field) {
             if (!c[field] || !Array.isArray(c[field])) return;
             c[field] = c[field].map(function(img) {
-                if (!img || img.indexOf('data:') !== 0) return img;
+                if (!img || typeof img !== 'string' || img.indexOf('data:') !== 0) return img;
                 var id = prefix + '_' + Date.now() + '_' + Math.random().toString(36).substr(2,6);
                 setFn(id, img);
                 return id;
@@ -6882,12 +7084,15 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
     function _joinCaseImages(c, prefix) {
         var getFn = prefix === 'ci' ? _ciGet : _kiGet;
         var clone = JSON.parse(JSON.stringify(c));
-        ['issuePhotos', 'dirPhotos'].forEach(function(field) {
+        ['issuePhotos', 'dirPhotos', 'files'].forEach(function(field) {
             if (!clone[field] || !Array.isArray(clone[field])) return;
             clone[field] = clone[field].map(function(img) {
-                if (!img || img.indexOf('data:') === 0) return img;
+                if (!img || typeof img !== 'string' || img.indexOf('data:') === 0) return img;
                 var data = getFn(img);
-                return data || null;
+                if (!data) { console.warn('[图片还原失败] 字段=' + field + ' ID=' + img + ' 图片数据丢失，已跳过'); return null; }
+                // 验证还原的数据是否为有效的 base64
+                if (data.indexOf('data:') !== 0) { console.warn('[图片数据异常] 字段=' + field + ' ID=' + img + ' 数据格式异常，已跳过'); return null; }
+                return data;
             }).filter(Boolean);
         });
         return clone;
@@ -6900,8 +7105,8 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
         var cases = getFn();
         var used = {};
         cases.forEach(function(c) {
-            ['issuePhotos', 'dirPhotos'].forEach(function(f) {
-                if (c[f]) c[f].forEach(function(id) { if (id && id.indexOf('data:') !== 0) used[id] = true; });
+            ['issuePhotos', 'dirPhotos', 'files'].forEach(function(f) {
+                if (c[f]) c[f].forEach(function(id) { if (typeof id === 'string' && id.indexOf('data:') !== 0) used[id] = true; });
             });
         });
         var all = listFn();
@@ -6913,8 +7118,9 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
         try { raw = JSON.parse(localStorage.getItem('manualCases') || '[]'); } catch(e) { return []; }
         var needSave = false;
         raw = raw.map(function(c) {
-            var hasBase64 = (c.issuePhotos || []).some(function(p) { return p && p.indexOf('data:') === 0; }) ||
-                            (c.dirPhotos || []).some(function(p) { return p && p.indexOf('data:') === 0; });
+            var hasBase64 = (c.issuePhotos || []).some(function(p) { return typeof p === 'string' && p.indexOf('data:') === 0; }) ||
+                            (c.dirPhotos || []).some(function(p) { return typeof p === 'string' && p.indexOf('data:') === 0; }) ||
+                            (c.files || []).some(function(p) { return typeof p === 'string' && p.indexOf('data:') === 0; });
             if (hasBase64) { needSave = true; return _splitCaseImages(c, 'ci'); }
             return c;
         });
@@ -6926,8 +7132,9 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
         try { raw = JSON.parse(localStorage.getItem('knowledgeCases') || '[]'); } catch(e) { return []; }
         var needSave = false;
         raw = raw.map(function(c) {
-            var hasBase64 = (c.issuePhotos || []).some(function(p) { return p && p.indexOf('data:') === 0; }) ||
-                            (c.dirPhotos || []).some(function(p) { return p && p.indexOf('data:') === 0; });
+            var hasBase64 = (c.issuePhotos || []).some(function(p) { return typeof p === 'string' && p.indexOf('data:') === 0; }) ||
+                            (c.dirPhotos || []).some(function(p) { return typeof p === 'string' && p.indexOf('data:') === 0; }) ||
+                            (c.files || []).some(function(p) { return typeof p === 'string' && p.indexOf('data:') === 0; });
             if (hasBase64) { needSave = true; return _splitCaseImages(c, 'ki'); }
             return c;
         });
@@ -6960,6 +7167,78 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
     function getKnowledgeCasesFull() {
         return getKnowledgeCases().map(function(c) { return _joinCaseImages(c, 'ki'); });
     }
+    // 图片存储诊断工具（在浏览器控制台执行 _diagnoseImages() 查看结果）
+    window._diagnoseImages = function() {
+        function sizeOf(str) { return str ? (new Blob([str]).size / 1024).toFixed(1) + 'KB' : '0KB'; }
+        function countKeys(prefix) { var c = 0; for (var i = 0; i < localStorage.length; i++) { if (localStorage.key(i).indexOf(prefix) === 0) c++; } return c; }
+        function listKeys(prefix) { var ks = []; for (var i = 0; i < localStorage.length; i++) { var k = localStorage.key(i); if (k.indexOf(prefix) === 0) ks.push(k); } return ks; }
+        function checkCases(type) {
+            var getFn = type === 'manual' ? getManualCases : getKnowledgeCases;
+            var prefix = type === 'manual' ? 'ci' : 'ki';
+            var cases = getFn();
+            var totalRefs = 0, missingRefs = 0, orphanKeys = 0, totalSize = 0;
+            var usedIds = {};
+            cases.forEach(function(c) {
+                ['issuePhotos', 'dirPhotos', 'files'].forEach(function(f) {
+                    if (c[f]) c[f].forEach(function(id) { if (typeof id === 'string' && id.indexOf('data:') !== 0) { usedIds[id] = true; totalRefs++; } });
+                });
+            });
+            var storedKeys = listKeys(prefix + '_');
+            storedKeys.forEach(function(k) {
+                var id = k.substring(type === 'manual' ? 3 : 3); // key starts with ci_ or ki_
+                var raw = localStorage.getItem(k);
+                totalSize += raw ? raw.length : 0;
+                if (!usedIds[id]) {
+                    // Actually, ki keys have prefix ki_ but the key starts with ki_
+                    // The id in the case is like ki_123_abc, the localStorage key is ki_ki_123_abc
+                }
+            });
+            // Correct approach: check reference IDs against localStorage
+            Object.keys(usedIds).forEach(function(id) {
+                var lookupKey = prefix + '_' + id;
+                if (!localStorage.getItem(lookupKey)) { missingRefs++; }
+            });
+            // Check orphan keys
+            var allStoredIds = listKeys(prefix + '_').map(function(k) { return k; });
+            allStoredIds.forEach(function(fullKey) {
+                var storedId = fullKey.substring((prefix + '_').length);
+                if (!usedIds[storedId]) orphanKeys++;
+            });
+            totalSize = (totalSize / 1024).toFixed(1);
+            return { cases: cases.length, totalRefs: totalRefs, missingRefs: missingRefs, orphanKeys: orphanKeys, storedKeys: allStoredIds.length, totalSizeKB: totalSize };
+        }
+        var mc = checkCases('manual');
+        var kc = checkCases('knowledge');
+        console.log('=== 图片存储诊断 ===');
+        console.log('📋 手动案例：' + mc.cases + '条, 图片引用：' + mc.totalRefs + '个, 丢失：' + mc.missingRefs + '个, 孤立key：' + mc.orphanKeys + '个, 存储key：' + mc.storedKeys + '个, 总大小：' + mc.totalSizeKB + 'KB');
+        console.log('📚 知识案例：' + kc.cases + '条, 图片引用：' + kc.totalRefs + '个, 丢失：' + kc.missingRefs + '个, 孤立key：' + kc.orphanKeys + '个, 存储key：' + kc.storedKeys + '个, 总大小：' + kc.totalSizeKB + 'KB');
+        console.log('💾 localStorage总用量：' + (JSON.stringify(localStorage).length / 1024).toFixed(1) + 'KB（估算）');
+        if (mc.missingRefs > 0) console.warn('⚠️ 手动案例有 ' + mc.missingRefs + ' 个图片引用但数据丢失！这些案例的图片将无法显示');
+        if (kc.missingRefs > 0) console.warn('⚠️ 知识案例有 ' + kc.missingRefs + ' 个图片引用但数据丢失！这些案例的图片将无法显示');
+        // 检查实际图片数据格式
+        var manualCases = getManualCases();
+        var dataIssues = { tokens: 0, base64Inline: 0, empty: 0, invalid: 0, samples: [] };
+        manualCases.forEach(function(c) {
+            ['issuePhotos', 'dirPhotos', 'files'].forEach(function(f) {
+                if (!c[f]) return;
+                c[f].forEach(function(img) {
+                    if (!img) { dataIssues.empty++; return; }
+                    if (typeof img === 'object' && img.t) { dataIssues.tokens++; dataIssues.samples.push({qc: c.qcCode, field: f, type: '飞书token', preview: img.t}); return; }
+                    if (typeof img === 'string') {
+                        if (img.indexOf('data:') === 0) { dataIssues.base64Inline++; if (dataIssues.samples.length < 5) dataIssues.samples.push({qc: c.qcCode, field: f, type: 'base64内嵌', preview: img.substring(0, 60) + '...(' + (img.length/1024).toFixed(1) + 'KB)'}); }
+                        else if (img.indexOf('ci_') === 0 || img.indexOf('ki_') === 0) { dataIssues.invalid++; dataIssues.samples.push({qc: c.qcCode, field: f, type: '未还原引用ID', preview: img}); }
+                        else { dataIssues.invalid++; dataIssues.samples.push({qc: c.qcCode, field: f, type: '未知格式', preview: img.substring(0, 60)}); }
+                    }
+                });
+            });
+        });
+        console.log('🔍 图片数据格式分析：飞书token=' + dataIssues.tokens + '个, base64内嵌=' + dataIssues.base64Inline + '个, 无效=' + dataIssues.invalid + '个, 空=' + dataIssues.empty + '个');
+        if (dataIssues.samples.length > 0) { console.log('📋 样本数据：'); dataIssues.samples.forEach(function(s) { console.log('  [' + s.type + '] 质检码=' + s.qc + ' 字段=' + s.field + ' 内容=' + s.preview); }); }
+        if (dataIssues.tokens > 0) console.warn('⚠️ 有 ' + dataIssues.tokens + ' 个飞书token图片，需要网络请求才能加载。如token过期或网络不通则会显示加载失败');
+        if (dataIssues.invalid > 0) console.warn('⚠️ 有 ' + dataIssues.invalid + ' 个无效格式图片数据，这些就是破图的来源！');
+        console.log('✅ 诊断完成。如有丢失的图片，打开对应案例重新上传图片即可恢复');
+        return { manual: mc, knowledge: kc, dataIssues: dataIssues };
+    };
     function getCurrentWeekKey() {
         const now = new Date();
         const day = now.getDay();
@@ -6986,14 +7265,145 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
         return key;
     }
     // 通过代理将图片URL转为base64
+    // 图片压缩：缩放到最大800px，JPEG质量0.6，大幅减少存储
+    function compressImageBase64(dataUrl) {
+        return new Promise(function(resolve) {
+            if (!dataUrl || dataUrl.indexOf('data:') !== 0) { resolve(dataUrl); return; }
+            var img = new Image();
+            img.onload = function() {
+                var maxW = 400, maxH = 400;
+                var w = img.width, h = img.height;
+                var ratio = Math.min(maxW / w, maxH / h, 1);
+                var canvas = document.createElement('canvas');
+                canvas.width = w * ratio; canvas.height = h * ratio;
+                var ctx = canvas.getContext('2d');
+                ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+                resolve(canvas.toDataURL('image/jpeg', 0.4));
+            };
+            img.onerror = function() { resolve(dataUrl); };
+            img.src = dataUrl;
+        });
+    }
+    function _bufToBase64(buf) {
+        var bytes = new Uint8Array(buf), s = '';
+        for (var i = 0; i < bytes.length; i++) s += String.fromCharCode(bytes[i]);
+        return btoa(s);
+    }
+    async function fetchFeishuImage(fileToken) {
+        if (!fileToken) return null;
+        try {
+            var token = getErrorDashboardToken();
+            if (!token) token = await feishuRefreshToken();
+            if (!token) token = await getCloudToken();
+            if (!token) token = await getFeishuToken();
+            var headers = {
+                'Authorization': 'Bearer ' + FEISHU_SUPABASE_KEY,
+                'x-target-url': 'https://open.feishu.cn/open-apis/drive/v1/medias/' + fileToken + '/download',
+                'x-target-method': 'GET'
+            };
+            if (token) headers['x-target-auth'] = 'Bearer ' + token;
+            var resp = await fetch(FEISHU_PROXY_URL, { method: 'POST', headers: headers });
+            if (!resp.ok) throw new Error('状态:' + resp.status);
+            var buf = await resp.arrayBuffer();
+            if (!buf || buf.byteLength === 0) return null;
+            var bytes = new Uint8Array(buf);
+            if (bytes[0] === 123) {
+                try {
+                    var j = JSON.parse(new TextDecoder().decode(bytes));
+                    // 有 _raw 或 base64 才处理，否则 token 可能已过期（飞书返回错误JSON）
+                    if (!j._raw && !j.base64) return null;
+                    var binData = null;
+                    if (j._raw) {
+                        try { binData = Uint8Array.from(atob(j._raw), function(c){ return c.charCodeAt(0); }); } catch(e) {}
+                        if (!binData) {
+                            binData = new Uint8Array(j._raw.length);
+                            for (var bi = 0; bi < j._raw.length; bi++) binData[bi] = j._raw.charCodeAt(bi) & 0xff;
+                        }
+                    } else if (j.base64) {
+                        binData = Uint8Array.from(atob(j.base64), function(c){ return c.charCodeAt(0); });
+                    }
+                    if (binData && binData.length > 100) return URL.createObjectURL(new Blob([binData], { type: 'image/png' }));
+                } catch(e) {}
+                return null;
+            }
+            return URL.createObjectURL(new Blob([buf], { type: 'image/png' }));
+        } catch(e) { console.log('图片下载失败:', fileToken, e.message); }
+        return null;
+    }
+    // 飞书图片缓存（仅会话期间，不存 localStorage）
+    var _photoCache = {};
+    // 自动加载飞书图片的队列
+    var _pendingPhotoTokens = [];
+    var _autoLoadTimer = null;
+    function _autoLoadPhotos() {
+        var tokens = _pendingPhotoTokens.splice(0);
+        if (tokens.length === 0) return;
+        tokens.forEach(function(token) {
+            var els = document.querySelectorAll('[data-ftoken="' + token + '"]');
+            els.forEach(function(el) {
+                if (!el.dataset.loading) { el.dataset.loading = '1'; loadPhotoToken(el, token); }
+            });
+        });
+    }
+    function _scheduleAutoLoad(token) {
+        if (_pendingPhotoTokens.indexOf(token) < 0) _pendingPhotoTokens.push(token);
+        if (_autoLoadTimer) clearTimeout(_autoLoadTimer);
+        _autoLoadTimer = setTimeout(_autoLoadPhotos, 150);
+    }
+    // 渲染照片标签：支持 base64/URL 字符串 和 飞书 fileToken 对象 {t: token}
+    function photoTag(p, maxW, maxH) {
+        maxW = maxW || 150; maxH = maxH || 150;
+        if (typeof p === 'object' && p.t) {
+            var token = p.t;
+            if (_photoCache[token]) {
+                return '<img src="' + _photoCache[token] + '" style="max-width:' + maxW + 'px;max-height:' + maxH + 'px;border-radius:8px;border:1px solid #e2e8f0;object-fit:cover;cursor:pointer;margin:2px;" onclick="event.stopPropagation();showImageViewer(this.src)">';
+            }
+            // 未缓存的飞书token：显示占位符并自动后台加载
+            _scheduleAutoLoad(token);
+            return '<div class="photo-loadable" data-ftoken="' + token + '" style="width:' + Math.min(maxW, 100) + 'px;height:' + Math.min(maxH, 80) + 'px;background:#f1f5f9;border-radius:8px;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;border:1px dashed #cbd5e1;margin:2px;flex-shrink:0;" onclick="event.stopPropagation();loadPhotoToken(this,\'' + token + '\')"><span style="font-size:1.2rem;">📷</span></div>';
+        }
+        // 防止引用ID未被还原直接渲染（如 ci_xxx / ki_xxx），显示占位符而非破图
+        if (typeof p === 'string' && (p.indexOf('ci_') === 0 || p.indexOf('ki_') === 0)) {
+            return '<div style="width:' + Math.min(maxW, 100) + 'px;height:' + Math.min(maxH, 80) + 'px;background:#fff5f5;border-radius:8px;display:inline-flex;align-items:center;justify-content:center;border:1px dashed #e53e3e;margin:2px;flex-shrink:0;font-size:0.65rem;color:#c0392b;text-align:center;padding:4px;" title="图片数据丢失，请重新上传">📷<br>已丢失</div>';
+        }
+        return '<img src="' + p + '" style="max-width:' + maxW + 'px;max-height:' + maxH + 'px;border-radius:8px;border:1px solid #e2e8f0;object-fit:cover;cursor:pointer;margin:2px;" onclick="event.stopPropagation();showImageViewer(this.src)">';
+    }
+    async function loadPhotoToken(el, token) {
+        el.innerHTML = '<span style="font-size:0.8rem;">⏳</span>'; el.style.cursor = 'wait'; el.onclick = null; el.dataset.loading = '1';
+        try {
+            var img = await fetchFeishuImage(token);
+            if (img && (img.indexOf('data:image') === 0 || img.indexOf('blob:') === 0)) {
+                _photoCache[token] = img;
+                el.outerHTML = '<img src="' + img + '" style="max-width:150px;max-height:150px;border-radius:8px;border:1px solid #e2e8f0;object-fit:cover;cursor:pointer;margin:2px;" onclick="event.stopPropagation();showImageViewer(this.src)">';
+            } else {
+                el.innerHTML = '<span style="color:#c0392b;font-size:0.65rem;text-align:center;">⚠️ 加载失败<br>点击重试</span>';
+                el.style.cursor = 'pointer';
+                el.dataset.loading = '';
+                el.onclick = function(e) { e.stopPropagation(); loadPhotoToken(el, token); };
+            }
+        } catch(e) {
+            el.innerHTML = '<span style="color:#c0392b;font-size:0.65rem;text-align:center;">⚠️ 加载失败<br>点击重试</span>';
+            el.style.cursor = 'pointer';
+            el.dataset.loading = '';
+            el.onclick = function(ev) { ev.stopPropagation(); loadPhotoToken(el, token); };
+        }
+    }
     async function fetchImageAsBase64(url) {
         if (!url) return url;
         if (url.indexOf('data:') === 0) return url;
         try {
-            var token = getErrorDashboardToken() || await getFeishuToken();
+            var token = getErrorDashboardToken();
+            if (!token) token = await feishuRefreshToken();
+            if (!token) token = await getCloudToken();
+            if (!token) token = await getFeishuToken();
+            // 飞书内部图片：通过下载API获取
+            var targetUrl = url;
+            if (url.indexOf('open.feishu.cn') >= 0 && url.indexOf('/download') < 0) {
+                targetUrl = url + '?image_type=message'; // 飞书图片下载参数
+            }
             var headers = {
                 'Authorization': 'Bearer ' + FEISHU_SUPABASE_KEY,
-                'x-target-url': url,
+                'x-target-url': targetUrl,
                 'x-target-method': 'GET'
             };
             if (token) headers['x-target-auth'] = 'Bearer ' + token;
@@ -7117,8 +7527,32 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
                         var dirText = (row[4] || '').toString().trim();
                         var issuePhotos = [];
                         var dirPhotos = [];
-                        if (row[3] && row[3].link) issuePhotos.push(await fetchImageAsBase64(row[3].link));
-                        if (row[5] && row[5].link) dirPhotos.push(await fetchImageAsBase64(row[5].link));
+                        // 支持多种附件格式
+                        function extractLinks(cell) {
+                            if (!cell) return [];
+                            if (Array.isArray(cell)) return cell.map(function(a){ return a.link || a.fileUrl || a.url || ''; }).filter(Boolean);
+                            if (cell.link) return [cell.link];
+                            if (cell.fileUrl) return [cell.fileUrl];
+                            if (cell.url) return [cell.url];
+                            if (typeof cell === 'string' && cell.indexOf('http') === 0) return [cell];
+                            return [];
+                        }
+                        // 用 fileToken 下载飞书图片
+                        function getFileTokens(cell) {
+                            if (!cell) return [];
+                            if (Array.isArray(cell)) return cell.map(function(a){ return a.fileToken || ''; }).filter(Boolean);
+                            if (cell.fileToken) return [cell.fileToken];
+                            return [];
+                        }
+                        // 只存 fileToken，点击时才下载图片
+                        var issueTokens = getFileTokens(row[3]);
+                        var dirTokens = getFileTokens(row[5]);
+                        for (var il = 0; il < issueTokens.length; il++) {
+                            issuePhotos.push({t: issueTokens[il]});
+                        }
+                        for (var dl = 0; dl < dirTokens.length; dl++) {
+                            dirPhotos.push({t: dirTokens[dl]});
+                        }
                         cases.unshift({ qcCode: qcCode, errorCategory: errorCategory, issueDesc: issueDesc, issuePhotos: issuePhotos, correctDir: dirText, dirPhotos: dirPhotos, createTime: Date.now() });
                         added++;
                     }
@@ -7265,9 +7699,9 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
                     </div>
                     ${c.errorCategory ? `<span style="display:inline-block;background:#fff3e0;color:#e67e22;padding:2px 10px;border-radius:10px;font-size:0.7rem;font-weight:500;margin-bottom:6px;">🏷️ ${escapeHtml(c.errorCategory)}</span>` : ''}
                     <div style="font-size:0.85rem;color:#4a5568;margin-bottom:8px;">📝 ${escapeHtml(c.issueDesc || '无描述')}</div>
-                    ${c.issuePhotos && c.issuePhotos.length > 0 ? `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px;">${c.issuePhotos.map(p => `<img src="${p}" class="photo-preview-thumb" style="max-width:150px;max-height:150px;border-radius:8px;border:1px solid #e2e8f0;object-fit:cover;cursor:pointer;" onclick="showImageViewer('${p}')">`).join('')}</div>` : ''}
+                    ${c.issuePhotos && c.issuePhotos.length > 0 ? '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px;">' + c.issuePhotos.map(function(p) { return photoTag(p, 150, 150); }).join('') + '</div>' : ''}
                     <div style="background:#eef2ff;padding:8px 12px;border-radius:10px;font-size:0.85rem;color:#2a5298;">✅ 正确方向：${escapeHtml(c.correctDir || '无')}</div>
-                    ${c.dirPhotos && c.dirPhotos.length > 0 ? `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;">${c.dirPhotos.map(p => `<img src="${p}" class="photo-preview-thumb" style="max-width:150px;max-height:150px;border-radius:8px;border:1px solid #e2e8f0;object-fit:cover;cursor:pointer;" onclick="showImageViewer('${p}')">`).join('')}</div>` : ''}
+                    ${c.dirPhotos && c.dirPhotos.length > 0 ? '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;">' + c.dirPhotos.map(function(p) { return photoTag(p, 150, 150); }).join('') + '</div>' : ''}
                     <div style="font-size:0.7rem;color:#94a3b8;margin-top:6px;">${new Date(c.createTime).toLocaleString('zh-CN')}</div>
                 </div>
             `).join('');
@@ -7285,20 +7719,14 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
                 <select id="manualErrorCategory" style="width:100%;padding:8px 12px;border:1px solid #d1d5db;border-radius:10px;margin-top:4px;font-size:0.9rem;background:white;">
                     <option value="">请选择失误类别</option>
                     <option value="判错责任方">判错责任方</option>
-                    <option value="扣错项">扣错项</option>
+                    <option value="拍照/取证不规范">拍照/取证不规范</option>
                     <option value="未达标准">未达标准</option>
-                    <option value="拍照取证不规范">拍照取证不规范</option>
+                    <option value="责任分类错">责任分类错</option>
                     <option value="备注失误">备注失误</option>
-                    <option value="跨等级灰度">跨等级灰度</option>
-                    <option value="组合项未同步判责">组合项未同步判责</option>
-                    <option value="SKU">SKU</option>
-                    <option value="功能问题">功能问题</option>
-                    <option value="键盘轻微油光">键盘轻微油光</option>
-                    <option value="系统信息">系统信息</option>
-                    <option value="标准差异">标准差异</option>
-                    <option value="拆修浸液">拆修浸液</option>
-                    <option value="明显失误">明显失误</option>
-                    <option value="其他">其他</option>
+                    <option value="扣错项/明显失误">扣错项/明显失误</option>
+                    <option value="复核责">复核责</option>
+                    <option value="组合差价未勾选">组合差价未勾选</option>
+                    <option value="低级/投诉失误">低级/投诉失误</option>
                 </select>
             </div>
             <div style="margin-bottom:12px;">
@@ -7450,7 +7878,7 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
                 if (c.type === 'text') {
                     preview = `<div style="background:#f8fafc;border-radius:8px;padding:10px;max-height:100px;overflow-y:auto;font-size:0.85rem;white-space:pre-wrap;">${escapeHtml(c.content || '')}</div>`;
                 } else if (c.type === 'screenshot' && c.files && c.files.length > 0) {
-                    preview = `<div style="display:flex;gap:6px;flex-wrap:wrap;">${c.files.map(img => `<img src="${img}" style="max-width:100px;max-height:80px;border-radius:8px;border:1px solid #e2e8f0;object-fit:cover;cursor:pointer;" onclick="window.open('${img}','_blank')">`).join('')}</div>`;
+                    preview = `<div style="display:flex;gap:6px;flex-wrap:wrap;">${c.files.map(img => photoTag(img, 100, 80)).join('')}</div>`;
                 } else if (c.type === 'file' && c.files && c.files.length > 0) {
                     preview = `<div style="font-size:0.85rem;color:#4a5568;">📎 ${escapeHtml(c.fileName || '未知文件')}</div>`;
                 }
@@ -7646,224 +8074,180 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
         <div style="max-width:1000px;margin:0 auto;">
             <div class="report-box" style="margin-bottom:20px;">
                 <div class="report-title">📚 案例库</div>
-                <div style="display:flex;gap:12px;flex-wrap:wrap;justify-content:center;margin-top:12px;">
-                    <button class="analysis-type-btn ${currentCaseLibSubNav==='completed'?'active':''}" data-subnav="completed">📋 收集完成的案例库</button>
-                    <button class="analysis-type-btn ${currentCaseLibSubNav==='biweeklyLib'?'active':''}" data-subnav="biweeklyLib">📁 双周培训案例库</button>
+                <div style="display:flex;gap:12px;flex-wrap:wrap;justify-content:center;align-items:center;margin-top:12px;">
+                    <input id="caseLibSearch" type="text" placeholder="🔍 搜索质检码/问题描述/类别..." style="padding:6px 14px;border:1px solid #cbd5e1;border-radius:20px;font-size:0.8rem;width:240px;margin-right:12px;" oninput="filterCaseLibCards(this.value)">
                 </div>
             </div>
-            <div id="caseLibSubContent"></div>
+            <div id="caseLibCatContent"></div>
+            <div id="caseLibBiweeklyContent" style="margin-top:24px;"></div>
         </div>`;
-        container.querySelectorAll('.analysis-type-btn[data-subnav]').forEach(btn => {
-            btn.addEventListener('click', () => {
-                currentCaseLibSubNav = btn.dataset.subnav;
-                container.querySelectorAll('.analysis-type-btn[data-subnav]').forEach(b => b.classList.remove('active'));
-                btn.classList.add('active');
-                if (currentCaseLibSubNav === 'completed') renderCompletedCasesTab();
-                else if (currentCaseLibSubNav === 'biweeklyLib') renderBiweeklyLibTab();
-            });
-        });
-        if (currentCaseLibSubNav === 'completed') renderCompletedCasesTab();
-        else if (currentCaseLibSubNav === 'biweeklyLib') renderBiweeklyLibTab();
+        // 合并视图：案例分类 + 双周培训 统一显示
+        renderCompletedCasesTab();
+        renderBiweeklyLibTab();
     }
 
+    function filterCaseLibCards(kw) {
+        kw = (kw || '').trim().toLowerCase();
+        // 收集完成视图：表格行
+        document.querySelectorAll('#caseLibCatContent tr').forEach(function(row) {
+            var text = (row.textContent || '').toLowerCase();
+            row.style.display = (!kw || text.indexOf(kw) >= 0) ? '' : 'none';
+        });
+        // 双周视图：周期卡片
+        document.querySelectorAll('#caseLibBiweeklyContent .biweekly-period-body').forEach(function(body) {
+            var text = (body.textContent || '').toLowerCase();
+            var card = body.closest('div[style]');
+            if (kw && text.indexOf(kw) < 0) {
+                if (card) card.style.display = 'none';
+            } else {
+                if (card) card.style.display = '';
+            }
+        });
+    }
     function renderCompletedCasesTab() {
-        const content = document.getElementById('caseLibSubContent');
-        const cases = getManualCasesFull();
-
-        if (cases.length === 0) {
-            content.innerHTML = '<div class="report-box"><div class="empty-placeholder" style="padding:40px;">暂无已收集的案例，请先在"培训案例收集 - 手动录入"中添加</div></div>';
-            return;
-        }
-
-        let tableRows = cases.map((c, idx) => `
-            <tr>
-                <td style="font-weight:600;">${escapeHtml(c.qcCode)}</td>
-                <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(c.issueDesc || '')}</td>
-                <td>${c.issuePhotos && c.issuePhotos.length > 0 ? c.issuePhotos.map(p => `<img src="${p}" style="max-width:50px;max-height:40px;border-radius:6px;margin:2px;cursor:pointer;" onclick="showImageViewer('${p}')">`).join('') : '-'}</td>
-                <td style="max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(c.correctDir || '')}</td>
-                <td>${new Date(c.createTime).toLocaleDateString('zh-CN')}</td>
-                <td>
-                    <button class="viewCaseBtn" data-idx="${idx}" style="background:#eef2ff;border:none;padding:4px 10px;border-radius:16px;cursor:pointer;font-size:0.7rem;color:#2a5298;margin-right:4px;">👁️</button>
-                    <button class="editCaseBtn" data-idx="${idx}" style="background:#fff8e1;border:none;padding:4px 10px;border-radius:16px;cursor:pointer;font-size:0.7rem;color:#e67e22;margin-right:4px;">✏️</button>
-                    <button class="deleteCaseBtn" data-idx="${idx}" style="background:#fef2f2;border:none;padding:4px 10px;border-radius:16px;cursor:pointer;font-size:0.7rem;color:#c0392b;">🗑️</button>
-                </td>
-            </tr>
-        `).join('');
-
-        content.innerHTML = `
-        <div class="report-box">
-            <div style="margin-bottom:12px;font-weight:600;color:#1f3a6b;">共 ${cases.length} 条案例</div>
-            <div style="overflow-x:auto;">
-                <table class="admin-table" style="width:100%;">
-                    <thead>
-                        <tr>
-                            <th>质检码</th>
-                            <th>问题描述</th>
-                            <th>问题照片</th>
-                            <th>正确方向</th>
-                            <th>录入时间</th>
-                            <th>操作</th>
-                        </tr>
-                    </thead>
-                    <tbody>${tableRows}</tbody>
-                </table>
-            </div>
-        </div>
-        <!-- 详情弹窗 -->
-        <div class="modal-overlay" id="caseDetailModal" style="display:none;">
-            <div class="modal-container" style="max-width:700px;">
-                <div class="modal-header"><span>📋 案例详情</span><button class="modal-close-btn">✕</button></div>
-                <div class="modal-body" id="caseDetailBody"></div>
-            </div>
-        </div>
-        <!-- 编辑弹窗 -->
-        <div class="modal-overlay" id="caseEditModal" style="display:none;">
-            <div class="modal-container" style="max-width:700px;">
-                <div class="modal-header"><span>✏️ 编辑案例</span><button class="modal-close-btn">✕</button></div>
-                <div class="modal-body" id="caseEditBody"></div>
-            </div>
-        </div>`;
-
-        // 弹窗关闭
-        ['caseDetailModal','caseEditModal'].forEach(id => {
-            const m = document.getElementById(id);
-            if (!m) return;
-            m.querySelector('.modal-close-btn').onclick = () => m.style.display = 'none';
-            m.addEventListener('click', e => { if (e.target === m) m.style.display = 'none'; });
-        });
-
-        // 查看详情
-                // 查看详情（使用完整图片数据）
-        content.querySelectorAll('.viewCaseBtn').forEach(btn => {
-            btn.addEventListener('click', () => {
-                const idx = parseInt(btn.dataset.idx);
-                const c = getManualCasesFull()[idx];
-                if (!c) return;
-                document.getElementById('caseDetailBody').innerHTML = `
-                    <div style="margin-bottom:12px;"><strong>质检码：</strong>${escapeHtml(c.qcCode)}</div>
-                    <div style="margin-bottom:12px;"><strong>失误类别：</strong>${escapeHtml(c.errorCategory || '-')}</div>
-                    <div style="margin-bottom:12px;"><strong>问题描述：</strong>${escapeHtml(c.issueDesc)}</div>
-                    ${c.issuePhotos && c.issuePhotos.length > 0 ? `<div style="margin-bottom:12px;"><strong>问题照片：</strong><div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:6px;">${c.issuePhotos.map(p => `<img src="${p}" style="max-width:150px;border-radius:8px;cursor:pointer;" onclick="showImageViewer('${p}')">`).join('')}</div></div>` : ''}
-                    <div style="margin-bottom:12px;"><strong>正确方向：</strong>${escapeHtml(c.correctDir)}</div>
-                    ${c.dirPhotos && c.dirPhotos.length > 0 ? `<div style="margin-bottom:12px;"><strong>方向照片：</strong><div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:6px;">${c.dirPhotos.map(p => `<img src="${p}" style="max-width:150px;border-radius:8px;cursor:pointer;" onclick="showImageViewer('${p}')">`).join('')}</div></div>` : ''}
-                    <div style="color:#94a3b8;font-size:0.8rem;">录入时间：${new Date(c.createTime).toLocaleString('zh-CN')}</div>`;
-                document.getElementById('caseDetailModal').style.display = 'flex';
-            });
-        });
-        
-        // 编辑（完整字段：质检码+失误类别+问题描述+问题照片可删旧上新+正确方向+方向照片）
-        content.querySelectorAll('.editCaseBtn').forEach(btn => {
-            btn.addEventListener('click', () => {
-                const idx = parseInt(btn.dataset.idx);
-                const c = getManualCasesFull()[idx];
-                if (!c) return;
-                var removeIssueIdx = []; var removeDirIdx = [];
-                var newIssueFiles = []; var newDirFiles = [];
-                var issuePhotosHtml = (c.issuePhotos && c.issuePhotos.length > 0)
-                    ? '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:6px;">' + c.issuePhotos.map(function(p, pi) {
-                        return '<div style="position:relative;display:inline-block;"><img src="' + p + '" style="max-width:120px;border-radius:8px;"><button data-rm-issue="' + pi + '" style="position:absolute;top:-6px;right:-6px;background:#c0392b;color:white;border:none;width:20px;height:20px;border-radius:50%;cursor:pointer;font-size:12px;">✕</button></div>';
-                    }).join('') + '</div>'
-                    : '<div style="color:#94a3b8;font-size:0.75rem;">暂无问题照片</div>';
-                var dirPhotosHtml = (c.dirPhotos && c.dirPhotos.length > 0)
-                    ? '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:6px;">' + c.dirPhotos.map(function(p, pi) {
-                        return '<div style="position:relative;display:inline-block;"><img src="' + p + '" style="max-width:120px;border-radius:8px;"><button data-rm-dir="' + pi + '" style="position:absolute;top:-6px;right:-6px;background:#c0392b;color:white;border:none;width:20px;height:20px;border-radius:50%;cursor:pointer;font-size:12px;">✕</button></div>';
-                    }).join('') + '</div>'
-                    : '<div style="color:#94a3b8;font-size:0.75rem;">暂无方向照片</div>';
-                document.getElementById('caseEditBody').innerHTML = `
-                    <input type="hidden" id="editCaseIdx" value="${idx}">
-                    <div style="margin-bottom:12px;"><label style="font-weight:600;">质检码</label><input id="editQcCode" type="text" value="${escapeHtml(c.qcCode)}" style="width:100%;padding:8px 12px;border:1px solid #d1d5db;border-radius:10px;margin-top:4px;"></div>
-                    <div style="margin-bottom:12px;"><label style="font-weight:600;">失误类别</label><input id="editErrorCat" type="text" value="${escapeHtml(c.errorCategory || '')}" style="width:100%;padding:8px 12px;border:1px solid #d1d5db;border-radius:10px;margin-top:4px;"></div>
-                    <div style="margin-bottom:12px;"><label style="font-weight:600;">问题描述</label><textarea id="editIssueDesc" rows="3" style="width:100%;padding:8px 12px;border:1px solid #d1d5db;border-radius:10px;margin-top:4px;resize:vertical;">${escapeHtml(c.issueDesc)}</textarea></div>
-                    <div style="margin-bottom:12px;"><label style="font-weight:600;">问题照片</label><div id="editIssuePhotosArea">${issuePhotosHtml}</div><div class="file-upload-row" style="margin-top:6px;"><input type="file" id="editNewIssuePhotos" accept="image/*" multiple style="font-size:0.75rem;"><button class="upload-small" id="editUploadIssueBtn">📤 上传新照片</button></div></div>
-                    <div style="margin-bottom:12px;"><label style="font-weight:600;">正确方向</label><textarea id="editCorrectDir" rows="3" style="width:100%;padding:8px 12px;border:1px solid #d1d5db;border-radius:10px;margin-top:4px;resize:vertical;">${escapeHtml(c.correctDir)}</textarea></div>
-                    <div style="margin-bottom:12px;"><label style="font-weight:600;">方向照片</label><div id="editDirPhotosArea">${dirPhotosHtml}</div><div class="file-upload-row" style="margin-top:6px;"><input type="file" id="editNewDirPhotos" accept="image/*" multiple style="font-size:0.75rem;"><button class="upload-small" id="editUploadDirBtn">📤 上传新照片</button></div></div>
-                    <div style="text-align:right;"><button id="saveEditCaseBtn" class="primary" style="padding:10px 30px;border-radius:30px;">💾 保存修改</button></div>`;
-                document.getElementById('caseEditModal').style.display = 'flex';
-        
-                document.querySelectorAll('#caseEditBody [data-rm-issue]').forEach(function(el) {
-                    el.addEventListener('click', function() {
-                        var pi = parseInt(this.dataset.rmIssue);
-                        if (removeIssueIdx.indexOf(pi) < 0) removeIssueIdx.push(pi);
-                        this.parentElement.style.display = 'none';
-                    });
-                });
-                document.querySelectorAll('#caseEditBody [data-rm-dir]').forEach(function(el) {
-                    el.addEventListener('click', function() {
-                        var pi = parseInt(this.dataset.rmDir);
-                        if (removeDirIdx.indexOf(pi) < 0) removeDirIdx.push(pi);
-                        this.parentElement.style.display = 'none';
-                    });
-                });
-                document.getElementById('editUploadIssueBtn').addEventListener('click', async function() {
-                    var files = document.getElementById('editNewIssuePhotos').files;
-                    if (!files.length) return;
-                    var urls = await readFilesAsDataURLs(files);
-                    newIssueFiles = newIssueFiles.concat(urls);
-                    var area = document.getElementById('editIssuePhotosArea');
-                    urls.forEach(function(url) {
-                        var div = document.createElement('div'); div.style.cssText = 'position:relative;display:inline-block;';
-                        div.innerHTML = '<img src="' + url + '" style="max-width:120px;border-radius:8px;">';
-                        area.appendChild(div);
-                    });
-                    document.getElementById('editNewIssuePhotos').value = '';
-                });
-                document.getElementById('editUploadDirBtn').addEventListener('click', async function() {
-                    var files = document.getElementById('editNewDirPhotos').files;
-                    if (!files.length) return;
-                    var urls = await readFilesAsDataURLs(files);
-                    newDirFiles = newDirFiles.concat(urls);
-                    var area = document.getElementById('editDirPhotosArea');
-                    urls.forEach(function(url) {
-                        var div = document.createElement('div'); div.style.cssText = 'position:relative;display:inline-block;';
-                        div.innerHTML = '<img src="' + url + '" style="max-width:120px;border-radius:8px;">';
-                        area.appendChild(div);
-                    });
-                    document.getElementById('editNewDirPhotos').value = '';
-                });
-        
-                document.getElementById('saveEditCaseBtn').addEventListener('click', function() {
-                    var cases = getManualCases();
-                    var i = parseInt(document.getElementById('editCaseIdx').value);
-                    var cur = cases[i];
-                    cur.qcCode = document.getElementById('editQcCode').value.trim();
-                    cur.errorCategory = document.getElementById('editErrorCat').value.trim();
-                    cur.issueDesc = document.getElementById('editIssueDesc').value.trim();
-                    cur.correctDir = document.getElementById('editCorrectDir').value.trim();
-                    var keepIssue = [];
-                    (cur.issuePhotos || []).forEach(function(p, pi) {
-                        if (removeIssueIdx.indexOf(pi) < 0) keepIssue.push(p);
-                    });
-                    cur.issuePhotos = keepIssue.concat(newIssueFiles);
-                    var keepDir = [];
-                    (cur.dirPhotos || []).forEach(function(p, pi) {
-                        if (removeDirIdx.indexOf(pi) < 0) keepDir.push(p);
-                    });
-                    cur.dirPhotos = keepDir.concat(newDirFiles);
-                    saveManualCases(cases);
-                    document.getElementById('caseEditModal').style.display = 'none';
-                    renderCompletedCasesTab();
-                });
-            });
-        });
-        
-        // 删除（清理关联 ci_ 图片）
-        content.querySelectorAll('.deleteCaseBtn').forEach(btn => {
-            btn.addEventListener('click', async () => {
-                const idx = parseInt(btn.dataset.idx);
-                const cases = getManualCases();
-                const c = cases[idx];
-                if (!await confirmDelete(`质检码「${c?.qcCode || ''}」的案例`)) return;
-                ['issuePhotos','dirPhotos'].forEach(function(f) {
-                    if (c[f]) c[f].forEach(function(id) { if (id && id.indexOf('data:') !== 0) _ciDel(id); });
-                });
-                cases.splice(idx, 1);
-                saveManualCases(cases);
-                renderCompletedCasesTab();
-            });
-        });
-    }
-    function renderBiweeklyLibTab() {
-        const content = document.getElementById('caseLibSubContent');
+var content=document.getElementById("caseLibCatContent");
+var cases=getManualCasesFull();
+if(cases.length===0){content.innerHTML='<div class="report-box"><div class="empty-placeholder" style="padding:40px;">暂无已收集的案例</div></div>';return;}
+var catMap={};
+cases.forEach(function(c){var cat=c.errorCategory||"未分类";if(!catMap[cat])catMap[cat]=[];catMap[cat].push(c);});
+var categories=Object.keys(catMap).sort();
+var iconMap={"判错责任方":"⚖️","未达标准":"📏","拍照/取证不规范":"📷","备注失误":"📝","扣错项/明显失误":"❌","责任分类错":"🔄","复核责":"🔍","组合差价未勾选":"🔗","低级/投诉失误":"⚠️"};
+var cardsHtml='<div class="qb-cat-card" onclick="showCaseCategoryDetail(\'__all__\')" style="cursor:pointer;"><div class="qb-cat-icon">📋</div><div class="qb-cat-name">全部案例</div><div class="qb-cat-count">'+cases.length+' 例</div><div class="qb-cat-actions"><button class="qb-card-btn qb-card-view" onclick="event.stopPropagation();showCaseCategoryDetail(\'__all__\')">👁️ 查看</button><button class="qb-card-btn qb-card-clear admin-only" onclick="event.stopPropagation();clearAllCases()">🗑️ 清空</button></div></div>';
+categories.forEach(function(cat){
+var count=catMap[cat].length;
+var icon=iconMap[cat]||'📋';
+var safeCat=cat.replace(/'/g,"\\'");
+	cardsHtml+='<div class="qb-cat-card" onclick="showCaseCategoryDetail(\''+safeCat+'\')" style="cursor:pointer;position:relative;"><button class="qb-card-clear-corner" onclick="event.stopPropagation();clearCaseCategory(\''+safeCat+'\')" title="清空此分类">✕</button><div class="qb-cat-icon">'+icon+'</div><div class="qb-cat-name">'+escapeHtml(cat)+'</div><div class="qb-cat-count">'+count+' 例</div><div class="qb-cat-actions"><button class="qb-card-btn qb-card-view" onclick="event.stopPropagation();showCaseCategoryDetail(\''+safeCat+'\')">👁️ 查看</button><button class="qb-card-btn qb-card-add" onclick="event.stopPropagation();openAddCaseModal(\''+safeCat+'\')">✍️ 录入</button></div></div>';
+});
+content.innerHTML='<style>.qb-cat-card{background:#f8fafc;border-radius:16px;padding:20px 16px;text-align:center;box-shadow:0 2px 8px rgba(0,0,0,0.08);border:1px solid #dde4ed;transition:transform 0.2s;position:relative}.qb-cat-card:hover{transform:translateY(-2px);box-shadow:0 4px 16px rgba(0,0,0,0.14)}.qb-cat-icon{font-size:2rem;margin-bottom:8px}.qb-cat-name{font-weight:700;color:#1e293b;font-size:0.9rem;margin-bottom:4px}.qb-cat-count{font-size:0.75rem;color:#5e6f8d;margin-bottom:10px}.qb-cat-actions{display:flex;gap:5px;justify-content:center;flex-wrap:wrap}.qb-card-btn{padding:5px 12px;border-radius:14px;border:none;cursor:pointer;font-size:0.7rem;font-weight:600}.qb-card-view{background:#dbeafe;color:#1e40af}.qb-card-add{background:#fef3c7;color:#92400e}.qb-card-clear{background:#fecaca;color:#991b1b}.qb-card-clear-corner{position:absolute;top:6px;right:6px;width:22px;height:22px;border-radius:50%;border:none;background:#fecaca;color:#991b1b;font-size:0.7rem;cursor:pointer;display:flex;align-items:center;justify-content:center;line-height:1;opacity:0.6;transition:opacity 0.2s}.qb-card-clear-corner:hover{opacity:1}</style><div class="report-box"><div class="report-title" style="color:#1e293b;">📚 案例分类</div><div style="display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-top:14px;">'+cardsHtml+'</div></div>';
+window._caseCatMap=catMap;
+}
+function openAddCaseModal(cat){
+var ov=document.createElement('div');ov.className='modal-overlay';ov.style.zIndex='3000';
+ov.innerHTML='<div class="modal-container" style="max-width:550px;"><div class="modal-header">✍️ 录入案例 - '+cat+'<button class="modal-close-btn" id="acClose">✕</button></div><div class="modal-body" style="padding:16px;">'+
+'<label style="font-weight:600;color:#1f3a6b;">质检码 <span style="color:#c0392b;">*</span></label><input id="acQcCode" placeholder="输入质检码编号" style="width:100%;padding:8px 12px;border:1px solid #d1d5db;border-radius:10px;margin:4px 0 12px;font-size:0.9rem;">'+
+'<label style="font-weight:600;color:#1f3a6b;">失误类别 <span style="color:#c0392b;">*</span></label><select id="acCategory" style="width:100%;padding:8px 12px;border:1px solid #d1d5db;border-radius:10px;margin:4px 0 12px;font-size:0.9rem;background:white;">'+
+'<option value="">请选择</option><option value="判错责任方">判错责任方</option><option value="拍照/取证不规范">拍照/取证不规范</option><option value="未达标准">未达标准</option><option value="责任分类错">责任分类错</option><option value="备注失误">备注失误</option><option value="扣错项/明显失误">扣错项/明显失误</option><option value="复核责">复核责</option><option value="组合差价未勾选">组合差价未勾选</option><option value="低级/投诉失误">低级/投诉失误</option>'+
+'</select>'+
+'<label style="font-weight:600;color:#1f3a6b;">问题描述</label><textarea id="acDesc" rows="3" placeholder="描述问题详情" style="width:100%;padding:8px 12px;border:1px solid #d1d5db;border-radius:10px;margin:4px 0 12px;font-size:0.9rem;"></textarea>'+
+'<label style="font-weight:600;color:#1f3a6b;">正确方向</label><textarea id="acDir" rows="2" placeholder="描述正确操作方向" style="width:100%;padding:8px 12px;border:1px solid #d1d5db;border-radius:10px;margin:4px 0 12px;font-size:0.9rem;"></textarea>'+
+'<label style="font-weight:600;color:#1f3a6b;">问题照片</label><input id="acIssuePhotos" type="file" accept="image/*" multiple style="margin:4px 0 12px;font-size:0.85rem;"><div id="acIssuePreview" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px;"></div>'+
+'<label style="font-weight:600;color:#1f3a6b;">方向照片</label><input id="acDirPhotos" type="file" accept="image/*" multiple style="margin:4px 0 12px;font-size:0.85rem;"><div id="acDirPreview" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px;"></div>'+
+'<div style="display:flex;gap:8px;margin-top:12px;"><button id="acSave" class="primary" style="flex:1;background:#2563eb;border-radius:20px;padding:10px;font-weight:600;">💾 保存</button><button id="acCancel" style="flex:1;background:#f1f5f9;border:1px solid #cbd5e1;border-radius:20px;padding:10px;">取消</button></div>'+
+'</div></div>';
+document.body.appendChild(ov);
+if(cat&&cat!=='__all__'){var sc=document.getElementById('acCategory');if(sc)sc.value=cat;}
+ov.querySelector('#acClose').onclick=function(){ov.remove();};
+ov.querySelector('#acCancel').onclick=function(){ov.remove();};
+ov.onclick=function(e){if(e.target===ov)ov.remove();};
+// 照片预览
+var ipInput=ov.querySelector('#acIssuePhotos');
+var dpInput=ov.querySelector('#acDirPhotos');
+var ipPreview=ov.querySelector('#acIssuePreview');
+var dpPreview=ov.querySelector('#acDirPreview');
+var ipFiles=[],dpFiles=[];
+function previewFiles(input,previewEl,filesArr){
+input.onchange=function(){
+Array.from(this.files).forEach(function(f){
+filesArr.push(f);
+var reader=new FileReader();
+reader.onload=function(e){
+var img=document.createElement('img');
+img.src=e.target.result;
+img.style='max-width:80px;max-height:80px;border-radius:8px;margin:2px;border:1px solid #e2e8f0;object-fit:cover;';
+previewEl.appendChild(img);
+};
+reader.readAsDataURL(f);
+});
+this.value='';
+};
+}
+previewFiles(ipInput,ipPreview,ipFiles);
+previewFiles(dpInput,dpPreview,dpFiles);
+ov.querySelector('#acSave').onclick=async function(){
+var qc=document.getElementById('acQcCode').value.trim();
+var cat2=document.getElementById('acCategory').value;
+var desc=document.getElementById('acDesc').value.trim();
+var dir=document.getElementById('acDir').value.trim();
+if(!qc){alert('请输入质检码');return;}
+if(!cat2){alert('请选择失误类别');return;}
+var ips=await Promise.all(ipFiles.map(function(f){return new Promise(function(r){var rd=new FileReader();rd.onload=async function(e){r(await compressImageBase64(e.target.result))};rd.readAsDataURL(f)});}));
+var dps=await Promise.all(dpFiles.map(function(f){return new Promise(function(r){var rd=new FileReader();rd.onload=async function(e){r(await compressImageBase64(e.target.result))};rd.readAsDataURL(f)});}));
+var cases=getManualCasesFull();
+var editIdx=window._editCaseIdx;
+if(editIdx!==undefined&&editIdx>=0&&cases[editIdx]){
+// 编辑模式：更新已有案例，保留旧照片（如果没有新上传）
+var old=cases[editIdx];
+cases[editIdx]={qcCode:qc,errorCategory:cat2,issueDesc:desc,issuePhotos:ips.length>0?ips:old.issuePhotos,correctDir:dir,dirPhotos:dps.length>0?dps:old.dirPhotos,createTime:old.createTime};
+delete window._editCaseIdx;
+}else{
+cases.unshift({qcCode:qc,errorCategory:cat2,issueDesc:desc,issuePhotos:ips,correctDir:dir,dirPhotos:dps,createTime:Date.now()});
+}
+saveManualCases(cases);
+ov.remove();
+showToast('✅ 案例已'+(editIdx!==undefined?'更新':'录入'),'success');
+renderCompletedCasesTab();
+};
+}
+async function clearAllCases(){
+if(!await confirmDelete('全部案例数据'))return;
+saveManualCases([]);
+showToast('✅ 全部案例已清空','success');
+renderCompletedCasesTab();
+}
+async function clearCaseCategory(cat){
+if(!await confirmDelete(cat+' 分类的全部案例'))return;
+var cases=getManualCasesFull();
+var filtered=cases.filter(function(c){return(c.errorCategory||'未分类')!==cat});
+saveManualCases(filtered);
+showToast('✅ 已清空 '+cat+' 分类','success');
+renderCompletedCasesTab();
+}
+async function deleteCaseByIndex(idx){
+var cases=getManualCasesFull();
+var c=cases[idx];
+if(!c)return;
+if(!await confirmDelete('案例 '+c.qcCode))return;
+cases.splice(idx,1);
+saveManualCases(cases);
+renderCompletedCasesTab();
+}
+function editCaseByIndex(idx){
+var cases=getManualCasesFull();
+var c=cases[idx];
+if(!c)return;
+openAddCaseModal(c.errorCategory||'未分类');
+setTimeout(function(){
+var qc=document.getElementById('acQcCode');if(qc)qc.value=c.qcCode||'';
+var cat=document.getElementById('acCategory');if(cat)cat.value=c.errorCategory||'';
+var desc=document.getElementById('acDesc');if(desc)desc.value=c.issueDesc||'';
+var dir=document.getElementById('acDir');if(dir)dir.value=c.correctDir||'';
+// 标记为编辑模式
+window._editCaseIdx=idx;
+var saveBtn=document.getElementById('acSave');
+if(saveBtn){saveBtn.textContent='💾 更新';saveBtn.dataset.editIdx=idx;}
+},200);
+}
+function showCaseCategoryDetail(cat){
+var catCases;
+if(cat==='__all__'){catCases=getManualCasesFull();}
+else{catCases=(window._caseCatMap||{})[cat]||[];}
+if(catCases.length===0)return;
+var ov=document.createElement('div');ov.className='modal-overlay';ov.style.zIndex='3000';
+var rowsHtml=catCases.map(function(c){
+var photosHtml=(c.issuePhotos&&c.issuePhotos.length>0)?c.issuePhotos.map(function(p){return photoTag(p,60,50);}).join(''):'-';
+var origIdx=getManualCasesFull().indexOf(c);
+return '<tr><td style="font-weight:600;">'+escapeHtml(c.qcCode)+'</td><td>'+escapeHtml(c.issueDesc||'')+'</td><td>'+photosHtml+'</td><td style="max-width:180px;font-size:0.75rem;">'+escapeHtml(c.correctDir||'')+'</td><td style="font-size:0.75rem;">'+new Date(c.createTime).toLocaleDateString('zh-CN')+'</td>'+
+'<td class="admin-only"><button class="action-btn" onclick="editCaseByIndex('+origIdx+')">✏️</button><button class="action-btn danger" onclick="deleteCaseByIndex('+origIdx+')">🗑️</button></td></tr>';
+}).join('');
+var catLabel=cat==='__all__'?'全部案例':cat;
+ov.innerHTML='<div class="modal-container" style="max-width:900px;"><div class="modal-header">📋 '+catLabel+'（'+catCases.length+'例）<button class="modal-close-btn" id="ccClose">✕</button></div><div class="modal-body" style="max-height:70vh;overflow-y:auto;"><table class="admin-table" style="width:100%;"><thead><tr><th>质检码</th><th>问题描述</th><th>问题照片</th><th>正确方向</th><th>录入时间</th><th class="admin-only">操作</th></tr></thead><tbody>'+rowsHtml+'</tbody></table></div></div>';
+document.body.appendChild(ov);
+ov.querySelector('#ccClose').onclick=function(){ov.remove();};
+ov.onclick=function(e){if(e.target===ov)ov.remove();};
+}
+function renderBiweeklyLibTab() {
+        const content = document.getElementById('caseLibBiweeklyContent');
         const allData = getBiweeklyCases();
         const periodKeys = Object.keys(allData).sort().reverse();
 
@@ -7997,12 +8381,12 @@ selected.forEach(c => {
         <div class="label">📝 问题描述</div>
         <div class="desc">${escapeHtml(c.issueDesc)}</div>`;
     if (c.issuePhotos && c.issuePhotos.length > 0) {
-        docHtml += `<div class="label">📷 问题照片</div>${c.issuePhotos.map(p => `<img src="${p}" alt="问题照片">`).join('')}`;
+        docHtml += '<div class="label">📷 问题照片</div>' + c.issuePhotos.map(function(p) { return photoTag(p, 300, 300); }).join('');
     }
     docHtml += `<div class="label">✅ 应操作方向</div>
         <div class="correct">${escapeHtml(c.correctDir)}</div>`;
     if (c.dirPhotos && c.dirPhotos.length > 0) {
-        docHtml += `<div class="label">📷 方向示例照片</div>${c.dirPhotos.map(p => `<img src="${p}" alt="方向照片">`).join('')}`;
+        docHtml += '<div class="label">📷 方向示例照片</div>' + c.dirPhotos.map(function(p) { return photoTag(p, 300, 300); }).join('');
     }
     docHtml += `</div>`;
 });
@@ -8095,7 +8479,7 @@ URL.revokeObjectURL(url);
             <div class="q-num">第 ${i+1} 题（${escapeHtml(c.qcCode)}）</div>
             <div class="q-desc"><strong>问题描述：</strong>${escapeHtml(c.issueDesc)}</div>`;
         if (c.issuePhotos && c.issuePhotos.length > 0) {
-            docHtml += `<div style="margin-bottom:8px;"><strong>📷 相关截图：</strong></div>${c.issuePhotos.map(p => `<img src="${p}" alt="问题截图">`).join('')}`;
+            docHtml += '<div style="margin-bottom:8px;"><strong>📷 相关截图：</strong></div>' + c.issuePhotos.map(function(p) { return photoTag(p, 300, 300); }).join('');
         }
         docHtml += `<hr style="border:none;border-top:1px dashed #ddd;margin:12px 0;">
             <div style="font-weight:600;color:#1f3a6b;">❓ 请回答：正确的处理方向和依据是什么？</div>
@@ -8103,7 +8487,7 @@ URL.revokeObjectURL(url);
                 <summary>📖 点击查看参考答案</summary>
                 <div class="answer-content">${escapeHtml(c.correctDir)}</div>`;
         if (c.dirPhotos && c.dirPhotos.length > 0) {
-            docHtml += `<div style="margin-top:8px;">${c.dirPhotos.map(p => `<img src="${p}" alt="方向照片">`).join('')}</div>`;
+            docHtml += '<div style="margin-top:8px;">' + c.dirPhotos.map(function(p) { return photoTag(p, 300, 300); }).join('') + '</div>';
         }
         docHtml += `</details></div>`;
     });
@@ -8555,22 +8939,22 @@ URL.revokeObjectURL(url);
     const SIDEBAR_MENU = [
         { id: 'newcomerTraining', name: '🎓 新人培养', subs: [
             { nav: 'dashboard', label: '📊 仪表盘' },
-            { nav: 'frontend', label: '👥 新人进度' }
+            { nav: 'frontend', label: '👥 新人进度', guestHidden: true }
         ]},
         { id: 'learningMap', name: '🗺️ 学习地图', subs: [
             { nav: 'learningMapView', label: '📖 学习地图' }
         ] },
         { id: 'qualityAnalysis', name: '📊 品控分析', subs: [
-            { nav: 'dataAnalysis', label: '📈 数据分析' },
+            { nav: 'dataAnalysis', label: '📈 数据分析', guestHidden: true },
             { nav: 'errorDashboard', label: '📋 失误分析看板' }
         ]},
         { id: 'trainingMaterials', name: '📚 培训资料', subs: [
-            { nav: 'caseLibrary', label: '📋 案例收集库' },
+            { nav: 'caseLibrary', label: '📋 案例收集库', guestHidden: true },
             { nav: 'knowledgeBase', label: '📖 知识库' }
         ]},
         { id: 'examBank', name: '📝 考试题库', subs: [
-            { nav: 'questionBank', label: '📝 题库' },
-            { nav: 'examSystem', label: '📋 考试系统' }
+            { nav: 'questionBank', label: '📝 题库', guestHidden: true },
+            { nav: 'examSystem', label: '📋 考试系统', guestHidden: true }
         ]}
     ];
 
@@ -8586,10 +8970,17 @@ URL.revokeObjectURL(url);
             var arrow = isExpanded ? '<span style="font-size:0.6rem;opacity:0.5;margin-right:2px;">▼</span>' : '<span style="font-size:0.6rem;opacity:0.5;margin-right:2px;">▸</span>';
             html += '<button class="nav-btn category" data-cat="' + cat.id + '" style="font-size:0.9rem;">' + arrow + cat.name + '</button>';
             if (isExpanded && cat.subs.length > 0) {
+                var catHasVisibleSubs = false;
                 cat.subs.forEach(function(sub) {
+                    if (sub.guestHidden && !isAdminMode()) return;
+                    catHasVisibleSubs = true;
                     var isSubActive = sub.nav === currentSubNav;
                     html += '<button class="nav-btn sub-item' + (isSubActive ? ' active' : '') + '" data-nav="' + sub.nav + '" style="font-size:0.78rem;">' + sub.label + '</button>';
                 });
+                if (!catHasVisibleSubs) {
+                    // 所有子项都隐藏，回退掉已输出的类别按钮
+                    html = html.substring(0, html.lastIndexOf('<button class="nav-btn category"'));
+                }
             }
         });
         container.innerHTML = html;
@@ -8627,6 +9018,12 @@ URL.revokeObjectURL(url);
     }
 
     function switchNav(nav) {
+        // 游客拦截
+        var guestBlocked = ['frontend','dataAnalysis','caseLibrary','questionBank','examSystem','admin'];
+        if (guestBlocked.indexOf(nav) >= 0 && !isAdminMode()) {
+            showToast('🔒 此功能仅管理员可用，请先登录', 'warning');
+            return;
+        }
         if (nav === 'admin') {
             currentNav = 'admin';
             document.querySelectorAll('.nav-btn').forEach(function(el) { el.classList.remove('active'); });
@@ -12325,9 +12722,9 @@ URL.revokeObjectURL(url);
         appSecret: '1uLKmOkzQpoac6Ixw3Qhsb6KR1gCrcTn',
         spreadsheetToken: 'EdI0sn3qkh7H6wtkhcpcxrTnnDf',
         sheets: [
-            { id: '4054dd', name: '初审失误登记', source: '初审', colDate: 0, colSite: 1, colQcCode: 3, colCategory: 5, colReviewer: 7, colNote: 8 },
-            { id: 'mEiT35', name: '抽检失误登记', source: '抽检', colDate: 0, colSite: 1, colQcCode: 3, colCategory: 9, colReviewer: 5, colNote: 10 },
-            { id: 'LIfICo', name: 'QA失误登记', source: 'QA', colDate: 0, colSite: 1, colQcCode: 2, colCategory: 4, colReviewer: 5, colNote: 6 }
+            { id: '4054dd', name: '初审失误登记', source: '初审', colDate: 0, colSite: 1, colQcCode: 3, colCategory: 6, colReviewer: 8, colNote: 9, colProduct: 5 },
+            { id: 'mEiT35', name: '抽检失误登记', source: '抽检', colDate: 0, colSite: 1, colQcCode: 3, colCategory: 10, colReviewer: 6, colNote: 11, colProduct: 5 },
+            { id: 'LIfICo', name: 'QA失误登记', source: 'QA', colDate: 0, colSite: 1, colQcCode: 2, colCategory: 4, colReviewer: 5, colNote: 6, colProduct: 3 }
         ]
     };
 
@@ -12336,7 +12733,7 @@ URL.revokeObjectURL(url);
     let errorDashboardLastRefresh = null;
     let errorDashboardSheetStatus = {};
     let errorDashboardPage = 1;
-    const ERROR_DASHBOARD_PAGE_SIZE = 30;
+    const ERROR_DASHBOARD_PAGE_SIZE = 20;
     let errorDashboardFilter = { period: 'day', site: 'all', category: 'all', reviewer: 'all', customStart: '', customEnd: '' };
     let errorDashboardAllFailed = false; // 全部Sheet加载失败标记（通常意味着授权过期）
 
@@ -12382,28 +12779,16 @@ URL.revokeObjectURL(url);
         return String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
     }
 
-    // 跨月周命名：按多数天所在月份命名（如6/29~7/5 → 7月第1周）
+    // 跨月周命名：以27号为月界，按该逻辑月内第几个周一编号
     function getWeekLabel(monday) {
-        var sunday = new Date(monday);
-        sunday.setDate(monday.getDate() + 6);
-        var monMonth = monday.getMonth();
-        var sunMonth = sunday.getMonth();
-        // 同月：标准计算
-        if (monMonth === sunMonth) {
-            var wn = Math.ceil(monday.getDate() / 7);
-            if (wn > 4) wn = 4;
-            return (monMonth + 1) + '月第' + wn + '周';
-        }
-        // 跨月：多数天所在月
-        var daysInMonMonth = new Date(monday.getFullYear(), monMonth + 1, 0).getDate() - monday.getDate() + 1;
-        var daysInSunMonth = sunday.getDate();
-        if (daysInSunMonth > daysInMonMonth) {
-            return (sunMonth + 1) + '月第1周';
-        } else {
-            var wn = Math.ceil(monday.getDate() / 7);
-            if (wn > 4) wn = 4;
-            return (monMonth + 1) + '月第' + wn + '周';
-        }
+        var d = monday.getDate(), m = monday.getMonth(), y = monday.getFullYear();
+        var logicM = d >= 27 ? m + 1 : m; if (logicM > 11) { logicM = 0; y++; }
+        var startM = logicM - 1; if (startM < 0) { startM = 11; y--; }
+        var firstMon = new Date(y, startM, 27);
+        while (firstMon.getDay() !== 1) firstMon.setDate(firstMon.getDate() + 1);
+        var wn = Math.floor((monday - firstMon) / (7 * 86400000)) + 1;
+        if (wn > 4) wn = 4;
+        return (logicM + 1) + '月第' + wn + '周';
     }
 
     // 周度/月度选择弹窗
@@ -12658,7 +13043,7 @@ URL.revokeObjectURL(url);
                 if (!storedToken) reason = '<p style="color:#94a3b8;font-size:0.8rem;">未检测到已保存的授权</p>';
                 else if (storedToken.expiresAt <= Date.now()) reason = '<p style="color:#e67e22;font-size:0.8rem;">授权已过期，请重新授权</p>';
                 else reason = '<p style="color:#94a3b8;font-size:0.8rem;">授权信息异常，请重新授权</p>';
-                var authUrl = 'https://open.feishu.cn/open-apis/authen/v1/authorize?app_id=' + FEISHU_CONFIG.appId + '&redirect_uri=https%3A%2F%2Fjimu-111.github.io%2Fyouxuetang%2F&scope=sheets:spreadsheet:readonly%20drive:drive:readonly%20wiki:wiki:readonly%20im:message.send_as_user%20contact:user.employee:readonly';
+                var authUrl = 'https://open.feishu.cn/open-apis/authen/v1/authorize?app_id=' + FEISHU_CONFIG.appId + '&redirect_uri=https%3A%2F%2Fjimu-111.github.io%2Fyouxuetang%2F&scope=sheets:spreadsheet:readonly%20drive:drive:readonly%20wiki:wiki:readonly%20im:message:send';
                 document.getElementById('mainContent').innerHTML =
                 '<div class="panorama-card" style="text-align:center;padding:40px;max-width:600px;margin:40px auto;">' +
                     '<div style="font-size:1.5rem;margin-bottom:8px;">🔐 需要飞书授权</div>' + reason +
@@ -12694,12 +13079,12 @@ URL.revokeObjectURL(url);
             }
             // 站点映射（提取到循环外，避免每行重复赋值）
             window._SITE_MAP = { '袁彬城':'深圳','许嘉林':'深圳','林嘉士':'深圳','王跃强':'深圳','孙俊':'深圳','姜玉林':'深圳','邹文文':'深圳','刘华城':'深圳','彭士观':'深圳','宁泰联':'深圳','吕建效':'深圳','张兢':'深圳','贺涛':'深圳','黄俊德':'深圳','李晓阳':'深圳','赵元坤':'深圳','盘训起':'深圳','冯开宁':'深圳','刘文能':'深圳','丁怀强':'深圳','林欣彬':'深圳','许泽雄':'深圳','曾清源':'深圳','吴松豪':'深圳','王燕文':'深圳','庄振航':'深圳','陈跃军':'深圳','王帅':'深圳','李念甘':'深圳','林家文':'深圳','廖天水':'深圳','廖国辉':'深圳','孙伟':'青岛','苏超跃':'青岛','王清婷':'青岛','徐贤炜':'青岛','王洋':'青岛','郑凯雄':'青岛','陶永嵩':'青岛','王为':'青岛','刘荫民':'青岛','代金鹏':'青岛','辛明泉':'青岛','王兴清':'青岛','姜超':'青岛','张明':'青岛','魏才玉':'青岛','张凯凯':'青岛','刘昊东':'青岛','李选国':'青岛','王梦阳':'青岛','王瑞宇':'青岛','陈文彬':'青岛','许江':'青岛','贺文锐':'青岛','臧天昊':'青岛','王璐':'青岛','李仁义':'青岛','徐行':'成都','何显健':'成都','陈毅军':'成都','胡志鹏':'成都','樊景舜':'成都','向阳':'成都','周金山':'成都','马浩':'成都','雍彬彬':'成都','伏鑫':'成都','肖健平':'成都','罗宁':'成都','吴辉':'成都','任青俊':'成都','杜攀':'成都','麦钧淇':'成都','杨宏':'成都','赵晨鸿':'成都','李忠林':'成都','延依飞':'成都','张俊':'成都','刘超':'成都','李晓洋':'成都' };
-            // 并行拉取3个Sheet（不再串行等待）
+            // 并行拉取3个Sheet
             var sheetTasks = FEISHU_CONFIG.sheets.map(function(sh) {
                 return (async function() {
                     try {
                         var rows = await fetchFeishuSheet(sh.id, token);
-                        return { name: sh.name, source: sh.source, ok: true, rows: rows, colDate: sh.colDate, colSite: sh.colSite, colQcCode: sh.colQcCode, colCategory: sh.colCategory, colReviewer: sh.colReviewer, colNote: sh.colNote };
+                        return { name: sh.name, source: sh.source, ok: true, rows: rows, colDate: sh.colDate, colSite: sh.colSite, colQcCode: sh.colQcCode, colCategory: sh.colCategory, colReviewer: sh.colReviewer, colNote: sh.colNote, colProduct: sh.colProduct };
                     } catch(e) {
                         return { name: sh.name, ok: false, error: e.message };
                     }
@@ -12729,6 +13114,7 @@ URL.revokeObjectURL(url);
                         var site = (row[res.colSite] || '').toString().trim();
                         if (!site && window._SITE_MAP[reviewer]) site = window._SITE_MAP[reviewer];
                         var qcCode = (row[res.colQcCode] || '').toString().trim();
+                        var product = res.colProduct >= 0 ? ((row[res.colProduct] || '') + '').trim() : '';
                         if (!category && !note) continue;
                         allErrors.push({
                             date: dateObj,
@@ -12738,6 +13124,7 @@ URL.revokeObjectURL(url);
                             category: category || '-',
                             reviewer: reviewer || '-',
                             note: note || '-',
+                            product: product || '-',
                             source: res.source,
                             sourceSheet: res.name
                         });
@@ -12838,7 +13225,13 @@ URL.revokeObjectURL(url);
         if (f.category !== 'all') data = data.filter(function(e) { return e.category === f.category; });
         // 人员筛选
         if (f.reviewer !== 'all') data = data.filter(function(e) { return e.reviewer === f.reviewer; });
-
+        if (_searchKeywords && _searchKeywords.length > 0) {
+            data = data.filter(function(e) {
+                var txt = (e.dateStr + ' ' + e.site + ' ' + (e.product||'') + ' ' + e.source + ' ' + e.category + ' ' + e.reviewer + ' ' + e.qcCode).toLowerCase();
+                for (var i = 0; i < _searchKeywords.length; i++) { if (txt.indexOf(_searchKeywords[i]) < 0) return false; }
+                return true;
+            });
+        }
         return data;
     }
 
@@ -13542,7 +13935,7 @@ URL.revokeObjectURL(url);
                     '<button onclick="navigator.clipboard.writeText(\'' + examUrl.replace(/'/g, "\\'") + '\');this.textContent=\'✅ 已复制\';setTimeout(function(){this.textContent=\'📋 复制链接\'}.bind(this),1500)" style="background:#2a5298;color:white;border:none;padding:6px 14px;border-radius:16px;cursor:pointer;font-size:0.75rem;">📋 复制链接</button>' +
                 '</div>' +
                 '<div style="display:flex;gap:8px;margin-top:12px;">' +
-                    '<button class="push-exam-btn" style="flex:1;background:#e67e22;color:white;border:none;padding:10px 16px;border-radius:20px;cursor:pointer;font-size:0.85rem;font-weight:600;">📤 飞书推送</button>' +
+                    '<button class="push-exam-btn admin-only" style="flex:1;background:#e67e22;color:white;border:none;padding:10px 16px;border-radius:20px;cursor:pointer;font-size:0.85rem;font-weight:600;">📤 飞书推送</button>' +
                     '<button class="goto-exam-btn" style="flex:1;border:1px solid #e2e8f0;background:#f8fafc;padding:10px 16px;border-radius:20px;cursor:pointer;font-size:0.85rem;">📋 前往考试系统</button>' +
                 '</div>' +
             '</div>' +
@@ -13584,10 +13977,17 @@ URL.revokeObjectURL(url);
         var allQuestions = qb.questions || [];
         if (allQuestions.length === 0) { showAlert('题库为空，请先添加题目', '⚠️'); return; }
 
-        // 统计该人失误类别
-        var catCounts = {};
+        // 统计该人失误品类+类别组合
+        var comboCats = {};
         personErrors.forEach(function(e) {
-            catCounts[e.category] = (catCounts[e.category] || 0) + 1;
+            var key = (e.product||'未知') + '-' + e.category;
+            comboCats[key] = (comboCats[key] || 0) + 1;
+        });
+        // 汇总到失误类别（用于匹配题目）
+        var catCounts = {};
+        Object.entries(comboCats).forEach(function(entry) {
+            var cat = entry[0].split('-').slice(1).join('-'); // 品类-类别 → 类别
+            catCounts[cat] = (catCounts[cat] || 0) + entry[1];
         });
         var totalErrors = personErrors.length;
         var TOTAL_QUESTIONS = 20;
@@ -13609,6 +14009,16 @@ URL.revokeObjectURL(url);
             else if (catQuestions[categories[idx][0]] > 1) catQuestions[categories[idx][0]]--;
         }
 
+        // 判断主品类：若某品类占比≥90%，排除其他品类的题目
+        var productCounts = {};
+        personErrors.forEach(function(e) { var p = e.product||'未知'; productCounts[p] = (productCounts[p]||0)+1; });
+        var dominantProduct = null;
+        var knownProducts = ['手机','平板','3C多品类'];
+        Object.entries(productCounts).forEach(function(e) {
+            if (e[1] / totalErrors >= 0.9) dominantProduct = e[0];
+        });
+        var excludedProducts = dominantProduct ? knownProducts.filter(function(p) { return p !== dominantProduct; }) : [];
+
         // 匹配题目
         var selected = [];
         var usedIds = {};
@@ -13619,7 +14029,15 @@ URL.revokeObjectURL(url);
             var matched = allQuestions.filter(function(q) {
                 if (usedIds[q.id]) return false;
                 var qCat = (q.category || '').toLowerCase();
-                return qCat.includes(catLower) || catLower.includes(qCat);
+                if (!(qCat.includes(catLower) || catLower.includes(qCat))) return false;
+                // 主品类过滤：排除提到其他品类的题目
+                if (excludedProducts.length > 0) {
+                    var qText = ((q.question||'') + ' ' + (q.answer||'') + ' ' + (q.options||[]).join(' ')).toLowerCase();
+                    for (var ep = 0; ep < excludedProducts.length; ep++) {
+                        if (qText.indexOf(excludedProducts[ep].toLowerCase()) >= 0) return false;
+                    }
+                }
+                return true;
             });
             if (matched.length < needed) {
                 var remaining = allQuestions.filter(function(q) { return !usedIds[q.id] && !matched.find(function(m) { return m.id === q.id; }); });
@@ -13662,7 +14080,7 @@ URL.revokeObjectURL(url);
                     '<button onclick="navigator.clipboard.writeText(\'' + examUrl.replace(/'/g, "\\'") + '\');this.textContent=\'✅ 已复制\';setTimeout(function(){this.textContent=\'📋 复制链接\'}.bind(this),1500)" style="background:#2a5298;color:white;border:none;padding:6px 14px;border-radius:16px;cursor:pointer;font-size:0.75rem;">📋 复制链接</button>' +
                 '</div>' +
                 '<div style="display:flex;gap:8px;margin-top:12px;">' +
-                    '<button class="push-exam-btn" style="flex:1;background:#e67e22;color:white;border:none;padding:10px 16px;border-radius:20px;cursor:pointer;font-size:0.85rem;font-weight:600;">📤 飞书推送</button>' +
+                    '<button class="push-exam-btn admin-only" style="flex:1;background:#e67e22;color:white;border:none;padding:10px 16px;border-radius:20px;cursor:pointer;font-size:0.85rem;font-weight:600;">📤 飞书推送</button>' +
                     '<button class="goto-exam-btn" style="flex:1;border:1px solid #e2e8f0;background:#f8fafc;padding:10px 16px;border-radius:20px;cursor:pointer;font-size:0.85rem;">📋 前往考试系统</button>' +
                 '</div>' +
             '</div>' +
@@ -13858,59 +14276,162 @@ URL.revokeObjectURL(url);
     var _searchTimer = null;
     // 失误列表搜索（防抖 + 跨周期注入 + 提示）
     var _errorSearchTimer;
-    function searchErrorTable() {
+    var _productColors = {}, _productPalette = ['#e3f2fd','#fff3e0','#e8f5e9','#fce4ec','#f3e5f5','#e0f2f1','#fff8e1','#ede7f6','#f1f8e9','#e8eaf6'];
+    function getProductStyle(name) {
+        if (!name || name === '-') return '';
+        if (!_productColors[name]) {
+            var hash = 0; for (var hi = 0; hi < name.length; hi++) hash = name.charCodeAt(hi) + ((hash << 5) - hash);
+            _productColors[name] = _productPalette[Math.abs(hash) % _productPalette.length];
+        }
+        return 'background:' + _productColors[name] + ';';
+    }
+    // 只刷新表格体和分页，不重建整个页面
+    function _refreshErrorTableBody() {
+        var filtered = getFilteredErrors();
+        var pgSize = 20;
+        var start = ((window._tablePage || 1) - 1) * pgSize;
+        var total = filtered.length;
+        var end = Math.min(start + pgSize, total);
+        var tables = document.querySelectorAll('.error-table');
+        tables.forEach(function(tbl) {
+            var tbody = tbl.querySelector('tbody');
+            if (!tbody) return;
+            var html = '';
+            for (var ri = start; ri < end; ri++) {
+                var e = filtered[ri];
+                var srcTag = e.source === '初审' ? 'cs' : (e.source === '抽检' ? 'cj' : 'qa');
+                html += '<tr><td>' + e.dateStr + '</td><td><span class="site-tag ' + ({'深圳':'sz','青岛':'qd','成都':'cd'}[e.site]||'') + '">' + escapeHtml(e.site) + '</span></td><td><span class="product-tag" style="' + getProductStyle(e.product) + '">' + escapeHtml(e.product || '-') + '</span></td><td><span class="source-tag ' + srcTag + '">' + e.source + '</span></td><td>' + escapeHtml(e.category) + '</td><td>' + escapeHtml(e.reviewer) + '</td><td style="max-width:300px;font-size:0.78rem;">' + escapeHtml(e.note) + '</td><td style="font-size:0.7rem;">' + escapeHtml(e.qcCode) + '</td></tr>';
+            }
+            if (!html) html = '<tr><td colspan="8" style="padding:30px;color:#94a3b8;">暂无匹配的失误记录</td></tr>';
+            tbody.innerHTML = html;
+            var pagEl = document.querySelector('#mainContent .pagination');
+            if (pagEl) {
+                if (total > pgSize) {
+                    var totalPages = Math.ceil(total / pgSize);
+                    var pg = window._tablePage || 1;
+                    pagEl.innerHTML = '<button ' + (pg<=1?'disabled':'') + ' onclick="window._tablePage='+(pg-1)+';_refreshErrorTableBody()">上一页</button><span style="margin:0 8px;">' + pg + '/' + totalPages + '（共' + total + '条）</span><button ' + (pg>=totalPages?'disabled':'') + ' onclick="window._tablePage='+(pg+1)+';_refreshErrorTableBody()">下一页</button>';
+                    pagEl.style.cssText = 'display:flex;align-items:center;justify-content:center;gap:4px;margin-top:12px;flex-wrap:nowrap;';
+                } else {
+                    pagEl.innerHTML = '<span>共' + total + '条</span>';
+                    pagEl.style.cssText = 'text-align:center;margin-top:12px;';
+                }
+            }
+        });
+    }
+    function _refreshErrorStats() {
+        var filtered = getFilteredErrors();
+        var el;
+        el = document.getElementById('statTotalErrors'); if (el) el.textContent = filtered.length;
+        var cats = {}; var revs = {};
+        filtered.forEach(function(e) { cats[e.category] = (cats[e.category] || 0) + 1; revs[e.reviewer] = (revs[e.reviewer] || 0) + 1; });
+        var catKeys = Object.keys(cats).sort(function(a,b){ return cats[b] - cats[a]; });
+        var revKeys = Object.keys(revs).sort(function(a,b){ return revs[b] - revs[a]; });
+        el = document.getElementById('statCategories'); if (el) el.textContent = catKeys.length;
+        el = document.getElementById('statReviewers'); if (el) { var rc = revKeys.length; el.innerHTML = rc + '<span style="font-size:0.9rem;color:#94a3b8;">/' + (window._activeNameCount || rc) + '</span>'; }
+        // Top tags
+        function simpleTags(keys, stats, typePrefix) {
+            if (keys.length === 0) return '-';
+            return keys.map(function(k) {
+                var ratio = keys.length <= 3 ? 0 : Math.round((keys.indexOf(k) / (keys.length - 1)) * 2);
+                var color = keys.length <= 3 ? '#f1f5f9' : 'hsl(' + [0, 30, 50][ratio] + ', 55%, 72%)';
+                return '<span class="clickable-tag" onclick="showErrorDetailPopup(\'' + typePrefix + '\',\'' + k.replace(/'/g, "\\'") + '\')" style="background:' + color + ';color:#2d3748;padding:2px 10px;border-radius:10px;font-size:0.72rem;margin:2px;cursor:pointer;display:inline-block;font-weight:500;white-space:nowrap;" title="点击查看详情">' + escapeHtml(k) + ' (' + stats[k] + ')</span>';
+            }).join('');
+        }
+        el = document.getElementById('topCatsContainer'); if (el) el.innerHTML = simpleTags(catKeys, cats, 'category');
+        el = document.getElementById('topReviewersContainer'); if (el) el.innerHTML = simpleTags(revKeys, revs, 'reviewer');
+        // 站点筛选按钮
+        el = document.getElementById('siteFilterBtns'); if (el) {
+            var f = errorDashboardFilter;
+            var allFiltered = getFilteredErrors();
+            var curStats = {}; allFiltered.forEach(function(e){ curStats[e.site] = (curStats[e.site]||0)+1; });
+            var totalAll = allFiltered.length;
+            var sites = ['深圳','青岛','成都'];
+            var list = sites.map(function(s){ return {name:s, count:curStats[s]||0}; }).sort(function(a,b){return b.count-a.count;});
+            var max = Math.max(1, list[0].count);
+            var html = '<span class="site-stat-btn" data-site="all" style="cursor:pointer;padding:3px 8px;border-radius:8px;font-size:0.65rem;font-weight:600;white-space:nowrap;background:'+(f.site==='all'?'#1f3a6b':'#f1f5f9')+';color:'+(f.site==='all'?'#fff':'#5e6f8d')+';">🌐 全部 '+totalAll+'</span>';
+            html += list.map(function(item){
+                var pct = totalAll ? Math.round(item.count/totalAll*100) : 0;
+                var ratio = max ? item.count/max : 0;
+                var h = item.count===0 ? 120 : Math.round(40*(1-ratio));
+                var sat = item.count===0 ? 20 : 50;
+                var lit = item.count===0 ? 88 : 82;
+                var bgColor = item.count===0 ? '#d4edda' : 'hsl('+h+','+sat+'%,'+lit+'%)';
+                var txtColor = item.count===0 ? '#166534' : '#2d3748';
+                var isActive = f.site === item.name;
+                return '<span class="site-stat-btn" data-site="'+item.name+'" style="cursor:pointer;padding:3px 8px;border-radius:8px;font-size:0.65rem;font-weight:600;white-space:nowrap;background:'+bgColor+';color:'+txtColor+';'+(isActive?'border:2px solid #1f3a6b;':'')+'">📍 '+item.name+' '+item.count+'<span style="font-size:0.55rem;opacity:0.8;">('+pct+'%)</span></span>';
+            }).join('');
+            el.innerHTML = html;
+        }
+    }
+    function _refreshPortraitSection() {
+        var allRows = window._portraitAllRows || [];
+        var pg = window._portraitPage || 1;
+        var pgSize = 22;
+        var totalPages = Math.ceil(allRows.length / pgSize) || 1;
+        if (pg > totalPages) { pg = totalPages; window._portraitPage = pg; }
+        var pageRows = allRows.slice((pg - 1) * pgSize, pg * pgSize);
+        var pageHasActions = pageRows.some(function(r) { return r.hasAct; });
+        var html = pageRows.map(function(r) {
+            var thP = getLightThresholds();
+            var lightIcon = r.count > thP.yellowMax ? '🔴' : (r.count > thP.greenMax ? '🟡' : '🟢');
+            var siteHtml = ' <span style="color:#94a3b8;font-size:0.65rem;">（' + escapeHtml(r.sites) + '）</span>';
+            return '<tr class="portrait-row" style="border-bottom:1px solid #f1f5f9;">' +
+                '<td style="text-align:center;padding:6px 4px;"><span style="font-size:0.7rem;">' + lightIcon + '</span> <span class="clickable-tag" onclick="showErrorDetailPopup(\'reviewer\',\'' + r.name.replace(/'/g, "\\'") + '\')" style="font-weight:600;color:#2d3748;cursor:pointer;font-size:0.7rem;" title="点击查看详情">' + escapeHtml(r.name) + siteHtml + '</span></td>' +
+                '<td style="text-align:center;padding:6px 4px;font-size:0.7rem;color:#5e6f8d;">' + r.count + '次</td>' +
+                '<td style="text-align:center;padding:6px 4px;font-size:0.7rem;color:#5e6f8d;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:120px;" title="' + escapeHtml(r.cats || '-') + '">' + (r.cats || '-') + '</td>' +
+                (pageHasActions ? '<td style="text-align:center;padding:6px 4px;white-space:nowrap;">' + (r.actions||'') + '</td>' : '') +
+            '</tr>';
+        }).join('');
+        var tbody = document.getElementById('portraitTableBody');
+        if (tbody) tbody.innerHTML = html || '<tr><td colspan="4" style="color:#94a3b8;font-size:0.78rem;text-align:center;padding:20px;">暂无数据</td></tr>';
+        var pagDiv = document.getElementById('portraitPagination');
+        if (pagDiv) {
+            if (totalPages > 1) {
+                pagDiv.innerHTML = '<div class="pagination" style="margin-top:6px;">' +
+                    '<button ' + (pg <= 1 ? 'disabled' : '') + ' onclick="window._portraitPage=' + (pg - 1) + ';_refreshPortraitSection()">上一页</button>' +
+                    '<span style="font-size:0.75rem;color:#5e6f8d;">' + pg + '/' + totalPages + '</span>' +
+                    '<button ' + (pg >= totalPages ? 'disabled' : '') + ' onclick="window._portraitPage=' + (pg + 1) + ';_refreshPortraitSection()">下一页</button>' +
+                '</div>';
+            } else {
+                pagDiv.innerHTML = '';
+            }
+        }
+    }
+    var _searchKeywords = null;
+    function searchErrorTable(val) {
+        window._savedSearchVal = val;
         clearTimeout(_errorSearchTimer);
         _errorSearchTimer = setTimeout(function() {
-            var v = (document.getElementById('errorTableSearch')?.value || '').toLowerCase().trim();
-            var hintEl = document.getElementById('errorSearchHint');
-            var tables = document.querySelectorAll('.error-table');
-            tables.forEach(function(tbl) { tbl.querySelectorAll('tr.search-extra, tr.search-sep').forEach(function(r) { r.remove(); }); });
-            if (!v) { tables.forEach(function(tbl) { tbl.querySelectorAll('tbody tr').forEach(function(tr) { tr.style.display = ''; }); }); if (hintEl) hintEl.style.display = 'none'; return; }
-            var keywords = v.split(/[\s,，。；;、]+/).filter(function(k) { return k.length > 0; });
-            if (keywords.length === 1 && keywords[0].length >= 2) {
-                var knownSet = {};
-                errorDashboardData.forEach(function(e) {
-                    if (e.reviewer && e.reviewer.length >= 2) knownSet[e.reviewer.toLowerCase()] = true;
-                    if (e.category && e.category.length >= 2) knownSet[e.category.toLowerCase()] = true;
-                    if (e.source && e.source.length >= 2) knownSet[e.source.toLowerCase()] = true;
-                    if (e.site && e.site.length >= 2) knownSet[e.site.toLowerCase()] = true;
-                    if (e.qcCode && e.qcCode.length >= 2) knownSet[e.qcCode.toLowerCase()] = true;
-                });
-                var knownWords = Object.keys(knownSet).sort(function(a,b){ return b.length - a.length; });
-                var remaining = keywords[0], found = [];
-                knownWords.forEach(function(w) { var idx = remaining.indexOf(w); if (idx >= 0) { found.push(w); remaining = remaining.substring(0, idx) + ' ' + remaining.substring(idx + w.length); } });
-                if (found.length > 0) keywords = found;
-            }
-            var matchRow = function(text) { for (var i = 0; i < keywords.length; i++) { if (text.indexOf(keywords[i]) < 0) return false; } return true; };
-            var curFiltered = getFilteredErrors();
-            tables.forEach(function(tbl) {
-                tbl.querySelectorAll('tbody tr').forEach(function(tr) {
-                    if (tr.querySelector('button') && !tr.querySelector('td')) return;
-                    var cells = tr.querySelectorAll('td');
-                    var st = cells.length >= 7 ? (cells[0].textContent + ' ' + cells[1].textContent + ' ' + cells[2].textContent + ' ' + cells[3].textContent + ' ' + cells[4].textContent + ' ' + cells[6].textContent).toLowerCase() : tr.textContent.toLowerCase();
-                    tr.style.display = matchRow(st) ? '' : 'none';
-                });
-            });
-            var fullMatch = function(e) { return matchRow((e.dateStr + ' ' + e.site + ' ' + e.source + ' ' + e.category + ' ' + e.reviewer + ' ' + e.qcCode).toLowerCase()); };
-            var curIds = {}; curFiltered.forEach(function(e) { curIds[e.dateStr + '|' + e.qcCode + '|' + e.reviewer + '|' + e.source] = true; });
-            var outside = errorDashboardData.filter(function(e) { return fullMatch(e) && !curIds[e.dateStr + '|' + e.qcCode + '|' + e.reviewer + '|' + e.source]; }).slice(0, 30);
-            if (outside.length > 0 && tables.length > 0) {
-                var tbody = tables[0].querySelector('tbody');
-                if (tbody) {
-                    var pn = errorDashboardFilter.period === 'day' ? '日度' : (errorDashboardFilter.period === 'week' ? '周度' : (errorDashboardFilter.period === 'month' ? '月度' : ''));
-                    var sr = document.createElement('tr'); sr.className = 'search-sep';
-                    sr.innerHTML = '<td colspan="7" style="padding:6px 10px;background:#fff3e0;color:#e67e22;font-size:0.7rem;font-weight:600;text-align:center;">—— 以下 ' + outside.length + ' 条不在当前选定的（' + (pn||'') + '）周期范围 ——</td>';
-                    tbody.appendChild(sr);
-                    outside.forEach(function(e) {
-                        var sg = e.source === '初审' ? 'cs' : (e.source === '抽检' ? 'cj' : 'qa');
-                        var r = document.createElement('tr'); r.className = 'search-extra'; r.style.background = '#fffdf0';
-                        r.innerHTML = '<td>' + e.dateStr + '</td><td><span class="site-tag ' + ({'深圳':'sz','青岛':'qd','成都':'cd'}[e.site]||'') + '">' + escapeHtml(e.site) + '</span></td><td><span class="source-tag ' + sg + '">' + e.source + '</span></td><td>' + escapeHtml(e.category) + '</td><td>' + escapeHtml(e.reviewer) + '</td><td style="max-width:300px;font-size:0.78rem;">' + escapeHtml(e.note) + '</td><td style="font-size:0.7rem;">' + escapeHtml(e.qcCode) + '</td>';
-                        tbody.appendChild(r);
-                    });
+            var v = (val || '').toLowerCase().trim();
+            _searchKeywords = v ? v.split(/[\s,，。；;、]+/).filter(function(k) { return k.length > 0; }) : null;
+            // 逆拆词：单关键词时尝试按已知值拆分
+            if (_searchKeywords && _searchKeywords.length === 1) {
+                var kw = _searchKeywords[0];
+                var known = ['深圳','青岛','成都','初审','抽检','qa','手机','平板','3c多品类','功能问题','拆修浸液','外观问题','配件问题'];
+                var parts = []; var remain = kw;
+                known.sort(function(a,b){ return b.length - a.length; });
+                var changed = true, maxLoop = 20;
+                while (changed && remain && maxLoop-- > 0) {
+                    changed = false;
+                    for (var ki = 0; ki < known.length; ki++) {
+                        var idx = remain.indexOf(known[ki]);
+                        if (idx >= 0) {
+                            if (idx > 0) parts.push(remain.substring(0, idx));
+                            parts.push(known[ki]);
+                            remain = remain.substring(idx + known[ki].length);
+                            changed = true;
+                            break;
+                        }
+                    }
                 }
-                if (hintEl) { var ds = outside.map(function(e) { return e.dateStr; }).sort(); var dr = ds[0] === ds[ds.length-1] ? ds[0] : ds[0] + ' ~ ' + ds[ds.length-1]; hintEl.innerHTML = '💡 「<b>' + v + '</b>」全量共 ' + (curFiltered.filter(fullMatch).length + outside.length) + ' 条，其中 ' + outside.length + ' 条来自其他周期（' + dr + '），已显示在列表底部。'; hintEl.style.display = ''; }
-            } else { if (hintEl) hintEl.style.display = 'none'; }
-        }, 200);
+                if (remain) parts.push(remain);
+                parts = parts.filter(function(p) { return p.length > 0; });
+                if (parts.length > 1) _searchKeywords = parts;
+            }
+            window._tablePage = 1;
+            _refreshErrorTableBody();
+            _refreshErrorStats();
+        }, 300);
     }
 
     function searchPortrait(val) {
@@ -14020,7 +14541,7 @@ URL.revokeObjectURL(url);
         });
         // 精准匹配：对每个课程计算匹配分
         var allItems = [];
-        window._lmCategories.forEach(function(cat) { if (cat.title !== '手机') return;
+        window._lmCategories.forEach(function(cat) {
             cat.groups.forEach(function(g) {
                 g.items.forEach(function(item) {
                     if (!item.link) return;
@@ -14095,7 +14616,7 @@ URL.revokeObjectURL(url);
                     '<a href=\"?learnPlan=' + planData.code + '\" target=\"_blank\" style=\"background:#16a34a;color:white;padding:8px 16px;border-radius:20px;cursor:pointer;font-size:0.8rem;text-decoration:none;display:inline-block;\">👁️ 预览学习地图</a>' +
                 '</div>' +
                 '<div style=\"display:flex;gap:8px;margin-top:8px;justify-content:center;\">' +
-                    '<button class=\"push-exam-btn\" style=\"flex:1;background:#e67e22;color:white;border:none;padding:10px 16px;border-radius:20px;cursor:pointer;font-size:0.85rem;font-weight:600;\">📤 飞书推送</button>' +
+                    '<button class=\"push-exam-btn admin-only\" style=\"flex:1;background:#e67e22;color:white;border:none;padding:10px 16px;border-radius:20px;cursor:pointer;font-size:0.85rem;font-weight:600;\">📤 飞书推送</button>' +
                     '<button class=\"goto-exam-btn\" style=\"flex:1;border:1px solid #e2e8f0;background:#f8fafc;padding:10px 16px;border-radius:20px;cursor:pointer;font-size:0.85rem;\">📋 前往考试系统</button>' +
                 '</div>' +
             '</div></div>';
@@ -14338,13 +14859,44 @@ URL.revokeObjectURL(url);
 
     function doGenerateTraining(reviewerNames, titleLabel) {
         var allErrors = getFilteredErrors();
-        var cats = {};
+        var comboCats = {}; // 品类+类别组合统计
+        var cats = {};      // 汇总到类别（用于案例匹配）
         reviewerNames.forEach(function(name){
-            allErrors.filter(function(e){return e.reviewer===name;}).forEach(function(e){ cats[e.category] = (cats[e.category]||0)+1; });
+            allErrors.filter(function(e){return e.reviewer===name;}).forEach(function(e){
+                var key = (e.product||'未知') + '-' + e.category;
+                comboCats[key] = (comboCats[key]||0) + 1;
+                cats[e.category] = (cats[e.category]||0) + 1;
+            });
         });
         if (Object.keys(cats).length === 0) { showAlert("当前维度下无可匹配的培训人员", "⚠️"); return; }
+        // 品类+类别组合展示
+        var comboSorted = Object.entries(comboCats).sort(function(a,b){ return b[1] - a[1]; });
+        var comboText = comboSorted.map(function(e){ return e[0] + '(' + e[1] + ')'; }).join(' / ');
+        // 主品类判断：≥90%则排除其他品类案例
+        var totalErrors = 0;
+        var productCounts = {};
+        reviewerNames.forEach(function(name){
+            allErrors.filter(function(e){return e.reviewer===name;}).forEach(function(e){
+                var p = e.product||'未知'; productCounts[p] = (productCounts[p]||0)+1; totalErrors++;
+            });
+        });
+        var dominantProduct = null;
+        var knownProducts = ['手机','平板','3C多品类'];
+        Object.entries(productCounts).forEach(function(e) {
+            if (totalErrors > 0 && e[1] / totalErrors >= 0.9) dominantProduct = e[0];
+        });
+        var excludedProducts = dominantProduct ? knownProducts.filter(function(p) { return p !== dominantProduct; }) : [];
         var allCases = getManualCasesFull();
-        var matched = allCases.filter(function(c){ return c.errorCategory && cats[c.errorCategory]; });
+        var matched = allCases.filter(function(c){
+            if (!c.errorCategory || !cats[c.errorCategory]) return false;
+            if (excludedProducts.length > 0) {
+                var caseText = ((c.issueDesc||'') + ' ' + (c.correctDir||'') + ' ' + (c.errorCategory||'')).toLowerCase();
+                for (var ep = 0; ep < excludedProducts.length; ep++) {
+                    if (caseText.indexOf(excludedProducts[ep].toLowerCase()) >= 0) return false;
+                }
+            }
+            return true;
+        });
         if (matched.length === 0) { showAlert("案例库中无匹配的案例", "⚠️"); return; }
         matched.sort(function(a,b){ return (cats[b.errorCategory]||0)-(cats[a.errorCategory]||0); });
         matched = matched.slice(0, 30);
@@ -14360,17 +14912,17 @@ URL.revokeObjectURL(url);
         ".footer{color:#94a3b8;text-align:center;margin-top:40px;font-size:0.85rem;}" +
         "</style></head><body><h1>📄 精准培训资料</h1>" +
         "<p style=\"color:#94a3b8;\">培训范围：" + escapeHtml(titleLabel) + " | 涉及人员：" + reviewerNames.join("、") + " | 生成日期：" + new Date().toLocaleDateString("zh-CN") + " | 共 " + matched.length + " 个案例</p>" +
-        "<p style=\"color:#5e6f8d;font-size:0.85rem;\">失误类别：" + Object.keys(cats).join("、") + "</p>";
+        "<p style=\"color:#5e6f8d;font-size:0.85rem;\">品类+失误类别：" + comboText + "</p>";
 
         matched.forEach(function(c) {
             docHtml += "<div class=\"case-card\"><div class=\"qc-code\">🔖 质检码：" + escapeHtml(c.qcCode) + " | 🏷️ " + escapeHtml(c.errorCategory || "") + "</div>" +
             "<div class=\"label\">📝 问题描述</div><div class=\"desc\">" + escapeHtml(c.issueDesc || "") + "</div>";
             if (c.issuePhotos && c.issuePhotos.length > 0) {
-                docHtml += "<div class=\"label\">📷 问题照片</div>" + c.issuePhotos.map(function(p) { return "<img src=\"" + p + "\" alt=\"问题照片\" style=\"max-width:100%;\">"; }).join("");
+                docHtml += "<div class=\"label\">📷 问题照片</div>" + c.issuePhotos.map(function(p) { return photoTag(p, 400, 400); }).join("");
             }
             docHtml += "<div class=\"label\">✅ 应操作方向</div><div class=\"correct\">" + escapeHtml(c.correctDir || "") + "</div>";
             if (c.dirPhotos && c.dirPhotos.length > 0) {
-                docHtml += "<div class=\"label\">📷 方向示例照片</div>" + c.dirPhotos.map(function(p) { return "<img src=\"" + p + "\" alt=\"方向照片\" style=\"max-width:100%;\">"; }).join("");
+                docHtml += "<div class=\"label\">📷 方向示例照片</div>" + c.dirPhotos.map(function(p) { return photoTag(p, 400, 400); }).join("");
             }
             docHtml += "</div>";
         });
@@ -14390,14 +14942,14 @@ URL.revokeObjectURL(url);
             "<div class=\"modal-header\">📄 " + escapeHtml(titleLabel) + "<button class=\"modal-close-btn\" id=\"trainClose\">✕</button></div>" +
             "<div class=\"modal-body\" style=\"text-align:center;overflow-y:auto;flex:1;min-height:0;\">" +
                 "<div style=\"font-size:1.1rem;font-weight:700;color:#1f3a6b;margin-bottom:8px;\">共匹配 " + matched.length + " 个案例</div>" +
-                "<div style=\"font-size:0.8rem;color:#5e6f8d;margin-bottom:12px;\">涉及" + reviewerNames.length + "人 | " + Object.keys(cats).join(" / ") + "</div>" +
+                "<div style=\"font-size:0.8rem;color:#5e6f8d;margin-bottom:12px;\">涉及" + reviewerNames.length + "人 | " + comboText + "</div>" +
                 "<div style=\"background:#f8fafc;border-radius:14px;padding:14px;border:1px solid #eef2f6;text-align:center;\">" +
                     "<div style=\"font-weight:700;color:#1f3a6b;margin-bottom:8px;font-size:0.85rem;\">🔗 培训链接</div>" +
                     "<div style=\"background:white;border:1px solid #eef2f6;border-radius:8px;padding:8px;font-size:0.65rem;word-break:break-all;color:#5e6f8d;margin-bottom:6px;\">" + DEPLOYED_URL + '?report=' + encodeURIComponent(reportName) + "</div>" +
                     "<button class=\"copy-train-link\" data-url=\"" + (DEPLOYED_URL + '?report=' + encodeURIComponent(reportName)).replace(/"/g,"&quot;") + "\" style=\"background:#2a5298;color:white;border:none;padding:6px 14px;border-radius:16px;cursor:pointer;font-size:0.75rem;\">📋 复制链接</button>" +
                 "</div>" +
                 "<div style=\"display:flex;gap:8px;margin-top:12px;justify-content:center;\">" +
-                    "<button class=\"push-exam-btn\" style=\"flex:1;background:#e67e22;color:white;border:none;padding:10px 16px;border-radius:20px;cursor:pointer;font-size:0.85rem;font-weight:600;\">📤 飞书推送</button>" +
+                    "<button class=\"push-exam-btn admin-only\" style=\"flex:1;background:#e67e22;color:white;border:none;padding:10px 16px;border-radius:20px;cursor:pointer;font-size:0.85rem;font-weight:600;\">📤 飞书推送</button>" +
                     "<button class=\"goto-exam-btn\" style=\"flex:1;border:1px solid #e2e8f0;background:#f8fafc;padding:10px 16px;border-radius:20px;cursor:pointer;font-size:0.85rem;\">📋 前往考试系统</button>" +
                 "</div>" +
             "</div>" +
@@ -14509,20 +15061,20 @@ URL.revokeObjectURL(url);
         // 表格行
         var tableRows = '';
         if (errorDashboardAllFailed) {
-            tableRows = '<tr><td colspan="7" style="padding:40px;text-align:center;"><div style="font-size:1.2rem;color:#c0392b;margin-bottom:12px;">⚠️ 飞书授权已过期</div><div style="color:#5e6f8d;font-size:0.8rem;margin-bottom:16px;">无法从飞书表格加载数据，请重新授权</div><a href="https://open.feishu.cn/open-apis/authen/v1/authorize?app_id=' + FEISHU_CONFIG.appId + '&redirect_uri=https%3A%2F%2Fjimu-111.github.io%2Fyouxuetang%2F&scope=sheets:spreadsheet:readonly%20drive:drive:readonly%20wiki:wiki:readonly%20im:message.send_as_user%20contact:user.employee:readonly" style="display:inline-block;background:#1f3a6b;color:white;padding:10px 24px;border-radius:30px;text-decoration:none;font-size:0.85rem;">🔗 前往飞书授权</a></td></tr>';
+            tableRows = '<tr><td colspan="8" style="padding:40px;text-align:center;"><div style="font-size:1.2rem;color:#c0392b;margin-bottom:12px;">⚠️ 飞书授权已过期</div><div style="color:#5e6f8d;font-size:0.8rem;margin-bottom:16px;">无法从飞书表格加载数据，请重新授权</div><a href="https://open.feishu.cn/open-apis/authen/v1/authorize?app_id=' + FEISHU_CONFIG.appId + '&redirect_uri=https%3A%2F%2Fjimu-111.github.io%2Fyouxuetang%2F&scope=sheets:spreadsheet:readonly%20drive:drive:readonly%20wiki:wiki:readonly%20im:message:send" style="display:inline-block;background:#1f3a6b;color:white;padding:10px 24px;border-radius:30px;text-decoration:none;font-size:0.85rem;">🔗 前往飞书授权</a></td></tr>';
         } else if (pageData.length === 0) {
-            tableRows = '<tr><td colspan="7" style="padding:30px;color:#94a3b8;">暂无匹配的失误记录</td></tr>';
+            tableRows = '<tr><td colspan="8" style="padding:30px;color:#94a3b8;">暂无匹配的失误记录</td></tr>';
         } else {
             pageData.forEach(function(e) {
                 var srcTag = e.source === '初审' ? 'cs' : (e.source === '抽检' ? 'cj' : 'qa');
-                tableRows += '<tr><td>' + e.dateStr + '</td><td>' + escapeHtml(e.site) + '</td><td><span class="source-tag ' + srcTag + '">' + e.source + '</span></td><td>' + escapeHtml(e.category) + '</td><td>' + escapeHtml(e.reviewer) + '</td><td style="text-align:center;max-width:300px;font-size:0.78rem;">' + escapeHtml(e.note) + '</td><td style="font-size:0.7rem;">' + escapeHtml(e.qcCode) + '</td></tr>';
+                tableRows += '<tr><td>' + e.dateStr + '</td><td>' + '<span class="site-tag ' + ({'深圳':'sz','青岛':'qd','成都':'cd'}[e.site]||'') + '">' + escapeHtml(e.site) + '</span></td><td>' + '' + '<span class="product-tag" style="' + getProductStyle(e.product) + '">' + escapeHtml(e.product || '-') + '</span></td><td><span class="source-tag ' + srcTag + '">' + e.source + '</span></td><td>' + escapeHtml(e.category) + '</td><td>' + escapeHtml(e.reviewer) + '</td><td style="text-align:center;max-width:300px;font-size:0.78rem;">' + escapeHtml(e.note) + '</td><td style="font-size:0.7rem;">' + escapeHtml(e.qcCode) + '</td></tr>';
             });
         }
 
         // 分页按钮
         var paginationHtml = '';
         if (totalPages > 1) {
-            paginationHtml = '<div class="pagination"><button onclick="errorDashboardPage=1;window._tablePage=1;renderErrorDashboardContent();" ' + (errorDashboardPage <= 1 ? 'disabled' : '') + '>首页</button><button onclick="errorDashboardPage--;renderErrorDashboardContent();" ' + (errorDashboardPage <= 1 ? 'disabled' : '') + '>上一页</button><span style="font-size:0.8rem;color:#5e6f8d;">第 ' + errorDashboardPage + '/' + totalPages + ' 页</span><button onclick="errorDashboardPage++;renderErrorDashboardContent();" ' + (errorDashboardPage >= totalPages ? 'disabled' : '') + '>下一页</button><button onclick="errorDashboardPage=' + totalPages + ';renderErrorDashboardContent();" ' + (errorDashboardPage >= totalPages ? 'disabled' : '') + '>末页</button></div>';
+            paginationHtml = '<div class="pagination"><button onclick="errorDashboardPage=1;window._tablePage=1;_refreshErrorTableBody()" ' + (errorDashboardPage <= 1 ? 'disabled' : '') + '>首页</button><button onclick="errorDashboardPage--;_refreshErrorTableBody()" ' + (errorDashboardPage <= 1 ? 'disabled' : '') + '>上一页</button><span style="font-size:0.8rem;color:#5e6f8d;">第 ' + errorDashboardPage + '/' + totalPages + ' 页</span><button onclick="errorDashboardPage++;_refreshErrorTableBody()" ' + (errorDashboardPage >= totalPages ? 'disabled' : '') + '>下一页</button><button onclick="errorDashboardPage=' + totalPages + ';_refreshErrorTableBody()" ' + (errorDashboardPage >= totalPages ? 'disabled' : '') + '>末页</button></div>';
         }
 
         // 数据状态点
@@ -14701,7 +15253,7 @@ URL.revokeObjectURL(url);
                     '</div>' +
                 '</div>' +
                 '<div class="sheet-status">' + statusDots + '<span style="margin-left:12px;font-size:0.75rem;color:#5e6f8d;">总失误数（' + errorDashboardData.length + '条）</span></div>' +
-                (errorDashboardAllFailed ? '<div style="background:#fff5f5;border-left:4px solid #c0392b;padding:12px 16px;border-radius:12px;margin-top:12px;"><div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;"><span style="font-size:1.2rem;">⚠️</span><span style="color:#c0392b;font-weight:600;font-size:0.85rem;">飞书授权已过期，无法从飞书表格加载最新数据</span><a href="https://open.feishu.cn/open-apis/authen/v1/authorize?app_id=' + FEISHU_CONFIG.appId + '&redirect_uri=https%3A%2F%2Fjimu-111.github.io%2Fyouxuetang%2F&scope=sheets:spreadsheet:readonly%20drive:drive:readonly%20wiki:wiki:readonly%20im:message.send_as_user%20contact:user.employee:readonly" style="display:inline-block;background:#c0392b;color:white;padding:8px 20px;border-radius:30px;text-decoration:none;font-size:0.8rem;font-weight:600;white-space:nowrap;">🔗 前往飞书授权</a><span onclick="var s=document.getElementById(\'bannerQrSection\');var show=s.style.display===\'block\';s.style.display=show?\'none\':\'block\';this.textContent=show?\'📱 扫码授权\':\'收起\'" style="color:#2a5298;cursor:pointer;font-size:0.75rem;text-decoration:underline;white-space:nowrap;">📱 扫码授权</span></div><div id="bannerQrSection" style="display:none;margin-top:10px;padding-top:10px;border-top:1px dashed #f5c6cb;"><div style="display:flex;gap:16px;align-items:center;flex-wrap:wrap;justify-content:center;"><div id="bannerQrcode" style="background:white;padding:6px;border-radius:8px;border:1px solid #eef2f6;"></div><div style="flex:1;min-width:160px;"><p style="font-size:0.7rem;color:#5e6f8d;margin-bottom:6px;">📱 手机扫码授权 → token自动上传云端 → 本机自动检测</p><p id="bannerPolling" style="font-size:0.68rem;color:#2a5298;"></p><div style="margin-top:8px;"><input id="manualCodeInput2" type="text" placeholder="或粘贴授权码…" style="width:100%;padding:6px 10px;border:1px solid #cbd5e1;border-radius:8px;font-size:0.75rem;font-family:monospace;margin-bottom:4px;"><button id="manualCodeBtn2" onclick="var code=document.getElementById(\'manualCodeInput2\').value;var btn=this;btn.disabled=true;btn.textContent=\'⏳\';exchangeCodeForToken(code).then(function(r){if(r.success){clearInterval(window._bannerQrPoll);errorDashboardData=[];errorDashboardSheetStatus={};errorDashboardAllFailed=false;localStorage.removeItem(\'errorDashboardCache\');refreshErrorDashboardData(true,false);}else{btn.disabled=false;btn.textContent=\'🔓\';alert(\'❌ \'+r.error);}}).catch(function(e){btn.disabled=false;btn.textContent=\'🔓\';alert(\'❌ \'+e.message);});" style="width:100%;padding:6px;background:#2a5298;color:white;border:none;border-radius:8px;cursor:pointer;font-size:0.75rem;font-weight:600;">🔓 激活</button></div></div></div></div></div>' +
+                (errorDashboardAllFailed ? '<div style="background:#fff5f5;border-left:4px solid #c0392b;padding:12px 16px;border-radius:12px;margin-top:12px;"><div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;"><span style="font-size:1.2rem;">⚠️</span><span style="color:#c0392b;font-weight:600;font-size:0.85rem;">飞书授权已过期，无法从飞书表格加载最新数据</span><a href="https://open.feishu.cn/open-apis/authen/v1/authorize?app_id=' + FEISHU_CONFIG.appId + '&redirect_uri=https%3A%2F%2Fjimu-111.github.io%2Fyouxuetang%2F&scope=sheets:spreadsheet:readonly%20drive:drive:readonly%20wiki:wiki:readonly%20im:message:send" style="display:inline-block;background:#c0392b;color:white;padding:8px 20px;border-radius:30px;text-decoration:none;font-size:0.8rem;font-weight:600;white-space:nowrap;">🔗 前往飞书授权</a><span onclick="var s=document.getElementById(\'bannerQrSection\');var show=s.style.display===\'block\';s.style.display=show?\'none\':\'block\';this.textContent=show?\'📱 扫码授权\':\'收起\'" style="color:#2a5298;cursor:pointer;font-size:0.75rem;text-decoration:underline;white-space:nowrap;">📱 扫码授权</span></div><div id="bannerQrSection" style="display:none;margin-top:10px;padding-top:10px;border-top:1px dashed #f5c6cb;"><div style="display:flex;gap:16px;align-items:center;flex-wrap:wrap;justify-content:center;"><div id="bannerQrcode" style="background:white;padding:6px;border-radius:8px;border:1px solid #eef2f6;"></div><div style="flex:1;min-width:160px;"><p style="font-size:0.7rem;color:#5e6f8d;margin-bottom:6px;">📱 手机扫码授权 → token自动上传云端 → 本机自动检测</p><p id="bannerPolling" style="font-size:0.68rem;color:#2a5298;"></p><div style="margin-top:8px;"><input id="manualCodeInput2" type="text" placeholder="或粘贴授权码…" style="width:100%;padding:6px 10px;border:1px solid #cbd5e1;border-radius:8px;font-size:0.75rem;font-family:monospace;margin-bottom:4px;"><button id="manualCodeBtn2" onclick="var code=document.getElementById(\'manualCodeInput2\').value;var btn=this;btn.disabled=true;btn.textContent=\'⏳\';exchangeCodeForToken(code).then(function(r){if(r.success){clearInterval(window._bannerQrPoll);errorDashboardData=[];errorDashboardSheetStatus={};errorDashboardAllFailed=false;localStorage.removeItem(\'errorDashboardCache\');refreshErrorDashboardData(true,false);}else{btn.disabled=false;btn.textContent=\'🔓\';alert(\'❌ \'+r.error);}}).catch(function(e){btn.disabled=false;btn.textContent=\'🔓\';alert(\'❌ \'+e.message);});" style="width:100%;padding:6px;background:#2a5298;color:white;border:none;border-radius:8px;cursor:pointer;font-size:0.75rem;font-weight:600;">🔓 激活</button></div></div></div></div></div>' +
                 '' : '') +
                 // ② 筛选看板 + 人员画像（置顶）
                 (function() {
@@ -14742,18 +15294,10 @@ URL.revokeObjectURL(url);
                         return btns;
                     }
                     var allPeople = sortedReviewers.filter(function(e) { return e[1] > 0; });
-                    var portraitPage = window._portraitPage || 1;
-                    var portraitPageSize = 22;
-                    var portraitTotalPages = Math.ceil(allPeople.length / portraitPageSize) || 1;
-                    if (portraitPage > portraitTotalPages) portraitPage = portraitTotalPages;
-                    var showPeople = allPeople.slice((portraitPage - 1) * portraitPageSize, portraitPage * portraitPageSize);
                     var personRankInfo = buildRankMap(reviewerStats, allPeople.map(function(e) { return e[0]; }));
-                    var personHtml = '';
-                    // 预检：是否有任何人需要E列
-                    var hasAnyActions = false;
-                    var rowsData = [];
-                    if (showPeople.length > 0) {
-                        showPeople.forEach(function(entry) {
+                    var allRowsData = [];
+                    if (allPeople.length > 0) {
+                        allPeople.forEach(function(entry) {
                             var name = entry[0], count = entry[1];
                             var rank = personRankInfo.rankMap[name] || 0;
                             var color = heatColorByRank(rank, personRankInfo.totalRanks, 0.7);
@@ -14761,28 +15305,34 @@ URL.revokeObjectURL(url);
                             var sites = getPersonSites(name);
                             var actions = getPersonActions(name, count);
                             var hasAct = actions && actions.trim().length > 0;
-                            if (hasAct) hasAnyActions = true;
-                            rowsData.push({ name:name, count:count, rank:rank, color:color, cats:cats, sites:sites, actions:actions, hasAct:hasAct });
+                            allRowsData.push({ name:name, count:count, color:color, cats:cats, sites:sites, actions:actions, hasAct:hasAct });
                         });
-                        // 根据是否有E列使用不同列宽
-                        personHtml = rowsData.map(function(r) {
-                            var thP = getLightThresholds();
-                            var lightIcon = r.count > thP.yellowMax ? '🔴' : (r.count > thP.greenMax ? '🟡' : '🟢');
-                            var siteHtml = ' <span style="color:#94a3b8;font-size:0.65rem;">（' + escapeHtml(r.sites) + '）</span>';
-                            return '<tr class="portrait-row" style="border-bottom:1px solid #f1f5f9;">' +
-                                '<td style="text-align:center;padding:6px 4px;"><span style="font-size:0.7rem;">' + lightIcon + '</span> <span class="clickable-tag" onclick="showErrorDetailPopup(\'reviewer\',\'' + r.name.replace(/'/g, "\\'") + '\')" style="font-weight:600;color:#2d3748;cursor:pointer;font-size:0.7rem;" title="点击查看详情">' + escapeHtml(r.name) + siteHtml + '</span></td>' +
-                                '<td style="text-align:center;padding:6px 4px;font-size:0.7rem;color:#5e6f8d;">' + r.count + '次</td>' +
-                                '<td style="text-align:center;padding:6px 4px;font-size:0.7rem;color:#5e6f8d;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:120px;" title="' + escapeHtml(r.cats || '-') + '">' + (r.cats || '-') + '</td>' +
-                                (hasAnyActions ? '<td style="text-align:center;padding:6px 4px;white-space:nowrap;">' + (r.actions||'') + '</td>' : '') +
-                            '</tr>';
-                        }).join('');
                     }
+                    window._portraitAllRows = allRowsData;
+                    // 分页显示
+                    var portraitPage = window._portraitPage || 1;
+                    var portraitPageSize = 22;
+                    var portraitTotalPages = Math.ceil(allRowsData.length / portraitPageSize) || 1;
+                    if (portraitPage > portraitTotalPages) portraitPage = portraitTotalPages;
+                    var pageRows = allRowsData.slice((portraitPage - 1) * portraitPageSize, portraitPage * portraitPageSize);
+                    var pageHasActions = pageRows.some(function(r) { return r.hasAct; });
+                    var personHtml = pageRows.map(function(r) {
+                        var thP = getLightThresholds();
+                        var lightIcon = r.count > thP.yellowMax ? '🔴' : (r.count > thP.greenMax ? '🟡' : '🟢');
+                        var siteHtml = ' <span style="color:#94a3b8;font-size:0.65rem;">（' + escapeHtml(r.sites) + '）</span>';
+                        return '<tr class="portrait-row" style="border-bottom:1px solid #f1f5f9;">' +
+                            '<td style="text-align:center;padding:6px 4px;"><span style="font-size:0.7rem;">' + lightIcon + '</span> <span class="clickable-tag" onclick="showErrorDetailPopup(\'reviewer\',\'' + r.name.replace(/'/g, "\\'") + '\')" style="font-weight:600;color:#2d3748;cursor:pointer;font-size:0.7rem;" title="点击查看详情">' + escapeHtml(r.name) + siteHtml + '</span></td>' +
+                            '<td style="text-align:center;padding:6px 4px;font-size:0.7rem;color:#5e6f8d;">' + r.count + '次</td>' +
+                            '<td style="text-align:center;padding:6px 4px;font-size:0.7rem;color:#5e6f8d;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:120px;" title="' + escapeHtml(r.cats || '-') + '">' + (r.cats || '-') + '</td>' +
+                            (pageHasActions ? '<td style="text-align:center;padding:6px 4px;white-space:nowrap;">' + (r.actions||'') + '</td>' : '') +
+                        '</tr>';
+                    }).join('');
                     var expandLink = '';
                     if (portraitTotalPages > 1) {
                         expandLink = '<div class="pagination" style="margin-top:6px;">' +
-                            '<button ' + (portraitPage <= 1 ? 'disabled' : '') + ' onclick="window._portraitPage=' + (portraitPage - 1) + ';renderErrorDashboardContent();">上一页</button>' +
+                            '<button ' + (portraitPage <= 1 ? 'disabled' : '') + ' onclick="window._portraitPage=' + (portraitPage - 1) + ';_refreshPortraitSection()">上一页</button>' +
                             '<span style="font-size:0.75rem;color:#5e6f8d;">' + portraitPage + '/' + portraitTotalPages + '</span>' +
-                            '<button ' + (portraitPage >= portraitTotalPages ? 'disabled' : '') + ' onclick="window._portraitPage=' + (portraitPage + 1) + ';renderErrorDashboardContent();">下一页</button>' +
+                            '<button ' + (portraitPage >= portraitTotalPages ? 'disabled' : '') + ' onclick="window._portraitPage=' + (portraitPage + 1) + ';_refreshPortraitSection()">下一页</button>' +
                         '</div>';
                     }
                     window._portraitHtml = personHtml;
@@ -14843,18 +15393,18 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
             // 统计概览
             '<div class="report-box" style="margin-bottom:16px;">' +
                 '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:12px;">' +
-                    '<div class="stat-mini"><div class="lbl" style="font-size:0.9rem;font-weight:700;margin-bottom:2px;">📋 失误数</div><div class="val" style="font-size:2.2rem;">' + totalErrors + '</div></div>' +
-                    '<div class="stat-mini"><div class="lbl" style="font-size:0.9rem;font-weight:700;margin-bottom:2px;">🏷️ 失误类别</div><div class="val" style="font-size:2.2rem;">' + allCategories.length + '</div></div>' +
-                    '<div class="stat-mini"><div class="lbl" style="font-size:0.9rem;font-weight:700;margin-bottom:2px;">👤 涉及初审</div><div class="val" style="font-size:2.2rem;">' + allReviewers.length + '<span style="font-size:0.9rem;color:#94a3b8;">/' + (window._activeNameCount || allReviewers.length) + '</span></div></div>' +
+                    '<div class="stat-mini"><div class="lbl" style="font-size:0.9rem;font-weight:700;margin-bottom:2px;">📋 失误数</div><div class="val" id="statTotalErrors" style="font-size:2.2rem;">' + totalErrors + '</div></div>' +
+                    '<div class="stat-mini"><div class="lbl" style="font-size:0.9rem;font-weight:700;margin-bottom:2px;">🏷️ 失误类别</div><div class="val" id="statCategories" style="font-size:2.2rem;">' + allCategories.length + '</div></div>' +
+                    '<div class="stat-mini"><div class="lbl" style="font-size:0.9rem;font-weight:700;margin-bottom:2px;">👤 涉及初审</div><div class="val" id="statReviewers" style="font-size:2.2rem;">' + allReviewers.length + '<span style="font-size:0.9rem;color:#94a3b8;">/' + (window._activeNameCount || allReviewers.length) + '</span></div></div>' +
                 '</div>' +
                 '<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">' +
                     '<div style="background:#fafcff;border-radius:16px;padding:12px 16px;border:1px solid #eef2f6;">' +
                         '<div style="font-weight:700;color:#1f3a6b;margin-bottom:8px;font-size:0.85rem;">🏷️ Top 失误类别</div>' +
-                        '<div style="display:flex;flex-wrap:wrap;gap:4px;">' + (topCats || '-') + '</div>' +
+                        '<div id="topCatsContainer" style="display:flex;flex-wrap:wrap;gap:4px;">' + (topCats || '-') + '</div>' +
                     '</div>' +
                     '<div style="background:#fafcff;border-radius:16px;padding:12px 16px;border:1px solid #eef2f6;">' +
                         '<div style="font-weight:700;color:#1f3a6b;margin-bottom:8px;font-size:0.85rem;">👤 Top 失误人员</div>' +
-                        '<div style="display:flex;flex-wrap:wrap;gap:4px;">' + (topReviewers || '-') + '</div>' +
+                        '<div id="topReviewersContainer" style="display:flex;flex-wrap:wrap;gap:4px;">' + (topReviewers || '-') + '</div>' +
                     '</div>' +
                 '</div>' +
             '</div>' +
@@ -14864,16 +15414,16 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
                 var totalFiltered = filtered.length;
                 var tableBlock;
                 if (errorDashboardAllFailed) {
-                    tableBlock = '<div style="flex:1;overflow:auto;min-height:0;"><div class="error-table-wrapper"><table class="error-table"><thead><tr><th>日期</th><th>站点</th><th>来源</th><th>失误类别</th><th>初审人</th><th>失误备注</th><th>质检码</th></tr></thead><tbody><tr><td colspan="7" style="padding:40px;text-align:center;"><div style="font-size:1.2rem;color:#c0392b;margin-bottom:12px;">⚠️ 飞书授权已过期</div><div style="color:#5e6f8d;font-size:0.8rem;margin-bottom:16px;">无法从飞书表格加载最新数据，请重新授权</div><a href="https://open.feishu.cn/open-apis/authen/v1/authorize?app_id=' + FEISHU_CONFIG.appId + '&redirect_uri=https%3A%2F%2Fjimu-111.github.io%2Fyouxuetang%2F&scope=sheets:spreadsheet:readonly%20drive:drive:readonly%20wiki:wiki:readonly%20im:message.send_as_user%20contact:user.employee:readonly" style="display:inline-block;background:#1f3a6b;color:white;padding:10px 24px;border-radius:30px;text-decoration:none;font-size:0.85rem;">🔗 前往飞书授权</a></td></tr></tbody></table></div></div>';
+                    tableBlock = '<div style="flex:1;overflow:auto;min-height:0;"><div class="error-table-wrapper"><table class="error-table"><thead><tr><th>日期</th><th>站点</th><th>品类</th><th>来源</th><th>失误类别</th><th>初审人</th><th>失误备注</th><th>质检码</th></tr></thead><tbody><tr><td colspan="8" style="padding:40px;text-align:center;"><div style="font-size:1.2rem;color:#c0392b;margin-bottom:12px;">⚠️ 飞书授权已过期</div><div style="color:#5e6f8d;font-size:0.8rem;margin-bottom:16px;">无法从飞书表格加载最新数据，请重新授权</div><a href="https://open.feishu.cn/open-apis/authen/v1/authorize?app_id=' + FEISHU_CONFIG.appId + '&redirect_uri=https%3A%2F%2Fjimu-111.github.io%2Fyouxuetang%2F&scope=sheets:spreadsheet:readonly%20drive:drive:readonly%20wiki:wiki:readonly%20im:message:send" style="display:inline-block;background:#1f3a6b;color:white;padding:10px 24px;border-radius:30px;text-decoration:none;font-size:0.85rem;">🔗 前往飞书授权</a></td></tr></tbody></table><div class="pagination"><span>共0条</span></div></div></div>';
                 } else if (totalFiltered === 0) {
-                    tableBlock = '<div style="flex:1;overflow:auto;min-height:0;"><div class="error-table-wrapper"><table class="error-table"><thead><tr><th>日期</th><th>站点</th><th>来源</th><th>失误类别</th><th>初审人</th><th>失误备注</th><th>质检码</th></tr></thead><tbody><tr><td colspan="7" style="padding:30px;color:#94a3b8;">暂无匹配的失误记录</td></tr></tbody></table></div></div>';
+                    tableBlock = '<div style="flex:1;overflow:auto;min-height:0;"><div class="error-table-wrapper"><table class="error-table"><thead><tr><th>日期</th><th>站点</th><th>品类</th><th>来源</th><th>失误类别</th><th>初审人</th><th>失误备注</th><th>质检码</th></tr></thead><tbody><tr><td colspan="8" style="padding:30px;color:#94a3b8;">暂无匹配的失误记录</td></tr></tbody></table><div class="pagination"><span>共0条</span></div></div></div>';
                 } else if (totalFiltered <= PG_SIZE) {
                     var allRows = '';
                     filtered.forEach(function(e) {
                         var srcTag = e.source === '初审' ? 'cs' : (e.source === '抽检' ? 'cj' : 'qa');
-                        allRows += '<tr><td>' + e.dateStr + '</td><td>' + escapeHtml(e.site) + '</td><td><span class="source-tag ' + srcTag + '">' + e.source + '</span></td><td>' + escapeHtml(e.category) + '</td><td>' + escapeHtml(e.reviewer) + '</td><td style="text-align:center;max-width:300px;font-size:0.78rem;">' + escapeHtml(e.note) + '</td><td style="font-size:0.7rem;">' + escapeHtml(e.qcCode) + '</td></tr>';
+                        allRows += '<tr><td>' + e.dateStr + '</td><td>' + '<span class="site-tag ' + ({'深圳':'sz','青岛':'qd','成都':'cd'}[e.site]||'') + '">' + escapeHtml(e.site) + '</span></td><td>' + '' + '<span class="product-tag" style="' + getProductStyle(e.product) + '">' + escapeHtml(e.product || '-') + '</span></td><td><span class="source-tag ' + srcTag + '">' + e.source + '</span></td><td>' + escapeHtml(e.category) + '</td><td>' + escapeHtml(e.reviewer) + '</td><td style="text-align:center;max-width:300px;font-size:0.78rem;">' + escapeHtml(e.note) + '</td><td style="font-size:0.7rem;">' + escapeHtml(e.qcCode) + '</td></tr>';
                     });
-                    tableBlock = '<div style="flex:1;overflow:auto;min-height:0;"><div class="error-table-wrapper"><table class="error-table"><thead><tr><th>日期</th><th>站点</th><th>来源</th><th>失误类别</th><th>初审人</th><th>失误备注</th><th>质检码</th></tr></thead><tbody>' + allRows + '</tbody></table></div></div>';
+                    tableBlock = '<div style="flex:1;overflow:auto;min-height:0;"><div class="error-table-wrapper"><table class="error-table"><thead><tr><th>日期</th><th>站点</th><th>品类</th><th>来源</th><th>失误类别</th><th>初审人</th><th>失误备注</th><th>质检码</th></tr></thead><tbody>' + allRows + '</tbody></table><div class="pagination"><span>共' + totalFiltered + '条</span></div></div></div>';
                 } else {
                     var totalPages = Math.ceil(totalFiltered / PG_SIZE);
                     var pg = window._tablePage || 1;
@@ -14883,18 +15433,17 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
                     var pgRows = '';
                     pgData.forEach(function(e) {
                         var srcTag = e.source === '初审' ? 'cs' : (e.source === '抽检' ? 'cj' : 'qa');
-                        pgRows += '<tr><td>' + e.dateStr + '</td><td>' + escapeHtml(e.site) + '</td><td><span class="source-tag ' + srcTag + '">' + e.source + '</span></td><td>' + escapeHtml(e.category) + '</td><td>' + escapeHtml(e.reviewer) + '</td><td style="text-align:center;max-width:300px;font-size:0.78rem;">' + escapeHtml(e.note) + '</td><td style="font-size:0.7rem;">' + escapeHtml(e.qcCode) + '</td></tr>';
+                        pgRows += '<tr><td>' + e.dateStr + '</td><td>' + '<span class="site-tag ' + ({'深圳':'sz','青岛':'qd','成都':'cd'}[e.site]||'') + '">' + escapeHtml(e.site) + '</span></td><td>' + '' + '<span class="product-tag" style="' + getProductStyle(e.product) + '">' + escapeHtml(e.product || '-') + '</span></td><td><span class="source-tag ' + srcTag + '">' + e.source + '</span></td><td>' + escapeHtml(e.category) + '</td><td>' + escapeHtml(e.reviewer) + '</td><td style="text-align:center;max-width:300px;font-size:0.78rem;">' + escapeHtml(e.note) + '</td><td style="font-size:0.7rem;">' + escapeHtml(e.qcCode) + '</td></tr>';
                     });
-                    var pgHtml = '<div class="pagination"><button ' + (pg <= 1 ? 'disabled' : '') + ' onclick="window._tablePage=' + (pg - 1) + ';renderErrorDashboardContent();">上一页</button><span style="font-size:0.8rem;">' + pg + '/' + totalPages + '（共' + totalFiltered + '条）</span><button ' + (pg >= totalPages ? 'disabled' : '') + ' onclick="window._tablePage=' + (pg + 1) + ';renderErrorDashboardContent();">下一页</button></div>';
-                    tableBlock = '<div style="flex:1;overflow:auto;min-height:0;"><div class="error-table-wrapper"><table class="error-table"><thead><tr><th>日期</th><th>站点</th><th>来源</th><th>失误类别</th><th>初审人</th><th>失误备注</th><th>质检码</th></tr></thead><tbody>' + pgRows + '</tbody></table>' + pgHtml + '</div></div>';
+                    var pgHtml = '<div class="pagination"><button ' + (pg <= 1 ? 'disabled' : '') + ' onclick="window._tablePage=' + (pg - 1) + ';_refreshErrorTableBody()">上一页</button><span style="font-size:0.8rem;">' + pg + '/' + totalPages + '（共' + totalFiltered + '条）</span><button ' + (pg >= totalPages ? 'disabled' : '') + ' onclick="window._tablePage=' + (pg + 1) + ';_refreshErrorTableBody()">下一页</button></div>';
+                    tableBlock = '<div style="flex:1;overflow:auto;min-height:0;"><div class="error-table-wrapper"><table class="error-table"><thead><tr><th>日期</th><th>站点</th><th>品类</th><th>来源</th><th>失误类别</th><th>初审人</th><th>失误备注</th><th>质检码</th></tr></thead><tbody>' + pgRows + '</tbody></table>' + pgHtml + '</div></div>';
                 }
                 return '<div style="display:flex;gap:16px;align-items:stretch;">' +
                     '<div class="report-box" style="flex:3;min-width:0;margin-bottom:0;display:flex;flex-direction:column;">' +
                         '<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">' +
                             '<div style="font-weight:700;color:#1f3a6b;font-size:0.85rem;">📋 失误列表</div>' +
-                            '<div style="display:flex;gap:4px;align-items:stretch;">' +
+                            '<div id="siteFilterBtns" style="display:flex;gap:4px;align-items:stretch;">' +
                                 (function(){
-                                    // 始终基于当前周期全量数据统计，不受站点筛选影响
                                     var oldSite = errorDashboardFilter.site;
                                     errorDashboardFilter.site = 'all';
                                     var allFiltered = getFilteredErrors();
@@ -14919,7 +15468,7 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
                                     }).join('');
                                 })() +
                             '</div>' +
-                            '<input type="text" id="errorTableSearch" placeholder="🔍 搜索失误..." oninput="searchErrorTable()" style="width:160px;padding:3px 8px;border:1px solid #cbd5e1;border-radius:14px;font-size:0.65rem;margin-left:auto;">' +
+                            '<input type="text" id="errorTableSearch" placeholder="🔍 搜索失误..." oninput="searchErrorTable(this.value)" value="' + (window._savedSearchVal||'') + '" style="width:160px;padding:3px 8px;border:1px solid #cbd5e1;border-radius:14px;font-size:0.65rem;margin-left:auto;">' +
                         '</div>' +
                         '<div id="errorSearchHint" style="display:none;background:#fff3e0;border-left:4px solid #f39c12;padding:6px 10px;border-radius:8px;margin-bottom:8px;font-size:0.7rem;color:#854d0e;line-height:1.5;"></div>' +
                         tableBlock +
@@ -14933,10 +15482,10 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
                     '</div>' +
                     '<div id="portraitSearchMsg" style="display:none;text-align:center;padding:12px;color:#94a3b8;font-size:0.75rem;"></div>' +
                     '<div style="flex:1;min-height:0;">' +
-                    '<div style="overflow:hidden;"><table style="width:100%;table-layout:auto;border-collapse:collapse;">' +
+                    '<div style="overflow:hidden;"><table style="width:100%;table-layout:auto;border-collapse:collapse;"><tbody id="portraitTableBody">' +
                     (window._portraitHtml || '<tr><td colspan="4" style="color:#94a3b8;font-size:0.78rem;text-align:center;padding:20px;">暂无数据</td></tr>') +
-                    '</table></div>' +
-                    '<div style="margin-top:auto;padding-top:8px;">' + (window._portraitExpandLink || '') + '</div>' +
+                    '</tbody></table></div>' +
+                    '<div id="portraitPagination" style="margin-top:auto;padding-top:8px;">' + (window._portraitExpandLink || '') + '</div>' +
                 '</div>' +
             '</div>' +
         '</div>';
@@ -14954,7 +15503,7 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
             var qr = document.getElementById('bannerQrcode');
             if (errorDashboardAllFailed && qr && typeof QRCode !== 'undefined') {
                 qr.innerHTML = '';
-                var au = 'https://open.feishu.cn/open-apis/authen/v1/authorize?app_id=' + FEISHU_CONFIG.appId + '&redirect_uri=https%3A%2F%2Fjimu-111.github.io%2Fyouxuetang%2F&scope=sheets:spreadsheet:readonly%20drive:drive:readonly%20wiki:wiki:readonly%20im:message.send_as_user%20contact:user.employee:readonly';
+                var au = 'https://open.feishu.cn/open-apis/authen/v1/authorize?app_id=' + FEISHU_CONFIG.appId + '&redirect_uri=https%3A%2F%2Fjimu-111.github.io%2Fyouxuetang%2F&scope=sheets:spreadsheet:readonly%20drive:drive:readonly%20wiki:wiki:readonly%20im:message:send';
                 new QRCode(qr, { text: au, width: 130, height: 130, correctLevel: QRCode.CorrectLevel.L });
                 var pollEl = document.getElementById('bannerPolling');
                 var pollCount = 0;
@@ -15978,6 +16527,7 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
         return Object.values(groups).sort(function(a,b){return b.key.localeCompare(a.key);});
     }
 
+    var isStandaloneExamView = location.search.indexOf('exam=') >= 0;
     function renderExamRecordsTab(content) {
         const history = getExamHistory();
         var filterName = window._examFilterReviewer;
@@ -16071,7 +16621,7 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
                             (e.status==='completed'
                                 ? '<button class=\"small-outline\" data-viewexam=\"'+e.id+'\">📊 查看详情</button>'
                                 : '<a class=\"primary\" href=\"?exam='+(e.examCode||'')+'\" target=\"_blank\" style=\"text-decoration:none;display:inline-block;padding:6px 16px;border-radius:20px;font-size:0.8rem;background:#2563eb;color:#fff;\">📝 开始考试</a>') +
-                            '<button class=\"action-btn danger\" data-delexam=\"'+e.id+'\">🗑️</button>' +
+                            (isStandaloneExamView ? '' : '<button class=\"action-btn danger admin-only\" data-delexam=\"'+e.id+'\">🗑️</button>') +
                         '</div></div>';
                 }).join('') +
                 '</div></div>';
@@ -16079,13 +16629,27 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
         content.innerHTML = '<div class=\"report-box\"><style>.exam-failed{background:#fff0f0;border:1px solid #fecaca;}.exam-retake{background:#fffdf0;border:1px solid #fef08a;}.exam-passed{background:#f0fdf4;border:1px solid #bbf7d0;}</style>'+filterHtml+html+'</div>';
         bindExamCardEvents(content);
     }
+    function filterExamCards() {
+        var kw = (window._examSearch || '').trim().toLowerCase();
+        document.querySelectorAll('.exam-card').forEach(function(card) {
+            var text = (card.textContent || '').toLowerCase();
+            card.style.display = (!kw || text.indexOf(kw) >= 0) ? '' : 'none';
+        });
+    }
     function bindExamCardEvents(content) {
         var searchInput = document.getElementById('examSearchInput');
         if (searchInput) {
-            searchInput.oninput = function(){
+            searchInput.oninput = null; // 清除旧事件
+            searchInput.addEventListener('input', function(){
                 window._examSearch = this.value;
-                renderExamRecordsTab(document.getElementById('examTabContent'));
-            };
+                filterExamCards();
+            });
+            // 恢复光标位置
+            var savedVal = window._examSearch || '';
+            if (savedVal && searchInput.value !== savedVal) {
+                searchInput.value = savedVal;
+            }
+            searchInput.focus();
         }
         content.querySelectorAll('.exam-filter').forEach(function(btn){
             btn.onclick = function(){ window._examStatusFilter = btn.dataset.filter; renderExamRecordsTab(document.getElementById('examTabContent')); };
@@ -16094,8 +16658,11 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
         content.querySelectorAll('[data-viewexam]').forEach(function(btn){ btn.onclick = function(){ viewExamRecords(btn.dataset.viewexam); }; });
         content.querySelectorAll('[data-delexam]').forEach(function(btn){
             btn.onclick = async function(){
+                if (!isAdminMode()) { showToast('🔒 请先登录管理员', 'warning'); return; }
                 if (!await confirmDelete('考试记录')) return;
                 var d = getExamHistory(); delete d[btn.dataset.delexam]; saveExamHistory(d); renderExamRecordsTab(document.getElementById('examTabContent'));
+                logAdminAction('删除考试记录', btn.dataset.delexam, '');
+                showToast('✅ 已删除', 'success');
             };
         });
     }
@@ -16695,6 +17262,17 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
         }
         // 初始化侧边栏手风琴
         buildSidebarAccordion();
+        // 游客模式/管理员登录按钮
+        document.getElementById('adminLoginBtn').addEventListener('click', function() {
+            if (isAdminMode()) {
+                logoutAdmin(); updateAdminUI(); buildSidebarAccordion();
+                switchNav('dashboard');
+            } else {
+                showLoginDialog().then(function(ok) {
+                    if (ok) { updateAdminUI(); buildSidebarAccordion(); switchNav('dashboard'); }
+                });
+            }
+        });
         // 监听底部管理后台按钮
         document.querySelector('.nav-btn[data-nav="admin"]').addEventListener('click', function() { switchNav('admin'); });
         _syncPullAll().then(function(count) {
@@ -17184,6 +17762,7 @@ if(!b)return;
 var el=document.getElementById(b.dataset.cardId);
 if(el&&typeof takeModalScreenshot==='function')takeModalScreenshot(b.dataset.cardId.replace('samplingCard','抽检卡片'),el);
 });
+updateAdminUI();
 // 网页版：自动检测URL中的授权码并完成激活
 (function() {
     var m = location.search.match(/[?&]code=([^&]+)/);
