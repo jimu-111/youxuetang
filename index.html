@@ -93,6 +93,11 @@
         
         /* 表格居中显示 */
         .compact-table th, .compact-table td { padding: 1px 3px; border-bottom: 1px solid #eef2f6; text-align: center; vertical-align: middle; font-size: 0.78rem; line-height: 1.3; }
+        #samplingCard1Table td, #samplingCard2Table td { background: #e0e4e8 !important; border: 1px solid #b0b8c0 !important; }
+        #samplingCard1Table th, #samplingCard2Table th { background: #c8d0d8 !important; border: 1px solid #b0b8c0 !important; }
+        #samplingCard1Table input, #samplingCard2Table input { background: transparent !important; }
+        #samplingCard2Table { table-layout: fixed !important; }
+        #samplingCard2Table th { font-size: 0.72rem !important; padding: 4px 2px !important; white-space: nowrap !important; }
         .compact-table th { background: #f8fafc; font-weight: 600; }
         .source-table th, .source-table td { padding: 6px 8px; border-bottom: 1px solid #eef2f6; text-align: center; }
         .source-table td:first-child, .source-table th:first-child { text-align: center; font-weight: 600; background: #f8fafc; }
@@ -4404,7 +4409,12 @@
         const mkMap = fixNK(mistakeMapData || {});
         const m3NameList = ['何显健','周金山','陈毅军','樊景舜','向阳','胡志鹏','赵晨鸿','马浩','伏鑫','杜攀','罗宁','肖健平','吴辉','任青俊','张俊','麦钧淇','杨宏','李晓洋','刘超','李忠林','延依飞'];
         const condNames = ['徐行','唐洲'].filter(n => { const v = mkMap[n]; return v !== undefined && v !== null && Number(v) > 0; });
-        const allM3Names = [...m3NameList, ...condNames];
+        const allM3Names0 = [...m3NameList, ...condNames];
+        const departedRev = getDepartedReviewers();
+        const allM3Names = allM3Names0.filter(name => {
+            if (departedRev[name] && !(cjMap[name] || pzMap[name] || mkMap[name])) return false;
+            return true;
+        });
         let m3Rows = '';
         let sumCJ = 0, sumPZ = 0, sumMK = 0;
         allM3Names.forEach(name => {
@@ -4644,9 +4654,16 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
         // 判断是否为月度分析
         const isMonthType = periodName.includes('月') && !periodName.includes('周');
         
-        const reviewerPeriodStats = isMonthType 
+        const reviewerPeriodStats0 = isMonthType
             ? getReviewerMonthlyStats(allRows, dateColumn, reviewerColumn, periodRanges)
             : getReviewerWeeklyStats(allRows, dateColumn, reviewerColumn, periodRanges);
+        // 过滤已离职且本期无数据的人员
+        const departedRev3 = getDepartedReviewers();
+        const reviewerPeriodStats = {};
+        Object.keys(reviewerPeriodStats0).forEach(function(name) {
+            if (departedRev3[name] && !(reviewerPeriodStats0[name] && (reviewerPeriodStats0[name][periodRanges[0].periodKey]||0) > 0)) return;
+            reviewerPeriodStats[name] = reviewerPeriodStats0[name];
+        });
         window._analysisReviewerPeriodStats = reviewerPeriodStats;
         const thisPeriodKey = periodRanges[0].periodKey;
         const reviewerList = Object.keys(reviewerPeriodStats);
@@ -4821,8 +4838,8 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
         const allHighlightItems = [...highlightItems];
         const allSourceItems = sortedSources.map(s => ({ ...s, isHighlight: false }));
         const allCards = [...allSourceItems, ...allHighlightItems].sort((a, b) => b.count - a.count);
-        const row1Items = allCards.slice(0, 4);
-        const row2Items = allCards.slice(4);
+        const row1Items = allCards.slice(0, 5);
+        const row2Items = allCards.slice(5);
 
         const renderSourceCard = (item, allItemsForScale) => {
             const allCounts = allItemsForScale.map(i => i.count);
@@ -5078,6 +5095,7 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
                 </div>
                 <div id="samplingCard1" style="background:#fff;border-radius:12px;border:1px solid #e2e8f0;padding:16px;margin-bottom:16px;overflow-x:auto;">
                     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;"><div style="font-weight:700;font-size:0.95rem;color:#1f3a6b;">📊 抽检失误数据</div><button class="sampling-card-screenshot-btn" data-card-id="samplingCard1" style="background:#eef2ff;border:none;padding:4px 10px;border-radius:20px;cursor:pointer;font-size:0.72rem;">📸 截图</button></div>
+                    <div id="samplingSummary" contenteditable="true" data-auto="1" style="margin-bottom:10px;padding:8px 12px;background:#f0f4f8;border-radius:10px;font-size:0.82rem;color:#1f3a6b;font-weight:500;outline:none;min-height:24px;" oninput="this.dataset.auto='0';window._saveSamplingCache&&window._saveSamplingCache()"></div>
                     <table id="samplingCard1Table" style="border-collapse:collapse;table-layout:fixed;width:100%;">
                     <colgroup><col style="width:11%"><col style="width:11%"><col style="width:11%"><col style="width:11%"><col style="width:11%"><col style="width:11%"><col style="width:11%"><col style="width:11%"><col style="width:12%"></colgroup>
                     <tr style="background:#f8fafc;font-weight:700;">
@@ -5089,7 +5107,6 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
                     <th style="padding:6px;font-size:0.78rem;text-align:center;border:1px solid #e2e8f0;"><input type="text" value="2026/06/26" style="width:100%;border:none;background:transparent;font-size:0.78rem;text-align:center;" onfocus="this.select()" oninput="window._calcSum()"></th>
                     <th style="padding:6px;font-size:0.78rem;text-align:center;border:1px solid #e2e8f0;"><input type="text" value="2026/06/27" style="width:100%;border:none;background:transparent;font-size:0.78rem;text-align:center;" onfocus="this.select()" oninput="window._calcSum()"></th>
                     <th style="padding:6px;font-size:0.78rem;text-align:center;border:1px solid #e2e8f0;"><input type="text" value="2026/06/28" style="width:100%;border:none;background:transparent;font-size:0.78rem;text-align:center;" onfocus="this.select()" oninput="window._calcSum()"></th>
-                    <th style="padding:6px;font-size:0.78rem;text-align:center;border:1px solid #e2e8f0;"><input type="text" value="" style="width:100%;border:none;background:transparent;font-size:0.78rem;text-align:center;" onfocus="this.select()" oninput="window._calcSum()"></th>
                     </tr>
                     <tr><td rowspan="2" style="padding:6px;font-size:0.78rem;text-align:center;border:1px solid #e2e8f0;vertical-align:middle;">抽检量</td>
                     <td style="padding:6px;font-size:0.78rem;text-align:center;border:1px solid #e2e8f0;">线上</td>
@@ -5100,10 +5117,8 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
                     <td style="border:1px solid #e2e8f0;"><input type="number" step="any" value="" style="width:100%;border:none;font-size:0.78rem;text-align:center;padding:6px;" onfocus="this.select()" oninput="window._calcSum()"></td>
                     <td style="border:1px solid #e2e8f0;"><input type="number" step="any" value="" style="width:100%;border:none;font-size:0.78rem;text-align:center;padding:6px;" onfocus="this.select()" oninput="window._calcSum()"></td>
                     <td style="border:1px solid #e2e8f0;"><input type="number" step="any" value="" style="width:100%;border:none;font-size:0.78rem;text-align:center;padding:6px;" onfocus="this.select()" oninput="window._calcSum()"></td>
-                    <td style="border:1px solid #e2e8f0;"><input type="number" step="any" value="" style="width:100%;border:none;font-size:0.78rem;text-align:center;padding:6px;" onfocus="this.select()" oninput="window._calcSum()"></td>
                     </tr>
                     <tr><td style="padding:6px;font-size:0.78rem;text-align:center;border:1px solid #e2e8f0;">实物</td>
-                    <td style="border:1px solid #e2e8f0;"><input type="number" step="any" value="" style="width:100%;border:none;font-size:0.78rem;text-align:center;padding:6px;" onfocus="this.select()" oninput="window._calcSum()"></td>
                     <td style="border:1px solid #e2e8f0;"><input type="number" step="any" value="" style="width:100%;border:none;font-size:0.78rem;text-align:center;padding:6px;" onfocus="this.select()" oninput="window._calcSum()"></td>
                     <td style="border:1px solid #e2e8f0;"><input type="number" step="any" value="" style="width:100%;border:none;font-size:0.78rem;text-align:center;padding:6px;" onfocus="this.select()" oninput="window._calcSum()"></td>
                     <td style="border:1px solid #e2e8f0;"><input type="number" step="any" value="" style="width:100%;border:none;font-size:0.78rem;text-align:center;padding:6px;" onfocus="this.select()" oninput="window._calcSum()"></td>
@@ -5121,10 +5136,9 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
                     <td style="border:1px solid #e2e8f0;"><input type="number" step="any" value="309" style="width:100%;border:none;font-size:0.78rem;text-align:center;padding:6px;" onfocus="this.select()" oninput="window._calcSum()"></td>
                     <td style="border:1px solid #e2e8f0;"><input type="number" step="any" value="368" style="width:100%;border:none;font-size:0.78rem;text-align:center;padding:6px;" onfocus="this.select()" oninput="window._calcSum()"></td>
                     <td style="border:1px solid #e2e8f0;"><input type="number" step="any" value="284" style="width:100%;border:none;font-size:0.78rem;text-align:center;padding:6px;" onfocus="this.select()" oninput="window._calcSum()"></td>
-                    <td style="border:1px solid #e2e8f0;"><input type="number" step="any" value="" style="width:100%;border:none;font-size:0.78rem;text-align:center;padding:6px;" onfocus="this.select()" oninput="window._calcSum()"></td>
                     </tr>
                     <tr><td style="padding:6px;font-size:0.78rem;text-align:center;border:1px solid #e2e8f0;font-weight:700;">抽检失误</td>
-                    <td style="border:1px solid #e2e8f0;"><input type="number" step="any" value="6" style="width:100%;border:none;font-size:0.78rem;text-align:center;padding:6px;" onfocus="this.select()" oninput="window._calcSum()"></td>
+                    <td style="border:1px solid #e2e8f0;background:#fff7e5;"><input type="number" step="any" value="6" readonly style="width:100%;border:none;font-size:0.78rem;text-align:center;padding:6px;font-weight:700;background:transparent;" onfocus="this.select()" oninput="window._calcSum()"></td>
                     <td style="border:1px solid #e2e8f0;"><input type="number" step="any" value="0" style="width:100%;border:none;font-size:0.78rem;text-align:center;padding:6px;" onfocus="this.select()" oninput="window._calcSum()"></td>
                     <td style="border:1px solid #e2e8f0;"><input type="number" step="any" value="0" style="width:100%;border:none;font-size:0.78rem;text-align:center;padding:6px;" onfocus="this.select()" oninput="window._calcSum()"></td>
                     <td style="border:1px solid #e2e8f0;"><input type="number" step="any" value="0" style="width:100%;border:none;font-size:0.78rem;text-align:center;padding:6px;" onfocus="this.select()" oninput="window._calcSum()"></td>
@@ -5132,12 +5146,11 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
                     <td style="border:1px solid #e2e8f0;"><input type="number" step="any" value="2" style="width:100%;border:none;font-size:0.78rem;text-align:center;padding:6px;" onfocus="this.select()" oninput="window._calcSum()"></td>
                     <td style="border:1px solid #e2e8f0;"><input type="number" step="any" value="1" style="width:100%;border:none;font-size:0.78rem;text-align:center;padding:6px;" onfocus="this.select()" oninput="window._calcSum()"></td>
                     <td style="border:1px solid #e2e8f0;"><input type="number" step="any" value="" style="width:100%;border:none;font-size:0.78rem;text-align:center;padding:6px;" onfocus="this.select()" oninput="window._calcSum()"></td>
-                    <td style="border:1px solid #e2e8f0;"><input type="number" step="any" value="" style="width:100%;border:none;font-size:0.78rem;text-align:center;padding:6px;" onfocus="this.select()" oninput="window._calcSum()"></td>
                     </tr></table></div>
                 <div id="samplingCard2" style="background:#fff;border-radius:12px;border:1px solid #e2e8f0;padding:16px;margin-bottom:16px;overflow-x:auto;">
                     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;"><div style="font-weight:700;font-size:0.95rem;color:#1f3a6b;">📈 抽检失误类型占比</div><button class="sampling-card-screenshot-btn" data-card-id="samplingCard2" style="background:#eef2ff;border:none;padding:4px 10px;border-radius:20px;cursor:pointer;font-size:0.72rem;">📸 截图</button></div>
                     <table class="compact-table" id="samplingCard2Table" style="border-collapse:collapse;table-layout:fixed;width:100%;">
-                    <colgroup><col style="width:7.14%"><col style="width:7.14%"><col style="width:7.14%"><col style="width:7.14%"><col style="width:7.14%"><col style="width:7.14%"><col style="width:7.14%"><col style="width:7.14%"><col style="width:7.14%"><col style="width:7.14%"><col style="width:7.14%"><col style="width:7.14%"><col style="width:7.14%"><col style="width:7.14%"></colgroup>
+                    <colgroup><col style="width:10%"><col style="width:7.5%"><col style="width:7.5%"><col style="width:7.5%"><col style="width:7.5%"><col style="width:7.5%"><col style="width:7.5%"><col style="width:7.5%"><col style="width:7.5%"><col style="width:7.5%"><col style="width:7.5%"><col style="width:7.5%"><col style="width:7.5%"></colgroup>
                     <tr style="background:#f8fafc;font-weight:700">
                     <td style="padding:6px 8px;font-size:0.78rem;text-align:center;border:1px solid #e2e8f0;">失误类别</td>
                     <td style="padding:6px 8px;font-size:0.78rem;text-align:center;border:1px solid #e2e8f0;">报告未改完</td>
@@ -5257,7 +5270,7 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
                         const clr = mkG(r.percentage, top5MaxPct);
                         const cntClr = mkG(r.count, top5MaxCount);
                         const dev = (r.count - parseFloat(persona.avgMistakesPerPerson)).toFixed(1);
-                        return '<div class="warning-card-h" style="flex:1;min-width:200px;padding:14px;background:#fff5f5;border-radius:12px;border-left:4px solid '+clr+';">' +
+                        return '<div class="warning-card-h" data-reviewer-name="'+escapeHtml(r.name)+'" style="flex:1;min-width:200px;padding:14px;background:#fff5f5;border-radius:12px;border-left:4px solid '+clr+';">' +
                             '<div style="text-align:center;font-weight:700;font-size:0.85rem;margin-bottom:8px;">'+rankIcons[idx]+' '+escapeHtml(fmtRvGlobal(r.name))+'</div>' +
                             '<div style="display:flex;gap:8px;font-size:0.78rem;margin-bottom:4px;">' +
                                 '<div style="flex:1;">📊 失误 <strong style="color:'+cntClr+';">'+r.count+'</strong> 个</div>' +
@@ -5487,8 +5500,7 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
             if (tbl) initTableResize(tbl);
             const catTbl = document.getElementById('categoryDetailTable');
             if (catTbl) initTableResize(catTbl);
-            // 模块1、2固定HTML，清掉旧缓存
-            localStorage.removeItem('samplingCardCache');
+            // 模块1、2从缓存恢复，不清除
             // 绑定模块3按钮
             bindModule3Buttons();
         }, 100);
@@ -6027,7 +6039,7 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
                                     const tag = isHeader ? 'th' : 'td';
                                     const baseStyle = isHeader
                                         ? 'padding:6px 8px;font-size:0.82rem;text-align:center;white-space:nowrap;font-weight:700;background:#f8fafc;border:1px solid #e2e8f0;position:relative;'
-                                        : 'padding:6px 8px;font-size:0.82rem;text-align:center;vertical-align:middle;border:1px solid #e2e8f0;position:relative;white-space:nowrap;';
+                                        : 'padding:6px 8px;font-size:0.82rem;text-align:center;vertical-align:middle;background:#fafbfc;border:1px solid #e2e8f0;position:relative;white-space:nowrap;';
                                     let extraStyle = '';
                                     if (highlightFn && !isHeader) extraStyle = highlightFn(row, ci, cell);
                                     // 新人行标黄逻辑已移除
@@ -6088,8 +6100,30 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
                         
                         if (!html) html = '<div style="text-align:center;color:#94a3b8;padding:20px;">未识别到有效数据板块</div>';
                         
-                        // 用div替换table，容纳多板块
-                        tableEl.outerHTML = '<div id="samplingDataTable">' + html + '</div>';
+                        // 优先使用缓存（本地→云端→Excel），避免覆盖手动数据
+                        var cached = null;
+                        try { cached = localStorage.getItem('samplingCardCache'); } catch(e) {}
+                        var restoreCached = function() {
+                            if (cached) {
+                                var sec = document.getElementById('section-sampling');
+                                if (sec) { sec.innerHTML = cached; setTimeout(function(){ if(window._calcSum) window._calcSum(); }, 200); }
+                            } else if (html) {
+                                tableEl.outerHTML = '<div id="samplingDataTable">' + html + '</div>';
+                                setTimeout(function(){ if(window._calcSum) window._calcSum(); window._saveSamplingCache&&window._saveSamplingCache(); }, 200);
+                            }
+                        };
+                        if (cached) { restoreCached(); }
+                        else {
+                            fetch(SUPABASE_URL + '/rest/v1/app_data?key=eq.samplingCardCache&select=value&limit=1', {
+                                headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY }
+                            }).then(function(r){ return r.json(); }).then(function(data){
+                                if (data && data.length > 0 && data[0].value) {
+                                    cached = data[0].value;
+                                    localStorage.setItem('samplingCardCache', cached);
+                                    restoreCached();
+                                } else { restoreCached(); }
+                            }).catch(function(){ restoreCached(); });
+                        }
                         if (noteEl) noteEl.textContent = '数据来源：工作表「' + sheetName + '」';
                         // 初始化列宽拖拽
                         setTimeout(() => {
@@ -6226,13 +6260,19 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
                                 var sum6 = 0;
                                 for (var c4 = 2; c4 <= lastCol; c4++) sum6 += cellNum(5, c4);
                                 setCell(5, 1, sum6);
+                                if (window._saveSamplingCache) window._saveSamplingCache();
                             };
                             window._samplingRecalc();
                             // 保存卡片内容到 localStorage，刷新后自动恢复
-                            try {
-                                var savedHtml = document.getElementById('samplingDataTable').innerHTML;
-                                localStorage.setItem('samplingCardCache', savedHtml);
-                            } catch(e) {}
+                            window._saveSamplingCache = function() {
+                                try {
+                                    var d = document.getElementById('section-sampling');
+                                    if (!d) return;
+                                    d.querySelectorAll('input').forEach(function(inp){ inp.setAttribute('value', inp.value); });
+                                    localStorage.setItem('samplingCardCache', d.innerHTML);
+                                } catch(e) {}
+                            };
+                            window._saveSamplingCache();
                         }
                     } catch(err) {
                         tableEl.outerHTML = '<div id="samplingDataTable" style="text-align:center;color:#c0392b;padding:20px;">解析失败：' + escapeHtml(err.message) + '</div>';
@@ -9084,7 +9124,7 @@ URL.revokeObjectURL(url);
             }
             
             // 截图前隐藏所有截图按钮和毛玻璃遮罩
-            const screenshotBtns = element.querySelectorAll('.screenshot-btn, .modal-screenshot-btn, .sampling-card-screenshot-btn, .nc-person-screenshot-btn, #screenshotMainBtn');
+            const screenshotBtns = element.querySelectorAll('.screenshot-btn, .modal-screenshot-btn, .sampling-card-screenshot-btn, .nc-person-screenshot-btn, #screenshotMainBtn, #btnShowAllCats, #btnHideEmptyCats, #samplingSummary');
             const btnDisplayList = [];
             screenshotBtns.forEach(btn => { btnDisplayList.push(btn.style.display); btn.style.display = 'none'; });
             // 隐藏毛玻璃遮罩（html2canvas不支持backdrop-filter会导致截图失败）
@@ -9092,103 +9132,71 @@ URL.revokeObjectURL(url);
             const frostDisplayList = [];
             frostOverlays.forEach(f => { frostDisplayList.push(f.style.display); f.style.display = 'none'; });
             
-            // 弹窗遮罩 backdrop-filter 导致截图模糊，临时去掉
+            // 弹窗：临时把容器移出遮罩再截图
             var overlay = element.closest('.modal-overlay');
-            var savedFilter = '', savedBg = '';
-            if (overlay) { savedFilter = overlay.style.backdropFilter; savedBg = overlay.style.background; overlay.style.backdropFilter = 'none'; overlay.style.background = 'transparent'; }
-            // 截图前移除高度/溢出限制
-            const container = element.querySelector('.modal-container') || element;
-            const savedMaxH = container.style.maxHeight;
-            const savedOverflow = container.style.overflow;
-            const savedTargetOverflowY = target.style.overflowY;
-            const savedTargetMaxH = target.style.maxHeight;
-            container.style.maxHeight = 'none';
-            container.style.overflow = 'visible';
-            target.style.overflowY = 'visible';
-            target.style.maxHeight = 'none';
+            var savedParent = null, savedNext = null;
+            if (overlay) { savedParent = target.parentNode; savedNext = target.nextSibling; document.body.appendChild(target); }
+            // 弹窗截图前移除高度/溢出限制（普通区块不碰，避免内容溢出）
+            var isModal2 = !!element.closest('.modal-overlay');
+            var _container, _savedMaxH, _savedOverflow, _savedTargetOverflowY, _savedTargetMaxH;
+            if (isModal2) {
+                _container = element.querySelector('.modal-container') || element;
+                _savedMaxH = _container.style.maxHeight; _savedOverflow = _container.style.overflow;
+                _savedTargetOverflowY = target.style.overflowY; _savedTargetMaxH = target.style.maxHeight;
+                _container.style.maxHeight = 'none'; _container.style.overflow = 'visible';
+                target.style.overflowY = 'visible'; target.style.maxHeight = 'none';
+            }
             // 截图后恢复
             function restoreStyles() {
-                container.style.maxHeight = savedMaxH;
-                container.style.overflow = savedOverflow;
-                target.style.overflowY = savedTargetOverflowY;
-                target.style.maxHeight = savedTargetMaxH;
-                if (overlay) { overlay.style.backdropFilter = savedFilter; overlay.style.background = savedBg; }
+                target.querySelectorAll('span[style*="inline-block"]').forEach(function(span) {
+                    if (span.__origInput) span.parentNode.replaceChild(span.__origInput, span);
+                });
+                if (isModal2) {
+                    _container.style.maxHeight = _savedMaxH; _container.style.overflow = _savedOverflow;
+                    target.style.overflowY = _savedTargetOverflowY; target.style.maxHeight = _savedTargetMaxH;
+                }
+                target.style.borderRadius = savedRadius2; target.style.boxShadow = savedShadow2; target.style.overflowX = savedOverflowX;
+                if (overlay && savedParent) { savedParent.insertBefore(target, savedNext); }
                 screenshotBtns.forEach(function(btn, i) { btn.style.display = btnDisplayList[i]; });
                 frostOverlays.forEach(function(f, i) { f.style.display = frostDisplayList[i]; });
             }
             
+            // 临时去圆角阴影避免大圈，截断溢出内容，input替换为文本
+            var savedRadius2 = target.style.borderRadius, savedShadow2 = target.style.boxShadow;
+            var savedOverflowX = target.style.overflowX;
+            target.style.borderRadius = '0px'; target.style.boxShadow = 'none';
+            target.style.overflowX = 'hidden';
+            var inputs = target.querySelectorAll('input');
+            var savedInputs = [];
+            inputs.forEach(function(inp) {
+                var span = document.createElement('span');
+                span.textContent = inp.value || '';
+                var td = inp.closest('td');
+                var tdW = td ? td.offsetWidth : 80;
+                span.style.cssText = 'display:inline-block;width:'+tdW+'px;max-width:'+tdW+'px;text-align:center;font-size:0.78rem;padding:6px 8px;box-sizing:border-box;overflow:hidden;white-space:nowrap;';
+                span.__origInput = inp;
+                inp.parentNode.replaceChild(span, inp);
+                savedInputs.push({span: span, input: inp});
+            });
             // 使用html2canvas进行截图
             if (typeof html2canvas !== 'undefined') {
                 var captureWidth = target.offsetWidth;
                 var captureHeight = target.offsetHeight;
                 html2canvas(target, {
                     backgroundColor: '#ffffff',
-                    scale: 1,
+                    scale: 2,
                     useCORS: true,
-                    logging: false,
-                    width: captureWidth,
-                    height: captureHeight,
-                    windowWidth: captureWidth,
-                    windowHeight: captureHeight
-                }).then(canvas => {
+                    logging: false
+                }).then(function(canvas) {
                     restoreStyles();
-                    // 自动裁切右侧白色空白区域
-                    const cropCanvas = document.createElement('canvas');
-                    const cropCtx = cropCanvas.getContext('2d');
-                    const imgData = canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height);
-                    const data = imgData.data;
-                    // 从右往左扫描，找到最右侧非白像素
-                    let rightBound = canvas.width;
-                    outerLoop: for (let x = canvas.width - 1; x >= 0; x--) {
-                        for (let y = 0; y < canvas.height; y++) {
-                            const idx = (y * canvas.width + x) * 4;
-                            // 非白色像素（容差5，避免抗锯齿边缘误判）
-                            if (data[idx] < 250 || data[idx + 1] < 250 || data[idx + 2] < 250) {
-                                rightBound = x + 1;
-                                break outerLoop;
-                            }
-                        }
-                    }
-                    const croppedW = Math.min(rightBound, canvas.width);
-                    cropCanvas.width = croppedW;
-                    cropCanvas.height = canvas.height;
-                    cropCtx.drawImage(canvas, 0, 0, croppedW, canvas.height, 0, 0, croppedW, canvas.height);
-                    // 绘制圆角卡片效果
-                    const pad = 24; // 外边距
-                    const radius = 16; // 圆角半径
-                    const borderW = 1; // 边框宽度
-                    const finalW = cropCanvas.width + (pad + borderW) * 2;
-                    const finalH = cropCanvas.height + (pad + borderW) * 2;
-                    const finalCanvas = document.createElement('canvas');
-                    finalCanvas.width = finalW;
-                    finalCanvas.height = finalH;
-                    const ctx = finalCanvas.getContext('2d');
-                    // 白色背景 + 圆角裁切
-                    ctx.fillStyle = '#ffffff';
-                    roundRect(ctx, 0, 0, finalW, finalH, radius * 2);
-                    ctx.fill();
-                    // 绘制阴影效果（浅灰底模拟）
-                    ctx.fillStyle = '#f0f2f5';
-                    roundRect(ctx, borderW * 2, borderW * 2, finalW - borderW * 4, finalH - borderW * 4, radius * 2 - 2);
-                    ctx.fill();
-                    // 白色卡片区域
-                    ctx.fillStyle = '#ffffff';
-                    roundRect(ctx, pad - borderW, pad - borderW, cropCanvas.width + borderW * 2, cropCanvas.height + borderW * 2, radius * 2);
-                    ctx.fill();
-                    // 边框
-                    ctx.strokeStyle = '#e2e8f0';
-                    ctx.lineWidth = borderW * 2;
-                    roundRect(ctx, pad - borderW, pad - borderW, cropCanvas.width + borderW * 2, cropCanvas.height + borderW * 2, radius * 2);
-                    ctx.stroke();
-                    // 裁切圆角后绘制截图内容
-                    ctx.save();
-                    roundRect(ctx, pad, pad, cropCanvas.width, cropCanvas.height, radius * 2 - 2);
-                    ctx.clip();
-                    ctx.drawImage(cropCanvas, pad, pad);
-                    ctx.restore();
-                    const link = document.createElement('a');
-                    link.download = `${fileName}_${new Date().toISOString().slice(0,10)}.png`;
-                    link.href = finalCanvas.toDataURL('image/png');
+                    var r = 32, w = canvas.width, h = canvas.height;
+                    var fc = document.createElement('canvas'); fc.width = w; fc.height = h;
+                    var fctx = fc.getContext('2d');
+                    fctx.beginPath(); fctx.moveTo(r,0); fctx.lineTo(w-r,0); fctx.arcTo(w,0,w,r,r); fctx.lineTo(w,h-r); fctx.arcTo(w,h,w-r,h,r); fctx.lineTo(r,h); fctx.arcTo(0,h,0,h-r,r); fctx.lineTo(0,r); fctx.arcTo(0,0,r,0,r); fctx.closePath(); fctx.clip();
+                    fctx.drawImage(canvas, 0, 0);
+                    var link = document.createElement('a');
+                    link.download = fileName.replace(/[^a-zA-Z0-9一-龥_-]/g, '_') + '.png';
+                    link.href = fc.toDataURL('image/png');
                     link.click();
                 }).catch(err => {
                     restoreStyles();
@@ -10646,8 +10654,7 @@ URL.revokeObjectURL(url);
             { key: 'sampling', label: '抽检失误', icon: '🔍', color: '#4a7ab5', sourceField: 'source', keywords: ['抽检', '抽检失误'] },
             { key: 'qa', label: 'QA失误', icon: '🔰', color: '#27ae60', sourceField: 'source', keywords: ['QA', 'qa失误', 'QA失误'] },
             { key: 'obvious', label: '明显失误', icon: '⚠️', color: '#e67e22', sourceField: 'category', keywords: ['扣错项', '判错项', '明显失误'] },
-            { key: 'lowLevel', label: '低级失误', icon: '🔻', color: '#c0392b', sourceField: 'category', keywords: ['低级失误'] },
-            { key: 'complaint', label: '投诉订单', icon: '📢', color: '#8e44ad', sourceField: 'category', keywords: ['投诉', '投诉订单', '投诉失误'] }
+            { key: 'lowComplaint', label: '低级/投诉失误', icon: '🔻', color: '#c0392b', sourceField: 'category', keywords: ['低级失误', '低级/投诉失误', '投诉失误', '低级', '投诉', '投诉订单'] }
         ];
 
         // 为每个卡片匹配数据（含质检码）
@@ -10756,8 +10763,8 @@ URL.revokeObjectURL(url);
         window._eaBaseTotal = baseTotal;
 
         // 卡片排列：第一排默认4个，大于4个才显示第二排
-        const row1Cards = cardData.slice(0, 4);
-        const row2Cards = cardData.slice(4);
+        const row1Cards = cardData.slice(0, 5);
+        const row2Cards = cardData.slice(5);
         console.log('=== 卡片布局 第一排:' + row1Cards.length + '张(' + row1Cards.map(d=>d.label).join(',') + ') 第二排:' + row2Cards.length + '张(' + row2Cards.map(d=>d.label).join(',') + ') ===');
 
         const r1Cols = row1Cards.length;
@@ -10778,7 +10785,7 @@ URL.revokeObjectURL(url);
         }
 
         let html = '<div class="analysis-section"><div class="analysis-section-title">📊 A. 失误来源分布（基数共 ' + baseTotal + ' 条）</div>' +
-            '<div style="font-size:0.75rem;color:#94a3b8;margin-bottom:12px;">💡 百分比基数 = 初审失误 + QA失误 + 抽检失误；明显失误/低级失误/投诉订单为此基数内的占比</div>' +
+            '<div style="font-size:0.75rem;color:#94a3b8;margin-bottom:12px;">💡 百分比基数 = 初审失误 + QA失误 + 抽检失误；明显失误/低级与投诉失误为此基数内的占比</div>' +
             cardsHtml + '</div>';
 
         // ====== B. 初审失误对比（含趋势列） ======
@@ -10810,6 +10817,11 @@ URL.revokeObjectURL(url);
 
         const reviewerStats = {};
         rows.forEach(row => { const r = getVal(row, errorReviewerCol); if (r) reviewerStats[r] = (reviewerStats[r] || 0) + 1; });
+        // 过滤已离职且无失误的人员
+        const departedRev2 = getDepartedReviewers();
+        Object.keys(reviewerStats).forEach(function(name) {
+            if (departedRev2[name] && reviewerStats[name] === 0) delete reviewerStats[name];
+        });
         const rvSorted = Object.entries(reviewerStats).sort((a, b) => b[1] - a[1]);
         const rvAvg = total / Math.max(1, rvSorted.length);
         const rvMaxPct = rvSorted.length > 0 ? Math.max(...rvSorted.map(([n, c]) => c / total * 100)) : 1;
@@ -11270,8 +11282,7 @@ URL.revokeObjectURL(url);
             { label: '抽检失误', icon: '🔍', color: '#4a7ab5', sourceField: 'source', keywords: ['抽检', '抽检失误'] },
             { label: 'QA失误', icon: '✅', color: '#27ae60', sourceField: 'source', keywords: ['QA', 'qa失误', 'QA失误'] },
             { label: '明显失误', icon: '⚠️', color: '#e67e22', sourceField: 'category', keywords: ['扣错项', '判错项', '明显失误'] },
-            { label: '低级失误', icon: '🔻', color: '#c0392b', sourceField: 'category', keywords: ['低级失误'] },
-            { label: '投诉订单', icon: '📢', color: '#8e44ad', sourceField: 'category', keywords: ['投诉', '投诉订单', '投诉失误'] }
+            { label: '低级/投诉失误', icon: '🔻', color: '#c0392b', sourceField: 'category', keywords: ['低级失误', '低级/投诉失误', '投诉失误', '低级', '投诉', '投诉订单'] }
         ];
 
         const allQCCodes = [];
@@ -15576,6 +15587,15 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
         var now = new Date(), year = now.getFullYear(), today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
         var totalMonths = today.getDate() >= 27 ? (today.getMonth() + 1) : today.getMonth();
         if (totalMonths < 1) totalMonths = 12; if (totalMonths > 12) totalMonths = 12;
+        var departed = getDepartedReviewers(), onboarded = getOnboardingReviewers();
+        // 判断某人某月是否在职
+        function isActiveInMonth(name, m) {
+            var ms = new Date(year, m, 27); // 当月起始
+            var me = new Date(year, m + 1, 26); // 当月结束
+            var od = onboarded[name]; if (od) { var odDate = new Date(od); if (odDate > me) return false; } // 入职日期在当月结束之后=未入职
+            var dd = departed[name]; if (dd) { var ddDate = new Date(dd); if (ddDate < ms) return false; } // 离职日期在当月起始之前=已离职
+            return true;
+        }
         var allPeople = {};
         for (var m = 0; m < totalMonths; m++) {
             var ms = new Date(year, m, 27);
@@ -15584,12 +15604,16 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
                 if (!allPeople[e.reviewer]) allPeople[e.reviewer] = {name: e.reviewer, site: e.site||'', months: []};
             });
         }
-        Object.values(allPeople).forEach(function(p) { for (var m = 0; m < totalMonths; m++) p.months[m] = {health:100, total:0, hasData:false}; });
+        Object.values(allPeople).forEach(function(p) { for (var m = 0; m < totalMonths; m++) p.months[m] = {health:100, total:0, hasData:false, active:true}; });
+        Object.values(allPeople).forEach(function(p) {
+            for (var m = 0; m < totalMonths; m++) { if (!isActiveInMonth(p.name, m)) { p.months[m].hasData = true; p.months[m].health = 0; p.months[m].total = -1; p.months[m].active = false; } }
+        });
         errorDashboardData.forEach(function(e) {
             for (var m = 0; m < totalMonths; m++) {
                 var ms = new Date(year, m, 27), me = new Date(year, m + 1, 26);
                 if (e.date >= ms && e.date <= me && allPeople[e.reviewer]) {
                     var pm = allPeople[e.reviewer].months[m];
+                    if (!pm.active) continue; // 不在职期间不计算
                     pm.total++; pm.hasData = true;
                     var cat = (e.category||''); var src = (e.source||'');
                     if (cat.indexOf('低级失误')>=0||cat.indexOf('投诉')>=0) pm.health -= 5;
@@ -15600,24 +15624,32 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
         });
         Object.values(allPeople).forEach(function(p) {
             var sum = 0, cnt = 0;
-            p.months.forEach(function(mo) { if (mo.hasData) { sum += mo.health; cnt++; } });
+            p.months.forEach(function(mo) { if (mo.hasData && mo.active) { sum += mo.health; cnt++; } });
             p.totalHealth = cnt > 0 ? Math.round(sum / cnt) : 100;
         });
-        var sorted = Object.values(allPeople).sort(function(a,b){ return b.totalHealth - a.totalHealth; });
-        var r = '<html><head><meta charset="UTF-8"><title>' + year + '年月度排名报告</title><style>body{font-family:Microsoft YaHei,sans-serif;padding:10px;background:#f0f2f6;font-size:0.72rem;}h1{text-align:center;color:#1f3a6b;}table{width:100%;border-collapse:collapse;background:white;}th{background:#1f3a6b;color:white;padding:4px 3px;font-size:0.68rem;position:sticky;top:0;}td{padding:3px;text-align:center;font-size:0.68rem;border-bottom:1px solid #eef2f6;}tr:nth-child(even) td{background:#f8fafc;}.h-h{color:#27ae60;font-weight:700;}.h-m{color:#e67e22;font-weight:700;}.h-l{color:#c0392b;font-weight:700;}.no-data{color:#94a3b8;}.sum-col{background:#fff7e5!important;font-weight:700;}</style></head><body><h1>📆 ' + year + '年 月度排名报告</h1><p style="text-align:center;color:#5e6f8d;">生成时间：' + now.toLocaleString('zh-CN') + ' | 记分：普通-1 明显-2 QA-2 低级/投诉-5（叠加）</p><table><thead><tr><th>排名</th><th>初审人</th><th>站点</th><th>综合❤️</th>';
-        for (var m = 0; m < totalMonths; m++) r += '<th>' + (m+1) + '月❤️</th><th>' + (m+1) + '月失误</th>';
+        var sorted = Object.values(allPeople).sort(function(a,b){
+            var aDep = departed[a.name] ? 1 : 0, bDep = departed[b.name] ? 1 : 0;
+            if (aDep !== bDep) return aDep - bDep;
+            return b.totalHealth - a.totalHealth;
+        });
+        var r = '<html><head><meta charset="UTF-8"><title>' + year + '年月度排名报告</title><style>body{font-family:Microsoft YaHei,sans-serif;padding:10px;background:#f0f2f6;font-size:0.72rem;}h1{text-align:center;color:#1f3a6b;position:sticky;top:0;background:#f0f2f6;z-index:3;padding:10px;margin:0;}p{position:sticky;top:44px;background:#f0f2f6;z-index:3;}table{width:100%;border-collapse:collapse;background:white;table-layout:fixed;}thead th{background:#1f3a6b;color:white;padding:4px 3px;font-size:0.68rem;position:sticky;z-index:2;}thead tr:first-child th{top:64px;}thead tr:nth-child(2) th{top:88px;}td{padding:3px;text-align:center;font-size:0.68rem;border-bottom:1px solid #eef2f6;}tr:nth-child(even) td{background:#f8fafc;}.h-h{color:#27ae60;font-weight:700;}.h-h2{color:#f39c12;font-weight:700;}.h-m{color:#e67e22;font-weight:700;}.h-l{color:#c0392b;font-weight:700;}.no-data{color:#94a3b8;}.sum-col{background:#fff7e5!important;font-weight:700;}.m-sep{border-right:1px solid #d5dce4;}th:nth-child(1){width:4%;}th:nth-child(2){width:8%;}th:nth-child(3){width:6%;}</style></head><body><div style="display:flex;align-items:center;position:sticky;top:0;background:#f0f2f6;z-index:4;padding:4px 10px;gap:12px;"><h1 style="flex:1;position:static;padding:0;margin:0;">📆 ' + year + '年 月度排名报告</h1><input id="rankSearch" placeholder="🔍 搜索姓名..." oninput="var v=this.value.toLowerCase();document.querySelectorAll(\'tbody tr\').forEach(function(r){r.style.display=v?((r.textContent||\'\').toLowerCase().indexOf(v)>=0?\'\':\'none\'):\'\';})" style="padding:4px 10px;border:1px solid #cbd5e1;border-radius:14px;font-size:0.75rem;width:160px;"></div><p style="text-align:center;color:#5e6f8d;top:44px;">生成时间：' + now.toLocaleString('zh-CN') + ' | 记分：普通-1 明显-2 QA-2 低级/投诉-5（叠加）</p><table><thead><tr><th rowspan="2">排名</th><th rowspan="2">初审人</th><th rowspan="2">综合❤️</th>';
+        for (var m = 0; m < totalMonths; m++) r += '<th colspan="2" class="m-sep">' + (m+1) + '月</th>';
+        r += '</tr><tr>';
+        for (var m = 0; m < totalMonths; m++) r += '<th>❤️</th><th class="m-sep">失误</th>';
         r += '</tr></thead><tbody>';
         var rk = 0, ps = null;
         sorted.forEach(function(p) {
             var cs = p.totalHealth; if(cs!==ps){rk++;ps=cs;}
-            var hc = p.totalHealth >= 90 ? 'h-h' : (p.totalHealth >= 70 ? 'h-m' : 'h-l');
-            r += '<tr><td>' + rk + '</td><td style="text-align:left;">' + p.name + '</td><td>' + (p.site||'-') + '</td><td class="sum-col ' + hc + '">' + p.totalHealth + '</td>';
+            var hc = p.totalHealth >= 95 ? 'h-h' : (p.totalHealth >= 90 ? 'h-h2' : (p.totalHealth >= 80 ? 'h-m' : 'h-l'));
+            var depLabel = departed[p.name] ? '--已离职' : '';
+            r += '<tr><td>' + rk + '</td><td>' + p.name + '（' + (p.site||'-') + '）' + depLabel + '</td><td class="sum-col ' + hc + '">' + p.totalHealth + '</td>';
             for (var m = 0; m < totalMonths; m++) {
                 var mo = p.months[m];
-                if (mo.hasData) {
-                    var mhc = mo.health >= 90 ? 'h-h' : (mo.health >= 70 ? 'h-m' : 'h-l');
-                    r += '<td class="' + mhc + '">' + mo.health + '</td><td>' + mo.total + '</td>';
-                } else { r += '<td class="no-data">-</td><td class="no-data">-</td>'; }
+                if (!mo.active) { r += '<td class="no-data">-</td><td class="no-data m-sep">-</td>'; }
+                else if (mo.hasData) {
+                    var mhc = mo.health >= 95 ? 'h-h' : (mo.health >= 90 ? 'h-h2' : (mo.health >= 80 ? 'h-m' : 'h-l'));
+                    r += '<td class="' + mhc + '">' + mo.health + '</td><td class="m-sep">' + mo.total + '</td>';
+                } else { r += '<td class="h-h">100</td><td class="no-data m-sep">0</td>'; }
             }
             r += '</tr>';
         });
@@ -15702,6 +15734,8 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
         var pushTrain = sortedReviewers.filter(function(e){return e[1] >= thR.trainMin;});
         // 往期对比（上一周期）
         var prevLabel = '上一周期';
+        var siteLabel = f.site === 'all' ? '全站点' : f.site;
+        var reportTitle = siteLabel + ' ' + periodLabel + ' 失误分析报告';
         // 生成HTML报告
         var reportHtml = '<!DOCTYPE html><html><head><meta charset="UTF-8"><title>'+reportTitle+'</title>' +
         '<style>body{font-family:Microsoft YaHei,SimHei,sans-serif;padding:30px;max-width:1000px;margin:0 auto;color:#333;background:#f5f6f8;}' +
@@ -15818,10 +15852,11 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
         '<div class="footer">优学堂 · 自动生成报告 · '+now.toLocaleString('zh-CN')+'</div>'+
         '</body></html>';
         // 下载
-        var blob = new Blob([reportHtml], {type:'text/html;charset=UTF-8'});
+        var periodShort = f.period === 'day' ? '日' : (f.period === 'week' ? '周' : '月');
+        var blob = new Blob(['﻿' + reportHtml], {type:'text/html;charset=UTF-8'});
         var a = document.createElement('a');
         a.href = URL.createObjectURL(blob);
-        a.download = siteLabel.replace('站点','') + '_' + (periodShort||periodLabel) + '_失误分析报告_' + now.toISOString().slice(0,10) + '.html';
+        a.download = siteLabel.replace('站点','') + '_' + periodShort + '_失误分析报告_' + now.toISOString().slice(0,10) + '.html';
         a.click();
         showToast('✅ 报告已下载', 'success');
     }
@@ -17568,7 +17603,7 @@ function toggleSamplingCats(showAll) {
         if (cells.length >= 14) cells[7].remove();
     }
     var cg = table.querySelector('colgroup');
-    if (cg) { var cls = cg.querySelectorAll('col'); if (cls.length >= 14) cls[7].remove(); cls = cg.querySelectorAll('col'); var p = (100/cls.length).toFixed(2); for (var i=0;i<cls.length;i++) cls[i].style.width = p+'%'; }
+    if (cg) { var cls = cg.querySelectorAll('col'); if (cls.length >= 14) cls[7].remove(); cls = cg.querySelectorAll('col'); var rem = 90/(cls.length-1); cls[0].style.width = '10%'; for (var i=1;i<cls.length;i++) cls[i].style.width = rem.toFixed(2)+'%'; }
     // 按线上抽检+实物抽检降序排列（越大越靠左）
     sortSamplingCard2Cols();
 })();
@@ -17676,19 +17711,47 @@ function showHistoryMonthRanking(highlightName) {
 (function(){
     function saveCards() {
         try {
-            var d = document.getElementById('samplingDataTable');
-            if (d) localStorage.setItem('samplingCardCache', d.innerHTML);
+            var d = document.getElementById('section-sampling');
+            if (!d) return;
+            d.querySelectorAll('input').forEach(function(inp){ inp.setAttribute('value', inp.value); });
+            var html = d.innerHTML;
+            localStorage.setItem('samplingCardCache', html);
+            // 同步到云端
+            fetch(SUPABASE_URL + '/rest/v1/app_data', {
+                method: 'POST',
+                headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY, 'Content-Type': 'application/json', 'Prefer': 'resolution=merge-duplicates' },
+                body: JSON.stringify({ key: 'samplingCardCache', value: html, updated_at: new Date().toISOString() })
+            }).catch(function() {});
         } catch(e) {}
     }
     setInterval(function(){
         var card1 = document.getElementById('samplingCard1');
         var card2 = document.getElementById('samplingCard2Table');
         if (!card1 && !card2) return;
-        // attach save to all inputs inside模块1 and模块2
-        document.querySelectorAll('#samplingCard1 input, #samplingCard2Table input').forEach(function(inp){
-            if (!inp._autoSaved) { inp._autoSaved = true; inp.addEventListener('input', saveCards); }
+        document.querySelectorAll('#section-sampling input').forEach(function(inp){
+            if (!inp._autoSaved) { inp._autoSaved = true; inp.addEventListener('input', saveCards); inp.addEventListener('change', saveCards); }
         });
-    }, 1000);
+    }, 500);
+    // 页面加载时立即从缓存恢复（本地优先，云端兜底）
+    setTimeout(function(){
+        var cached = null;
+        try { cached = localStorage.getItem('samplingCardCache'); } catch(e) {}
+        if (!cached) {
+            fetch(SUPABASE_URL + '/rest/v1/app_data?key=eq.samplingCardCache&select=value&limit=1', {
+                headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY }
+            }).then(function(r){ return r.json(); }).then(function(data){
+                if (data && data.length > 0 && data[0].value) {
+                    localStorage.setItem('samplingCardCache', data[0].value);
+                    var sec = document.getElementById('section-sampling');
+                    if (sec) { sec.innerHTML = data[0].value; setTimeout(function(){ if(window._calcSum) window._calcSum(); }, 300); }
+                }
+            }).catch(function(){});
+        }
+        if (cached) {
+            var sec = document.getElementById('section-sampling');
+            if (sec) { sec.innerHTML = cached; setTimeout(function(){ if(window._calcSum) window._calcSum(); }, 300); }
+        }
+    }, 100);
 })();
 window._calcModule2Pct = function() {
     // 模块2抽检失误占比 = (线上抽检+实物抽检) / 模块1的B5
@@ -17728,12 +17791,13 @@ window._calcSum = function() {
     if (!table) return;
     var rows = table.querySelectorAll('tr');
     if (rows.length < 5) return;
-    // row1=线上: children[2+]=data, row2=实物: children[1+]=data, row3=总计: children[2+]=data, row4=抽检: children[2+]=data
-    var sum3 = 0, sum4 = 0;
+    var sum1 = 0, sum2 = 0, sum3 = 0, sum4 = 0, dayCount = 0;
     var dCount = rows[1].children.length - 2;
     for (var i = 0; i < dCount && 2+i < rows[1].children.length; i++) {
         var v1 = parseFloat((rows[1].children[2+i].querySelector('input')||{}).value) || 0;
         var v2 = parseFloat((rows[2].children[1+i].querySelector('input')||{}).value) || 0;
+        if (v1+v2 > 0) dayCount++;
+        sum1 += v1; sum2 += v2;
         var inp3 = rows[3].children[2+i].querySelector('input');
         if (inp3) { inp3.value = v1 + v2; sum3 += v1 + v2; }
         if (2+i < rows[4].children.length) {
@@ -17745,7 +17809,17 @@ window._calcSum = function() {
     if (b3) b3.value = sum3;
     var b4 = rows[4].children[1] && rows[4].children[1].querySelector('input');
     if (b4) b4.value = sum4;
+    // 更新汇总
+    var sm = document.getElementById('samplingSummary');
+    if (sm) {
+        var rx = sum3 > 0 ? Math.round(sum3/dayCount) : 0;
+        if (sm.dataset.auto === '1') {
+            sm.innerHTML = '（1）抽检天数：'+dayCount+'天<br>（2）抽检总量：'+sum3+'台【实物:'+sum2+'台 &ensp;线上:'+sum1+'台】<br>（3）失误订单：'+sum4+'台<br>（4）抽检人效：'+sum3+'/'+dayCount+'&asymp;'+rx+'/天';
+        }
+    }
+    if (window._saveSamplingCache) window._saveSamplingCache();
 };
+setTimeout(function(){ if(window._calcSum) window._calcSum(); }, 400);
 window._fillDates = function(inp) {
     var v = inp.value.trim();
     var m = v.match(/(\d{4})[\/\-](\d{1,2})[\/\-](\d{1,2})/);
