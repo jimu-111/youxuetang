@@ -6918,7 +6918,7 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
 
 
     // ==================== 培训案例收集库（总入口） ====================
-    let currentCaseHubTab = 'collection'; // collection | library | exam
+    let currentCaseHubTab = 'library'; // library | collection | exam
 
     function showImageViewer(src) {
         var overlay = document.createElement('div');
@@ -6938,12 +6938,12 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
     }
 
     function renderCaseLibraryHub() {
-        // 游客模式强制进入案例库
-        if (!isAdminMode()) currentCaseHubTab = 'library';
+        // 默认进入案例库
+        if (!currentCaseHubTab) currentCaseHubTab = 'library';
         const container = document.getElementById('mainContent');
         const tabs = [
-            { id: 'collection', label: '📝 培训案例收集', icon: '📝', admin: true },
             { id: 'library', label: '📚 案例库', icon: '📚', admin: false },
+            { id: 'collection', label: '📝 培训案例收集', icon: '📝', admin: true },
             { id: 'exam', label: '📝 生成考题', icon: '📝', admin: true }
         ];
 
@@ -7586,38 +7586,82 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
         const container = document.getElementById(targetId);
         container.innerHTML = `
         <div style="max-width:1000px;margin:0 auto;">
-            <div class="report-box" style="margin-bottom:20px;">
-                <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">
+            <div class="report-box" style="margin-bottom:16px;">
+                <div style="display:flex;align-items:center;flex-wrap:wrap;gap:8px;">
                     <div class="report-title" style="margin-bottom:0;">📝 培训案例收集</div>
-                    <button id="importFeishuCasesBtn" class="primary" style="background:#e67e22;padding:6px 14px;border-radius:20px;font-size:0.8rem;">📥 从飞书导入</button>
-                </div>
-                <div style="display:flex;gap:12px;flex-wrap:wrap;justify-content:center;margin-top:12px;">
-                    <button class="analysis-type-btn ${currentTrainingSubNav==='biweekly'?'active':''}" data-subnav="biweekly">📅 双周培训案例</button>
-                    <button class="analysis-type-btn ${currentTrainingSubNav==='manual'?'active':''}" data-subnav="manual">✍️ 手动录入</button>
-                    <button class="analysis-type-btn ${currentTrainingSubNav==='knowledge'?'active':''}" data-subnav="knowledge">📖 知识巩固</button>
+                    <div style="display:flex;gap:8px;flex-wrap:wrap;flex:1;justify-content:center;">
+                        <button class="analysis-type-btn ${currentTrainingSubNav==='manual'?'active':''}" data-subnav="manual">📌 培训案例</button>
+                        <button class="analysis-type-btn ${currentTrainingSubNav==='biweekly'?'active':''}" data-subnav="biweekly">📅 双周培训案例</button>
+                        <button class="analysis-type-btn ${currentTrainingSubNav==='knowledge'?'active':''}" data-subnav="knowledge">📖 知识巩固</button>
+                    </div>
+                    <div style="display:flex;gap:8px;">
+                        <button id="importFeishuCasesBtn" class="primary" style="background:#e67e22;padding:6px 14px;border-radius:20px;font-size:0.8rem;">📥 从飞书导入</button>
+                        <button id="toggleManualEntryBtn" class="primary" style="background:#2a5298;padding:6px 14px;border-radius:20px;font-size:0.8rem;cursor:pointer;">✍️ 手动录入</button>
+                    </div>
                 </div>
             </div>
+            <div id="trainingManualEntry" style="display:none;"></div>
             <div id="trainingSubContent"></div>
         </div>`;
+        // 手动录入按钮点击
+        document.getElementById('toggleManualEntryBtn').addEventListener('click', function() {
+            renderManualTab();
+        });
         container.querySelectorAll('.analysis-type-btn[data-subnav]').forEach(btn => {
             btn.addEventListener('click', () => {
                 currentTrainingSubNav = btn.dataset.subnav;
                 container.querySelectorAll('.analysis-type-btn[data-subnav]').forEach(b => b.classList.remove('active'));
                 btn.classList.add('active');
+                var typeMap={biweekly:'双周培训',knowledge:'知识巩固'};
+                var lbl=document.getElementById('trainingTypeLabel');
+                if(lbl)lbl.textContent=typeMap[currentTrainingSubNav]||'培训案例';
+                var sel=document.getElementById('manualCaseType');
+                if(sel)sel.value=typeMap[currentTrainingSubNav]||'培训案例';
+                // 双周培训/知识巩固：隐藏手动录入
+                var manualEntry=document.getElementById('trainingManualEntry');
+                var manualBtn=document.getElementById('toggleManualEntryBtn');
+                var isManual=currentTrainingSubNav==='manual';
+                if(manualEntry)manualEntry.style.display='none';
+                if(manualBtn)manualBtn.style.display=isManual?'':'none';
                 if (currentTrainingSubNav === 'biweekly') renderBiweeklyTab();
-                else if (currentTrainingSubNav === 'manual') renderManualTab();
                 else if (currentTrainingSubNav === 'knowledge') renderKnowledgeTab();
+                else if (currentTrainingSubNav === 'manual') { document.getElementById('trainingSubContent').innerHTML = ''; renderManualTab(true); }
             });
         });
+        // 非培训案例页签隐藏手动录入按钮
+        if (currentTrainingSubNav !== 'manual') {
+            var btn=document.getElementById('toggleManualEntryBtn');
+            if(btn)btn.style.display='none';
+        }
         if (currentTrainingSubNav === 'biweekly') renderBiweeklyTab();
-        else if (currentTrainingSubNav === 'manual') renderManualTab();
         else if (currentTrainingSubNav === 'knowledge') renderKnowledgeTab();
 
         // 从飞书导入案例
         var importBtn = document.getElementById('importFeishuCasesBtn');
         if (importBtn) {
             importBtn.addEventListener('click', async () => {
-                if (!confirm('将从飞书表格导入案例数据，确认继续？')) return;
+                // 选择导入到哪个案例类型
+                var importType = await new Promise(function(resolve) {
+                    var ov=document.createElement('div');ov.className='modal-overlay';ov.style.zIndex='5000';
+                    ov.innerHTML='<div class="modal-container" style="max-width:400px;"><div class="modal-header">📥 导入到哪个分类？<button class="modal-close-btn" id="importTypeClose">✕</button></div>'+
+                    '<div class="modal-body" style="text-align:center;padding:20px;">'+
+                    '<button id="importToTrain" style="width:100%;padding:12px;margin-bottom:8px;background:#fff7ed;border:1px solid #fbbf24;border-radius:12px;cursor:pointer;font-size:0.9rem;">📌 培训案例</button>'+
+                    '<button id="importToBiweekly" style="width:100%;padding:12px;margin-bottom:8px;background:#f0fdf4;border:1px solid #86efac;border-radius:12px;cursor:pointer;font-size:0.9rem;">📅 双周培训</button>'+
+                    '<button id="importToKnowledge" style="width:100%;padding:12px;background:#f0f6ff;border:1px solid #93c5fd;border-radius:12px;cursor:pointer;font-size:0.9rem;">📖 知识巩固</button>'+
+                    '</div></div></div>';
+                    document.body.appendChild(ov);
+                    ov.querySelector('#importTypeClose').onclick = function(){ov.remove();resolve(null);};
+                    ov.onclick = function(e){if(e.target===ov){ov.remove();resolve(null);}};
+                    ov.querySelector('#importToTrain').onclick = function(){ov.remove();resolve('培训案例');};
+                    ov.querySelector('#importToBiweekly').onclick = function(){ov.remove();resolve('双周培训');};
+                    ov.querySelector('#importToKnowledge').onclick = function(){ov.remove();resolve('知识巩固');};
+                });
+                if (!importType) return;
+                if (importType !== '培训案例') {
+                    alert('「' + importType + '」的飞书源数据尚未配置，请联系管理员设置飞书表格。\n\n目前仅「培训案例」支持从飞书导入。');
+                    return;
+                }
+                if (!confirm('将从飞书表格导入案例数据到「' + importType + '」，确认继续？')) return;
                 importBtn.textContent = '⏳ 导入中...';
                 importBtn.disabled = true;
                 try {
@@ -7676,14 +7720,15 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
                             correctDir: (cellAny(row, ['应操作方向', '正确方向']) || '').toString().trim(),
                             dirPhotos: parseTokens(row, '方向照片'),
                             dirExamplePhotos: parseTokens(row, '方向示例照片'),
-                            productCategory: (cell(row, '品类') || '').toString().trim()
+                            productCategory: (cell(row, '品类') || '').toString().trim(),
+                            caseType: importType
                         };
 
                         var exists = cases.find(function(c) { return c.qcCode === qcCode; });
                         if (exists) {
                             // 已有案例：补充缺失字段
                             var needsUpdate = false;
-                            ['errorCategory','issueDesc','correctDir','productCategory'].forEach(function(f) {
+                            ['errorCategory','issueDesc','correctDir','productCategory','caseType'].forEach(function(f) {
                                 if (!exists[f] && newData[f]) { exists[f] = newData[f]; needsUpdate = true; }
                             });
                             ['issuePhotos','dirPhotos','dirExamplePhotos'].forEach(function(f) {
@@ -7824,37 +7869,101 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
         });
     }
 
-    // 子Tab2：手动录入
-    function renderManualTab() {
-        const content = document.getElementById('trainingSubContent');
+    // 手动录入表单（按钮展开）
+    function renderManualTab(showListOnly) {
+        var entry = document.getElementById('trainingManualEntry');
+        var btn = document.getElementById('toggleManualEntryBtn');
+        if (!showListOnly && entry && btn) {
+            var show = entry.style.display !== 'none';
+            if (show) { entry.style.display = 'none'; btn.textContent = '✍️ 手动录入'; return; }
+            entry.style.display = 'block'; btn.textContent = '▲ 收起';
+        }
+        if (showListOnly) {
+            if (entry) entry.style.display = 'block';
+            // 只显示案例列表，隐藏录入表单
+            var form = document.getElementById('manualEntryForm');
+            if (form) form.style.display = 'none';
+        }
+        const content = document.getElementById('trainingManualEntry') || document.getElementById('trainingSubContent');
+        if (!content || content.style.display === 'none') return;
+        if (!showListOnly) content.style.display = 'block';
+        // 根据当前页签设默认类型
+        var typeMap={biweekly:'双周培训',knowledge:'知识巩固'};
+        var defType=typeMap[currentTrainingSubNav]||'培训案例';
+        var sel=document.getElementById('manualCaseType');
+        if(sel) sel.value=defType;
         const cases = getManualCasesFull();
 
-        let listHtml = '';
-        if (cases.length === 0) {
-            listHtml = '<div class="empty-placeholder" style="padding:30px;">暂无手动录入案例，请通过下方表单添加</div>';
+        // 搜索和分页
+        window._trainPage = window._trainPage || 1;
+        window._trainSearch = window._trainSearch || '';
+        var pageSize = 5;
+        var searchKw = window._trainSearch.trim().toLowerCase();
+        var filtered = cases;
+        if (searchKw) {
+            filtered = cases.filter(function(c){
+                return (c.qcCode||'').toLowerCase().indexOf(searchKw) >= 0 ||
+                       (c.issueDesc||'').toLowerCase().indexOf(searchKw) >= 0 ||
+                       (c.productCategory||'').toLowerCase().indexOf(searchKw) >= 0 ||
+                       (c.errorCategory||'').toLowerCase().indexOf(searchKw) >= 0 ||
+                       (c.caseType||'').toLowerCase().indexOf(searchKw) >= 0;
+            });
+        }
+        var totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
+        if (window._trainPage > totalPages) window._trainPage = totalPages;
+        var start = (window._trainPage - 1) * pageSize;
+        var pageItems = filtered.slice(start, start + pageSize);
+
+        var listHtml = '';
+        if (filtered.length === 0) {
+            listHtml = '<div class="empty-placeholder" style="padding:30px;">'+(searchKw?'未找到匹配案例':'暂无已录入案例')+'</div>';
         } else {
-            listHtml = cases.map((c, idx) => `
-                <div style="background:#fafcfd;border:1px solid #eef2f6;border-radius:16px;padding:16px;margin-bottom:12px;">
-                    <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:8px;">
-                        <div style="font-weight:700;color:#1f3a6b;">🔖 ${escapeHtml(c.qcCode)}</div>
-                        <button class="editManualCaseBtn" data-idx="${idx}" style="background:#eef2ff;border:none;padding:4px 12px;border-radius:20px;cursor:pointer;font-size:0.75rem;color:#2a5298;margin-right:4px;">✏️ 编辑</button>
-                        <button class="deleteManualCaseBtn" data-idx="${idx}" style="background:#fef2f2;border:none;padding:4px 12px;border-radius:20px;cursor:pointer;font-size:0.75rem;color:#c0392b;">🗑️ 删除</button>
-                    </div>
-                    ${c.errorCategory ? `<span style="display:inline-block;background:#fff3e0;color:#e67e22;padding:2px 10px;border-radius:10px;font-size:0.7rem;font-weight:500;margin-bottom:6px;">🏷️ ${escapeHtml(c.errorCategory)}</span>` : ''}
-                    ${c.productCategory ? '<div style="font-size:0.7rem;color:#2a5298;margin-bottom:4px;">🏷️ ' + escapeHtml(c.productCategory) + '</div>' : ''}
-                    <div style="font-size:0.85rem;color:#4a5568;margin-bottom:8px;">📝 ${escapeHtml(c.issueDesc || '无描述')}</div>
-                    ${c.issuePhotos && c.issuePhotos.length > 0 ? '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px;">' + c.issuePhotos.map(function(p) { return photoTag(p, 150, 150); }).join('') + '</div>' : ''}
-                    <div style="background:#eef2ff;padding:8px 12px;border-radius:10px;font-size:0.85rem;color:#2a5298;">✅ 正确方向：${escapeHtml(c.correctDir || '无')}</div>
-                    ${c.dirPhotos && c.dirPhotos.length > 0 ? '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;">' + c.dirPhotos.map(function(p) { return photoTag(p, 150, 150); }).join('') + '</div>' : ''}
-                    ${c.dirExamplePhotos && c.dirExamplePhotos.length > 0 ? '<div style="margin-top:4px;font-size:0.7rem;color:#5e6f8d;">📷 方向示例：</div><div style="display:flex;gap:6px;flex-wrap:wrap;">' + c.dirExamplePhotos.map(function(p) { return photoTag(p, 150, 150); }).join('') + '</div>' : ''}
-                    <div style="font-size:0.7rem;color:#94a3b8;margin-top:6px;">${new Date(c.createTime).toLocaleString('zh-CN')}</div>
-                </div>
-            `).join('');
+            listHtml = pageItems.map(function(c){
+                var origIdx = cases.findIndex(function(x){return x.qcCode===c.qcCode;});
+                var delIdx = getManualCasesFull().findIndex(function(x){return x.qcCode===c.qcCode;});
+                return '<div style="background:#fafcfd;border:1px solid #eef2f6;border-radius:16px;padding:14px;margin-bottom:10px;">'+
+                    '<div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:4px;margin-bottom:6px;">'+
+                        '<div style="font-weight:700;color:#1f3a6b;">🔖 '+escapeHtml(c.qcCode)+'</div>'+
+                        '<div style="display:flex;flex-direction:column;gap:4px;align-items:flex-end;">'+
+                            '<button class="deleteManualCaseBtn" data-idx="'+delIdx+'" style="background:#fef2f2;border:none;padding:3px 10px;border-radius:14px;cursor:pointer;font-size:0.7rem;color:#c0392b;">🗑️ 删除</button>'+
+                            '<button class="editManualCaseBtn" data-idx="'+delIdx+'" style="background:#eef2ff;border:none;padding:3px 10px;border-radius:14px;cursor:pointer;font-size:0.7rem;color:#2a5298;">✏️ 编辑</button>'+
+                        '</div>'+
+                    '</div>'+
+                    (c.errorCategory ? '<span style="display:inline-block;background:#fff3e0;color:#e67e22;padding:2px 8px;border-radius:10px;font-size:0.65rem;font-weight:500;margin-bottom:4px;">🏷️ '+escapeHtml(c.errorCategory)+'</span>' : '')+
+                    (c.caseType ? '<span style="display:inline-block;background:#fff7ed;color:#c2410c;padding:2px 8px;border-radius:10px;font-size:0.65rem;margin-bottom:4px;margin-left:4px;">📌 '+escapeHtml(c.caseType)+'</span>' : '')+
+                    (c.productCategory ? '<div style="font-size:0.7rem;color:#2a5298;margin-bottom:4px;">🏷️ '+escapeHtml(c.productCategory)+'</div>' : '')+
+                    '<div style="font-size:0.82rem;color:#4a5568;margin-bottom:6px;">📝 '+escapeHtml(c.issueDesc||'无描述')+'</div>'+
+                    (c.issuePhotos && c.issuePhotos.length > 0 ? '<div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:6px;">'+c.issuePhotos.map(function(p){return photoTag(p,120,110);}).join('')+'</div>' : '')+
+                    '<div style="background:#eef2ff;padding:8px 12px;border-radius:10px;font-size:0.8rem;color:#2a5298;">✅ '+escapeHtml(c.correctDir||'无')+'</div>'+
+                    '<div style="font-size:0.65rem;color:#94a3b8;margin-top:4px;">📅 '+new Date(c.createTime).toLocaleString('zh-CN')+'</div>'+
+                '</div>';
+            }).join('');
+        }
+        // 分页导航
+        var pagerHtml = '';
+        if (totalPages > 1) {
+            pagerHtml = '<div style="display:flex;gap:6px;justify-content:center;margin-top:12px;flex-wrap:wrap;">'+
+                '<button onclick="window._trainPage=1;renderManualTab();" style="padding:4px 10px;border:1px solid #cbd5e1;border-radius:14px;background:white;cursor:pointer;font-size:0.7rem;">⏮</button>'+
+                '<button onclick="window._trainPage=Math.max(1,window._trainPage-1);renderManualTab();" style="padding:4px 10px;border:1px solid #cbd5e1;border-radius:14px;background:white;cursor:pointer;font-size:0.7rem;">◀</button>'+
+                '<span style="padding:4px 10px;font-size:0.7rem;color:#5e6f8d;">'+window._trainPage+' / '+totalPages+'</span>'+
+                '<button onclick="window._trainPage=Math.min('+totalPages+',window._trainPage+1);renderManualTab();" style="padding:4px 10px;border:1px solid #cbd5e1;border-radius:14px;background:white;cursor:pointer;font-size:0.7rem;">▶</button>'+
+                '<button onclick="window._trainPage='+totalPages+';renderManualTab();" style="padding:4px 10px;border:1px solid #cbd5e1;border-radius:14px;background:white;cursor:pointer;font-size:0.7rem;">⏭</button>'+
+            '</div>';
         }
 
         content.innerHTML = `
         <div class="report-box" style="margin-bottom:16px;" id="manualEntryForm">
             <div class="report-title" style="font-size:0.95rem;">✍️ 手动录入新案例</div>
+            <div style="margin-bottom:12px;display:flex;gap:12px;flex-wrap:wrap;">
+                <div style="flex:1;min-width:200px;">
+                    <label style="font-weight:600;color:#1f3a6b;">📌 案例类型</label>
+                    <select id="manualCaseType" style="width:100%;padding:8px 12px;border:1px solid #d1d5db;border-radius:10px;margin-top:4px;font-size:0.9rem;background:white;">
+                        <option value="培训案例">培训案例</option>
+                        <option value="双周培训">双周培训</option>
+                        <option value="知识巩固">知识巩固</option>
+                    </select>
+                </div>
+            </div>
             <div style="margin-bottom:12px;">
                 <label style="font-weight:600;color:#1f3a6b;">质检码 <span style="color:#c0392b;">*</span></label>
                 <input id="manualQcCode" type="text" placeholder="输入质检码编号" style="width:100%;padding:8px 12px;border:1px solid #d1d5db;border-radius:10px;margin-top:4px;font-size:0.9rem;">
@@ -7905,10 +8014,12 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
                 <button id="saveManualCaseBtn" class="primary" style="padding:10px 30px;border-radius:30px;">💾 保存案例</button>
             </div>
         </div>
-        <div class="report-box">
-            <div class="report-title" style="font-size:0.95rem;">📋 已录入案例（${cases.length}条）</div>
-            ${listHtml}
-        </div>`;
+        <div style="margin-bottom:8px;display:flex;gap:8px;align-items:center;margin-top:16px;">
+            <input id="trainSearchInput" type="text" placeholder="🔍 搜索..." value="${escapeHtml(searchKw)}" style="flex:1;padding:6px 12px;border:1px solid #cbd5e1;border-radius:14px;font-size:0.78rem;">
+            <button onclick="window._trainPage=1;window._trainSearch=document.getElementById('trainSearchInput').value;renderManualTab();" style="background:#2a5298;color:white;border:none;padding:6px 12px;border-radius:14px;cursor:pointer;font-size:0.75rem;">搜索</button>
+        </div>
+        <div class="report-title" style="font-size:0.9rem;">📋 已录入案例（${filtered.length}条）${searchKw?' <span style="font-size:0.7rem;color:#94a3b8;">搜索自'+cases.length+'条</span>':''}</div>` + listHtml + pagerHtml + `
+        `;
 
         // 问题照片预览
         document.getElementById('manualIssuePhotos').addEventListener('change', function() {
@@ -7954,6 +8065,7 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
             const issueDesc = document.getElementById('manualIssueDesc').value.trim();
             const correctDir = document.getElementById('manualCorrectDir').value.trim();
             const productCategory = document.getElementById('manualProductCategory').value.trim();
+            const caseType = document.getElementById('manualCaseType').value;
             if (!qcCode) { alert('请输入质检码'); return; }
             if (!errorCategory) { alert('请选择失误类别'); return; }
             if (!issueDesc) { alert('请输入问题点描述'); return; }
@@ -7979,7 +8091,7 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
                 // 编辑模式：保留原创建时间和照片（如未重新选择）
                 const old = cases[editIdx];
                 cases[editIdx] = {
-                    qcCode, errorCategory, issueDesc, correctDir, productCategory,
+                    qcCode, errorCategory, issueDesc, correctDir, productCategory, caseType,
                     issuePhotos: issuePhotos.length > 0 ? issuePhotos : (old.issuePhotos || []),
                     dirPhotos: dirPhotos.length > 0 ? dirPhotos : (old.dirPhotos || []),
                     dirExamplePhotos: dirExamplePhotos.length > 0 ? dirExamplePhotos : (old.dirExamplePhotos || []),
@@ -7989,7 +8101,7 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
                 document.getElementById('saveManualCaseBtn').textContent = '💾 保存案例';
                 document.getElementById('saveManualCaseBtn').removeAttribute('data-edit-idx');
             } else {
-                cases.unshift({ qcCode, errorCategory, issueDesc, issuePhotos, correctDir, dirPhotos, dirExamplePhotos, productCategory, createTime: Date.now() });
+                cases.unshift({ qcCode, errorCategory, issueDesc, issuePhotos, correctDir, dirPhotos, dirExamplePhotos, productCategory, caseType, createTime: Date.now() });
             }
             saveManualCases(cases);
             document.getElementById('manualQcCode').value = '';
@@ -8003,6 +8115,11 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
             document.getElementById('manualIssuePhotosPreview').innerHTML = '';
             document.getElementById('manualDirPhotosPreview').innerHTML = '';
             document.getElementById('manualDirExamplePhotosPreview').innerHTML = '';
+            // 保存后收起表单
+            var entry=document.getElementById('trainingManualEntry');
+            var btn=document.getElementById('toggleManualEntryBtn');
+            if(entry)entry.style.display='none';
+            if(btn)btn.textContent='✍️ 手动录入';
             renderManualTab();
         });
 
@@ -8018,6 +8135,7 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
                 document.getElementById('manualIssueDesc').value = c.issueDesc || '';
                 document.getElementById('manualCorrectDir').value = c.correctDir || '';
                 document.getElementById('manualProductCategory').value = c.productCategory || '';
+                document.getElementById('manualCaseType').value = c.caseType || '培训案例';
                 document.getElementById('saveManualCaseBtn').textContent = '💾 更新案例';
                 document.getElementById('saveManualCaseBtn').dataset.editIdx = idx;
                 document.getElementById('manualEntryForm').scrollIntoView({ behavior: 'smooth' });
@@ -8248,56 +8366,98 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
         const container = document.getElementById(targetId);
         container.innerHTML = `
         <div style="max-width:1000px;margin:0 auto;">
-            <div class="report-box" style="margin-bottom:20px;">
-                <div class="report-title">📚 案例库</div>
-                <div style="display:flex;gap:12px;flex-wrap:wrap;justify-content:center;align-items:center;margin-top:12px;">
-                    <input id="caseLibSearch" type="text" placeholder="🔍 搜索质检码/问题描述/类别..." style="padding:6px 14px;border:1px solid #cbd5e1;border-radius:20px;font-size:0.8rem;width:240px;margin-right:12px;" oninput="filterCaseLibCards(this.value)">
-                </div>
+            <div class="report-box" style="margin-bottom:16px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">
+                <div class="report-title" style="margin-bottom:0;">📚 案例库</div>
+                <input id="caseLibSearch" type="text" placeholder="🔍 搜索质检码/问题描述..." style="padding:6px 14px;border:1px solid #cbd5e1;border-radius:20px;font-size:0.8rem;width:240px;" oninput="filterCaseLibCards(this.value)">
             </div>
             <div id="caseLibCatContent"></div>
             <div id="caseLibBiweeklyContent" style="margin-top:24px;"></div>
         </div>`;
-        // 合并视图：案例分类 + 双周培训 统一显示
         renderCompletedCasesTab();
         renderBiweeklyLibTab();
     }
 
     function filterCaseLibCards(kw) {
         kw = (kw || '').trim().toLowerCase();
-        // 收集完成视图：表格行
-        document.querySelectorAll('#caseLibCatContent tr').forEach(function(row) {
-            var text = (row.textContent || '').toLowerCase();
-            row.style.display = (!kw || text.indexOf(kw) >= 0) ? '' : 'none';
+        var container = document.getElementById('caseLibCatContent');
+        var catMap = window._caseCatMap || {};
+        var iconMap={"判错责任方":"⚖️","未达标准":"📏","拍照/取证不规范":"📷","备注失误":"📝","扣错项/明显失误":"❌","责任分类错":"🔄","复核责":"🔍","组合差价未勾选":"🔗","低级/投诉失误":"⚠️"};
+        if (!kw) {
+            // 无搜索：恢复分类卡片视图
+            renderCompletedCasesTab();
+            return;
+        }
+        // 有搜索：按分类分组显示匹配案例
+        var cases=getManualCasesFull();
+        var matched={};
+        cases.forEach(function(c){
+            var match = (c.qcCode||'').toLowerCase().indexOf(kw) >= 0 ||
+                       (c.issueDesc||'').toLowerCase().indexOf(kw) >= 0 ||
+                       (c.productCategory||'').toLowerCase().indexOf(kw) >= 0 ||
+                       (c.correctDir||'').toLowerCase().indexOf(kw) >= 0;
+            if(!match)return;
+            var cat=c.errorCategory||'未分类';
+            if(!matched[cat])matched[cat]=[];
+            matched[cat].push(c);
         });
-        // 双周视图：周期卡片
-        document.querySelectorAll('#caseLibBiweeklyContent .biweekly-period-body').forEach(function(body) {
-            var text = (body.textContent || '').toLowerCase();
-            var card = body.closest('div[style]');
-            if (kw && text.indexOf(kw) < 0) {
-                if (card) card.style.display = 'none';
-            } else {
-                if (card) card.style.display = '';
-            }
+        if(Object.keys(matched).length===0){
+            container.innerHTML='<div class="report-box"><div class="empty-placeholder" style="padding:30px;">未找到匹配案例</div></div>';
+            return;
+        }
+        var html='';
+        Object.keys(matched).sort().forEach(function(cat){
+            var list=matched[cat];
+            var icon=iconMap[cat]||'📋';
+            var cards=list.map(function(c){
+                var origIdx=cases.findIndex(function(x){return x.qcCode===c.qcCode;});
+                var photosHtml=(c.issuePhotos&&c.issuePhotos.length>0)?c.issuePhotos.map(function(p){return photoTag(p,60,50);}).join(''):'';
+                return '<div class="case-row-card" onclick="showCaseFullDetail('+origIdx+')" style="cursor:pointer;">'+
+                    '<div style="font-weight:700;font-size:0.82rem;color:#1f3a6b;">'+escapeHtml(c.qcCode)+'</div>'+
+                    (c.productCategory?'<span style="background:#eef2ff;color:#2a5298;font-size:0.6rem;padding:1px 6px;border-radius:8px;">🏷️ '+escapeHtml(c.productCategory)+'</span>':'')+
+                    '<div style="font-size:0.73rem;color:#333;margin-top:2px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;">'+escapeHtml(c.issueDesc||'')+'</div>'+
+                    (photosHtml?'<div style="margin-top:2px;">'+photosHtml+'</div>':'')+
+                '</div>';
+            }).join('');
+            html+='<div style="margin-bottom:14px;">'+
+                '<div style="font-weight:700;color:#1f3a6b;font-size:0.85rem;margin-bottom:6px;display:flex;align-items:center;gap:6px;">'+icon+' '+escapeHtml(cat)+' <span style="font-weight:400;color:#94a3b8;font-size:0.7rem;">'+list.length+'例</span></div>'+
+                '<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;">'+cards+'</div>'+
+            '</div>';
         });
+        container.innerHTML='<style>.case-row-card{background:#f0f6ff;border:1px solid #d6e4f0;border-radius:12px;padding:10px;transition:0.15s;min-height:0;overflow:hidden;}.case-row-card:hover{box-shadow:0 3px 10px rgba(0,0,0,0.1);border-color:#2a5298;background:#e3f0ff;}</style><div class="report-box">'+html+'</div>';
     }
+
     function renderCompletedCasesTab() {
-var content=document.getElementById("caseLibCatContent");
-var cases=getManualCasesFull();
-if(cases.length===0){content.innerHTML='<div class="report-box"><div class="empty-placeholder" style="padding:40px;">暂无已收集的案例</div></div>';return;}
-var catMap={};
-cases.forEach(function(c){var cat=c.errorCategory||"未分类";if(!catMap[cat])catMap[cat]=[];catMap[cat].push(c);});
-var categories=Object.keys(catMap).sort();
-var iconMap={"判错责任方":"⚖️","未达标准":"📏","拍照/取证不规范":"📷","备注失误":"📝","扣错项/明显失误":"❌","责任分类错":"🔄","复核责":"🔍","组合差价未勾选":"🔗","低级/投诉失误":"⚠️"};
-var cardsHtml='<div class="qb-cat-card" onclick="showCaseCategoryDetail(\'__all__\')" style="cursor:pointer;"><div class="qb-cat-icon">📋</div><div class="qb-cat-name">全部案例</div><div class="qb-cat-count">'+cases.length+' 例</div><div class="qb-cat-actions"><button class="qb-card-btn qb-card-view" onclick="event.stopPropagation();showCaseCategoryDetail(\'__all__\')">👁️ 查看</button><button class="qb-card-btn qb-card-clear admin-only" onclick="event.stopPropagation();clearAllCases()">🗑️ 清空</button></div></div>';
-categories.forEach(function(cat){
-var count=catMap[cat].length;
-var icon=iconMap[cat]||'📋';
-var safeCat=cat.replace(/'/g,"\\'");
-	cardsHtml+='<div class="qb-cat-card" onclick="showCaseCategoryDetail(\''+safeCat+'\')" style="cursor:pointer;position:relative;"><button class="qb-card-clear-corner admin-only" onclick="event.stopPropagation();clearCaseCategory(\''+safeCat+'\')" title="清空此分类">✕</button><div class="qb-cat-icon">'+icon+'</div><div class="qb-cat-name">'+escapeHtml(cat)+'</div><div class="qb-cat-count">'+count+' 例</div><div class="qb-cat-actions"><button class="qb-card-btn qb-card-view" onclick="event.stopPropagation();showCaseCategoryDetail(\''+safeCat+'\')">👁️ 查看</button><button class="qb-card-btn qb-card-add admin-only" onclick="event.stopPropagation();openAddCaseModal(\''+safeCat+'\')">✍️ 录入</button></div></div>';
-});
-content.innerHTML='<style>.qb-cat-card{background:#f8fafc;border-radius:16px;padding:20px 16px;text-align:center;box-shadow:0 2px 8px rgba(0,0,0,0.08);border:1px solid #dde4ed;transition:transform 0.2s;position:relative}.qb-cat-card:hover{transform:translateY(-2px);box-shadow:0 4px 16px rgba(0,0,0,0.14)}.qb-cat-icon{font-size:2rem;margin-bottom:8px}.qb-cat-name{font-weight:700;color:#1e293b;font-size:0.9rem;margin-bottom:4px}.qb-cat-count{font-size:0.75rem;color:#5e6f8d;margin-bottom:10px}.qb-cat-actions{display:flex;gap:5px;justify-content:center;flex-wrap:wrap}.qb-card-btn{padding:5px 12px;border-radius:14px;border:none;cursor:pointer;font-size:0.7rem;font-weight:600}.qb-card-view{background:#dbeafe;color:#1e40af}.qb-card-add{background:#fef3c7;color:#92400e}.qb-card-clear{background:#fecaca;color:#991b1b}.qb-card-clear-corner{position:absolute;top:6px;right:6px;width:22px;height:22px;border-radius:50%;border:none;background:#fecaca;color:#991b1b;font-size:0.7rem;cursor:pointer;display:flex;align-items:center;justify-content:center;line-height:1;opacity:0.6;transition:opacity 0.2s}.qb-card-clear-corner:hover{opacity:1}</style><div class="report-box"><div class="report-title" style="color:#1e293b;">📚 案例分类</div><div style="display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-top:14px;">'+cardsHtml+'</div></div>';
-window._caseCatMap=catMap;
-}
+	var content=document.getElementById("caseLibCatContent");
+	if(!content)return;
+	var cases=getManualCasesFull();
+	if(cases.length===0){content.innerHTML='<div class="report-box"><div class="empty-placeholder" style="padding:40px;">暂无已收集的案例</div></div>';return;}
+	// 按案例类型统计
+	var typeCounts={};
+	cases.forEach(function(c){var t=c.caseType||'培训案例';typeCounts[t]=(typeCounts[t]||0)+1;});
+	var typeIcons={'培训案例':'📌','双周培训':'📅','知识巩固':'📖'};
+	var typeColors={'培训案例':'#fff7ed','双周培训':'#f0fdf4','知识巩固':'#f0f6ff'};
+	var typeCards='';
+	['培训案例','双周培训','知识巩固'].forEach(function(t){
+		var count=typeCounts[t]||0;
+		var icon=typeIcons[t]||'📋';
+		var bg=typeColors[t]||'#f8fafc';
+		typeCards+='<div class="qb-type-card" onclick="showCaseTypeDetail(\''+t+'\')" style="cursor:pointer;background:'+bg+';"><div class="qb-cat-icon">'+icon+'</div><div class="qb-cat-name">'+t+'</div><div class="qb-cat-count">'+count+' 例</div><div class="qb-cat-actions"><button class="qb-card-btn qb-card-view" onclick="event.stopPropagation();showCaseTypeDetail(\''+t+'\')">👁️ 查看</button></div></div>';
+	});
+	// 按失误类别统计
+	var catMap={};
+	cases.forEach(function(c){var cat=c.errorCategory||"未分类";if(!catMap[cat])catMap[cat]=[];catMap[cat].push(c);});
+	var categories=Object.keys(catMap).sort();
+	var iconMap={"判错责任方":"⚖️","未达标准":"📏","拍照/取证不规范":"📷","备注失误":"📝","扣错项/明显失误":"❌","责任分类错":"🔄","复核责":"🔍","组合差价未勾选":"🔗","低级/投诉失误":"⚠️"};
+	var catCards='';
+	categories.forEach(function(cat){
+	var count=catMap[cat].length;
+	var icon=iconMap[cat]||'📋';
+	var safeCat=cat.replace(/'/g,"\'");
+		catCards+='<div class="qb-cat-card" onclick="showCaseCategoryDetail(\''+safeCat+'\')" style="cursor:pointer;position:relative;"><button class="qb-card-clear-corner admin-only" onclick="event.stopPropagation();clearCaseCategory(\''+safeCat+'\')" title="清空此分类">✕</button><div class="qb-cat-icon">'+icon+'</div><div class="qb-cat-name">'+escapeHtml(cat)+'</div><div class="qb-cat-count">'+count+' 例</div><div class="qb-cat-actions"><button class="qb-card-btn qb-card-view" onclick="event.stopPropagation();showCaseCategoryDetail(\''+safeCat+'\')">👁️ 查看</button><button class="qb-card-btn qb-card-add admin-only" onclick="event.stopPropagation();openAddCaseModal(\''+safeCat+'\')">✍️ 录入</button></div></div>';
+	});
+	content.innerHTML='<style>.qb-type-card,.qb-cat-card{background:#f8fafc;border-radius:16px;padding:20px 16px;text-align:center;box-shadow:0 2px 8px rgba(0,0,0,0.08);border:1px solid #dde4ed;transition:transform 0.2s;position:relative}.qb-type-card:hover,.qb-cat-card:hover{transform:translateY(-2px);box-shadow:0 4px 16px rgba(0,0,0,0.14)}.qb-cat-icon{font-size:2rem;margin-bottom:8px}.qb-cat-name{font-weight:700;color:#1e293b;font-size:0.9rem;margin-bottom:4px}.qb-cat-count{font-size:0.75rem;color:#5e6f8d;margin-bottom:10px}.qb-cat-actions{display:flex;gap:5px;justify-content:center;flex-wrap:wrap}.qb-card-btn{padding:5px 12px;border-radius:14px;border:none;cursor:pointer;font-size:0.7rem;font-weight:600}.qb-card-view{background:#dbeafe;color:#1e40af}.qb-card-add{background:#fef3c7;color:#92400e}.qb-card-clear{background:#fecaca;color:#991b1b}.qb-card-clear-corner{position:absolute;top:6px;right:6px;width:22px;height:22px;border-radius:50%;border:none;background:#fecaca;color:#991b1b;font-size:0.7rem;cursor:pointer;display:flex;align-items:center;justify-content:center;line-height:1;opacity:0.6;transition:opacity 0.2s}.qb-card-clear-corner:hover{opacity:1}</style><div class="report-box" style="margin-bottom:12px;"><div style="font-size:0.8rem;color:#5e6f8d;margin-bottom:8px;">📌 按案例类型</div><div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;">'+typeCards+'</div></div><div class="report-box"><div style="font-size:0.8rem;color:#5e6f8d;margin-bottom:8px;">🏷️ 按失误类别</div><div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;">'+catCards+'</div></div>';
+	window._caseCatMap=catMap;
+	}
 function openAddCaseModal(cat){
 var ov=document.createElement('div');ov.className='modal-overlay';ov.style.zIndex='3000';
 ov.innerHTML='<div class="modal-container" style="max-width:550px;"><div class="modal-header">✍️ 录入案例 - '+cat+'<button class="modal-close-btn" id="acClose">✕</button></div><div class="modal-body" style="padding:16px;">'+
@@ -8361,10 +8521,10 @@ var editIdx=window._editCaseIdx;
 if(editIdx!==undefined&&editIdx>=0&&cases[editIdx]){
 // 编辑模式：更新已有案例，保留旧照片（如果没有新上传）
 var old=cases[editIdx];
-cases[editIdx]={qcCode:qc,errorCategory:cat2,issueDesc:desc,issuePhotos:ips.length>0?ips:old.issuePhotos,correctDir:dir,dirPhotos:dps.length>0?dps:old.dirPhotos,dirExamplePhotos:deps.length>0?deps:old.dirExamplePhotos,productCategory:pc2||old.productCategory,createTime:old.createTime};
+cases[editIdx]={qcCode:qc,errorCategory:cat2,issueDesc:desc,issuePhotos:ips.length>0?ips:old.issuePhotos,correctDir:dir,dirPhotos:dps.length>0?dps:old.dirPhotos,dirExamplePhotos:deps.length>0?deps:old.dirExamplePhotos,productCategory:pc2||old.productCategory,caseType:old.caseType||'培训案例',createTime:old.createTime};
 delete window._editCaseIdx;
 }else{
-cases.unshift({qcCode:qc,errorCategory:cat2,issueDesc:desc,issuePhotos:ips,correctDir:dir,dirPhotos:dps,dirExamplePhotos:deps,productCategory:pc2,createTime:Date.now()});
+cases.unshift({qcCode:qc,errorCategory:cat2,issueDesc:desc,issuePhotos:ips,correctDir:dir,dirPhotos:dps,dirExamplePhotos:deps,productCategory:pc2,caseType:'培训案例',createTime:Date.now()});
 }
 saveManualCases(cases);
 ov.remove();
@@ -8412,23 +8572,102 @@ var saveBtn=document.getElementById('acSave');
 if(saveBtn){saveBtn.textContent='💾 更新';saveBtn.dataset.editIdx=idx;}
 },200);
 }
-function showCaseCategoryDetail(cat){
+// 点击案例类型卡片 → 按类型筛选
+function showCaseTypeDetail(caseType){
+var cases=getManualCasesFull().filter(function(c){return (c.caseType||'培训案例')===caseType;});
+if(cases.length===0)return;
+var catMap={};
+cases.forEach(function(c){var cat=c.errorCategory||"未分类";if(!catMap[cat])catMap[cat]=[];catMap[cat].push(c);});
+var iconMap={"判错责任方":"⚖️","未达标准":"📏","拍照/取证不规范":"📷","备注失误":"📝","扣错项/明显失误":"❌","责任分类错":"🔄","复核责":"🔍","组合差价未勾选":"🔗","低级/投诉失误":"⚠️"};
+var ov=document.createElement('div');ov.className='modal-overlay';ov.style.zIndex='3000';
+var html='';
+Object.keys(catMap).sort().forEach(function(cat){
+var list=catMap[cat];
+var icon=iconMap[cat]||'📋';
+var cards=list.map(function(c){
+var origIdx=getManualCasesFull().findIndex(function(x){return x.qcCode===c.qcCode;});
+var photosHtml=(c.issuePhotos&&c.issuePhotos.length>0)?c.issuePhotos.map(function(p){return photoTag(p,80,70);}).join(''):'';
+return '<div class="case-row-card" onclick="showCaseFullDetail('+origIdx+')" style="cursor:pointer;">'+
+'<div style="font-weight:700;font-size:0.85rem;color:#1f3a6b;">🔖 '+escapeHtml(c.qcCode)+'</div>'+
+(c.productCategory?'<span style="background:#eef2ff;color:#2a5298;font-size:0.65rem;padding:2px 8px;border-radius:10px;">🏷️ '+escapeHtml(c.productCategory)+'</span>':'')+
+'<div style="font-size:0.78rem;color:#333;margin-top:4px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;">'+escapeHtml(c.issueDesc||'')+'</div>'+
+(photosHtml?'<div style="margin-top:4px;">'+photosHtml+'</div>':'')+
+'<div style="font-size:0.65rem;color:#94a3b8;margin-top:4px;">📅 '+new Date(c.createTime).toLocaleDateString('zh-CN')+'</div>'+
+'</div>';
+}).join('');
+html+='<div style="margin-bottom:14px;"><div style="font-weight:700;color:#1f3a6b;font-size:0.9rem;margin-bottom:6px;">'+icon+' '+escapeHtml(cat)+' <span style="font-weight:400;color:#94a3b8;font-size:0.7rem;">'+list.length+'例</span></div><div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;">'+cards+'</div></div>';
+});
+ov.innerHTML='<div class="modal-container" style="max-width:1000px;"><div class="modal-header">📌 '+caseType+'（'+cases.length+'例）<button class="modal-close-btn" onclick="this.closest(\'.modal-overlay\').remove()">✕</button></div><div class="modal-body" style="max-height:70vh;overflow-y:auto;">'+html+'</div></div><style>.case-row-card{background:#f0f6ff;border:1px solid #d6e4f0;border-radius:14px;padding:12px;transition:0.15s;}.case-row-card:hover{box-shadow:0 4px 12px rgba(0,0,0,0.1);border-color:#2a5298;background:#e3f0ff;}</style>';
+document.body.appendChild(ov);
+ov.onclick=function(e){if(e.target===ov)ov.remove();};
+}
+
+function showCaseCategoryDetail(cat, filterKw){
 var catCases;
 if(cat==='__all__'){catCases=getManualCasesFull();}
 else{catCases=(window._caseCatMap||{})[cat]||[];}
 if(catCases.length===0)return;
+// 继承搜索关键词
+filterKw = filterKw || (document.getElementById('caseLibSearch')||{}).value || '';
+filterKw = filterKw.trim().toLowerCase();
+if(filterKw){
+    catCases = catCases.filter(function(c){
+        return (c.qcCode||'').toLowerCase().indexOf(filterKw) >= 0 ||
+               (c.issueDesc||'').toLowerCase().indexOf(filterKw) >= 0 ||
+               (c.productCategory||'').toLowerCase().indexOf(filterKw) >= 0 ||
+               (c.correctDir||'').toLowerCase().indexOf(filterKw) >= 0;
+    });
+}
 var ov=document.createElement('div');ov.className='modal-overlay';ov.style.zIndex='3000';
-var rowsHtml=catCases.map(function(c){
-var photosHtml=(c.issuePhotos&&c.issuePhotos.length>0)?c.issuePhotos.map(function(p){return photoTag(p,60,50);}).join(''):'-';
-var dirExampleHtml=(c.dirExamplePhotos&&c.dirExamplePhotos.length>0)?c.dirExamplePhotos.map(function(p){return photoTag(p,60,50);}).join(''):'-';
+var cardsHtml=catCases.map(function(c){
+var photosHtml=(c.issuePhotos&&c.issuePhotos.length>0)?c.issuePhotos.map(function(p){return photoTag(p,80,70);}).join(''):'';
+var dirExampleHtml=(c.dirExamplePhotos&&c.dirExamplePhotos.length>0)?c.dirExamplePhotos.map(function(p){return photoTag(p,80,70);}).join(''):'';
 var origIdx=getManualCasesFull().findIndex(function(x){return x.qcCode===c.qcCode;});
-return '<tr><td style="font-weight:600;">'+escapeHtml(c.qcCode)+'</td><td style="font-size:0.7rem;">'+(c.productCategory||'-')+'</td><td>'+escapeHtml(c.issueDesc||'')+'</td><td>'+photosHtml+'</td><td style="max-width:180px;font-size:0.75rem;">'+escapeHtml(c.correctDir||'')+'</td><td>'+dirExampleHtml+'</td><td style="font-size:0.75rem;">'+new Date(c.createTime).toLocaleDateString('zh-CN')+'</td>'+
-'<td class="admin-only"><button class="action-btn" onclick="editCaseByIndex('+origIdx+')">✏️</button><button class="action-btn danger" onclick="deleteCaseByIndex('+origIdx+')">🗑️</button></td></tr>';
+return '<div class="case-row-card" onclick="showCaseFullDetail('+origIdx+')" style="cursor:pointer;">'+
+'<div style="font-weight:700;font-size:0.85rem;color:#1f3a6b;">🔖 '+escapeHtml(c.qcCode)+'</div>'+
+(c.caseType?'<span style="background:#fff7ed;color:#c2410c;font-size:0.6rem;padding:1px 6px;border-radius:8px;margin-left:4px;">'+escapeHtml(c.caseType)+'</span>':'')+
+(c.productCategory?'<span style="background:#eef2ff;color:#2a5298;font-size:0.65rem;padding:2px 8px;border-radius:10px;">🏷️ '+escapeHtml(c.productCategory)+'</span>':'')+
+'<div style="font-size:0.78rem;color:#333;margin-top:4px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;">'+escapeHtml(c.issueDesc||'')+'</div>'+
+(photosHtml?'<div style="margin-top:4px;">'+photosHtml+'</div>':'')+
+'<div style="font-size:0.65rem;color:#94a3b8;margin-top:4px;">📅 '+new Date(c.createTime).toLocaleDateString('zh-CN')+'</div>'+
+'</div>';
 }).join('');
 var catLabel=cat==='__all__'?'全部案例':cat;
-ov.innerHTML='<div class="modal-container" style="max-width:900px;"><div class="modal-header">📋 '+catLabel+'（'+catCases.length+'例）<button class="modal-close-btn" id="ccClose">✕</button></div><div class="modal-body" style="max-height:70vh;overflow-y:auto;"><table class="admin-table" style="width:100%;"><thead><tr><th>质检码</th><th>品类</th><th>问题描述</th><th>问题照片</th><th>正确方向</th><th>方向示例照片</th><th>录入时间</th><th class="admin-only">操作</th></tr></thead><tbody>'+rowsHtml+'</tbody></table></div></div>';
+ov.innerHTML='<div class="modal-container" style="max-width:1000px;"><div class="modal-header">📋 '+catLabel+'（'+catCases.length+'例）<input id="ccSearch" type="text" placeholder="🔍 筛选..." style="margin-left:12px;padding:4px 10px;border:1px solid rgba(255,255,255,0.3);border-radius:14px;font-size:0.75rem;width:180px;background:rgba(255,255,255,0.15);color:white;" oninput="var kw=this.value.trim().toLowerCase();var cards=this.closest(\'.modal-container\').querySelectorAll(\'.case-row-card\');cards.forEach(function(c){c.style.display=(!kw||(c.textContent||\'\').toLowerCase().indexOf(kw)>=0)?\'\':\'none\';})"><button class="modal-close-btn" id="ccClose">✕</button></div>'+
+'<div class="modal-body" style="max-height:70vh;overflow-y:auto;">'+
+'<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;">'+cardsHtml+'</div>'+
+'</div></div>'+
+'<style>.case-row-card{background:#f0f6ff;border:1px solid #d6e4f0;border-radius:14px;padding:12px;transition:0.15s;min-height:0;overflow:hidden;}.case-row-card:hover{box-shadow:0 4px 12px rgba(0,0,0,0.1);border-color:#2a5298;background:#e3f0ff;}</style>';
 document.body.appendChild(ov);
 ov.querySelector('#ccClose').onclick=function(){ov.remove();};
+ov.onclick=function(e){if(e.target===ov)ov.remove();};
+}
+
+// 点击案例卡片 → 弹窗显示完整内容
+function showCaseFullDetail(idx) {
+var cases=getManualCasesFull();
+var c=cases[idx];if(!c)return;
+var ov=document.createElement('div');ov.className='modal-overlay';ov.style.zIndex='3100';
+var photosHtml=(c.issuePhotos&&c.issuePhotos.length>0)?'<div class="label">📷 问题照片</div>'+c.issuePhotos.map(function(p){return photoTag(p,280,260);}).join(''):'';
+var dirPhotosHtml=(c.dirPhotos&&c.dirPhotos.length>0)?'<div class="label">📷 方向照片</div>'+c.dirPhotos.map(function(p){return photoTag(p,280,260);}).join(''):'';
+var dirExampleHtml=(c.dirExamplePhotos&&c.dirExamplePhotos.length>0)?'<div class="label">📸 方向示例照片</div>'+c.dirExamplePhotos.map(function(p){return photoTag(p,280,260);}).join(''):'';
+ov.innerHTML='<div class="modal-container" style="max-width:800px;"><div class="modal-header">🔖 '+escapeHtml(c.qcCode)+'<button class="modal-close-btn" id="cfClose">✕</button></div>'+
+'<div class="modal-body" style="max-height:75vh;overflow-y:auto;">'+
+'<div style="margin-bottom:10px;display:flex;gap:6px;flex-wrap:wrap;">'+
+(c.caseType?'<span style="background:#fff7ed;color:#c2410c;font-size:0.75rem;padding:3px 10px;border-radius:12px;">📌 '+escapeHtml(c.caseType)+'</span>':'')+
+(c.productCategory?'<span style="background:#eef2ff;color:#2a5298;font-size:0.75rem;padding:3px 10px;border-radius:12px;">🏷️ '+escapeHtml(c.productCategory)+'</span>':'')+
+'</div>'+
+'<div class="label" style="font-weight:700;color:#1f3a6b;">📝 问题描述</div><div style="background:#f8fafc;padding:12px;border-radius:10px;margin-bottom:6px;font-size:0.9rem;">'+escapeHtml(c.issueDesc||'-')+'</div>'+
+photosHtml+
+'<div class="label" style="font-weight:700;color:#1f3a6b;">✅ 正确方向</div><div style="background:#f0fdf4;padding:12px;border-radius:10px;margin-bottom:14px;font-size:0.9rem;">'+escapeHtml(c.correctDir||'-')+'</div>'+
+dirPhotosHtml+dirExampleHtml+
+'<div style="font-size:0.7rem;color:#94a3b8;margin-top:12px;">📅 录入时间：'+new Date(c.createTime).toLocaleString('zh-CN')+'</div>'+
+'<div class="admin-only" style="margin-top:12px;display:flex;gap:8px;">'+
+'<button class="action-btn" onclick="this.closest(\'.modal-overlay\').remove();editCaseByIndex('+idx+')" style="font-size:0.8rem;">✏️ 编辑</button>'+
+'<button class="action-btn danger" onclick="this.closest(\'.modal-overlay\').remove();deleteCaseByIndex('+idx+')" style="font-size:0.8rem;">🗑️ 删除</button></div>'+
+'</div></div><style>.label{font-size:0.75rem;color:#5e6f8d;margin-bottom:4px;}</style>';
+document.body.appendChild(ov);
+ov.querySelector('#cfClose').onclick=function(){ov.remove();};
 ov.onclick=function(e){if(e.target===ov)ov.remove();};
 }
 function renderBiweeklyLibTab() {
