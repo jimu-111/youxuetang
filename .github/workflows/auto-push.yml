@@ -1,19 +1,20 @@
-name: Monday Auto Push
+  name: auto-push
   on:
-    schedule:
-      - cron: '0 2 * * 1'
     workflow_dispatch:
-
+    schedule:
+      - cron: "0 2 * * 1"
   jobs:
-    set-flag:
+    flag:
       runs-on: ubuntu-latest
       steps:
-        - name: Set auto push flag
-          run: |
-            curl -s -X POST "${{ secrets.SUPABASE_URL }}/rest/v1/app_data" \
-              -H "apikey: ${{ secrets.SUPABASE_KEY }}" \
-              -H "Authorization: Bearer ${{ secrets.SUPABASE_KEY }}" \
+        - run: |
+            curl -X POST "$SUPABASE_URL/rest/v1/app_data" \
+              -H "apikey: $SUPABASE_KEY" \
+              -H "Authorization: Bearer $SUPABASE_KEY" \
               -H "Content-Type: application/json" \
               -H "Prefer: resolution=merge-duplicates" \
-              -d '[{"key":"_auto_push_flag","value":"{\"needed\":true,\"week\":\"'$(date
-  +%Y-%m-%d)'\"}","updated_at":"'$(date -u +%Y-%m-%dT%H:%M:%SZ)'"}]'
+              -d '[{"key":"_auto_push_flag","value":"{\"needed\":true}","updated_at":"'"$(date -u
+  +%Y-%m-%dT%H:%M:%SZ)"'"}]'
+          env:
+            SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+            SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
