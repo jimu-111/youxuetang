@@ -7641,6 +7641,14 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
                         var idx = col[fieldName];
                         return (idx !== undefined && row[idx] !== undefined) ? row[idx] : undefined;
                     }
+                    // 多表头名兼容（用户可能用不同的列名）
+                    function cellAny(row, names) {
+                        for (var ni = 0; ni < names.length; ni++) {
+                            var v = cell(row, names[ni]);
+                            if (v !== undefined && v !== '') return v;
+                        }
+                        return undefined;
+                    }
                     // 用 fileToken 下载飞书图片
                     function getFileTokens(cellVal) {
                         if (!cellVal) return [];
@@ -7663,9 +7671,9 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
                         var newData = {
                             qcCode: qcCode,
                             errorCategory: (cell(row, '失误类别') || '').toString().trim(),
-                            issueDesc: (cell(row, '问题描述') || '').toString().trim(),
+                            issueDesc: (cellAny(row, ['问题点描述', '问题描述']) || '').toString().trim(),
                             issuePhotos: parseTokens(row, '问题照片'),
-                            correctDir: (cell(row, '正确方向') || '').toString().trim(),
+                            correctDir: (cellAny(row, ['应操作方向', '正确方向']) || '').toString().trim(),
                             dirPhotos: parseTokens(row, '方向照片'),
                             dirExamplePhotos: parseTokens(row, '方向示例照片'),
                             productCategory: (cell(row, '品类') || '').toString().trim()
@@ -8412,12 +8420,13 @@ if(catCases.length===0)return;
 var ov=document.createElement('div');ov.className='modal-overlay';ov.style.zIndex='3000';
 var rowsHtml=catCases.map(function(c){
 var photosHtml=(c.issuePhotos&&c.issuePhotos.length>0)?c.issuePhotos.map(function(p){return photoTag(p,60,50);}).join(''):'-';
-var origIdx=getManualCasesFull().indexOf(c);
-return '<tr><td style="font-weight:600;">'+escapeHtml(c.qcCode)+'</td><td>'+escapeHtml(c.issueDesc||'')+'</td><td>'+photosHtml+'</td><td style="max-width:180px;font-size:0.75rem;">'+escapeHtml(c.correctDir||'')+'</td><td style="font-size:0.75rem;">'+new Date(c.createTime).toLocaleDateString('zh-CN')+'</td>'+
+var dirExampleHtml=(c.dirExamplePhotos&&c.dirExamplePhotos.length>0)?c.dirExamplePhotos.map(function(p){return photoTag(p,60,50);}).join(''):'-';
+var origIdx=getManualCasesFull().findIndex(function(x){return x.qcCode===c.qcCode;});
+return '<tr><td style="font-weight:600;">'+escapeHtml(c.qcCode)+'</td><td style="font-size:0.7rem;">'+(c.productCategory||'-')+'</td><td>'+escapeHtml(c.issueDesc||'')+'</td><td>'+photosHtml+'</td><td style="max-width:180px;font-size:0.75rem;">'+escapeHtml(c.correctDir||'')+'</td><td>'+dirExampleHtml+'</td><td style="font-size:0.75rem;">'+new Date(c.createTime).toLocaleDateString('zh-CN')+'</td>'+
 '<td class="admin-only"><button class="action-btn" onclick="editCaseByIndex('+origIdx+')">✏️</button><button class="action-btn danger" onclick="deleteCaseByIndex('+origIdx+')">🗑️</button></td></tr>';
 }).join('');
 var catLabel=cat==='__all__'?'全部案例':cat;
-ov.innerHTML='<div class="modal-container" style="max-width:900px;"><div class="modal-header">📋 '+catLabel+'（'+catCases.length+'例）<button class="modal-close-btn" id="ccClose">✕</button></div><div class="modal-body" style="max-height:70vh;overflow-y:auto;"><table class="admin-table" style="width:100%;"><thead><tr><th>质检码</th><th>问题描述</th><th>问题照片</th><th>正确方向</th><th>录入时间</th><th class="admin-only">操作</th></tr></thead><tbody>'+rowsHtml+'</tbody></table></div></div>';
+ov.innerHTML='<div class="modal-container" style="max-width:900px;"><div class="modal-header">📋 '+catLabel+'（'+catCases.length+'例）<button class="modal-close-btn" id="ccClose">✕</button></div><div class="modal-body" style="max-height:70vh;overflow-y:auto;"><table class="admin-table" style="width:100%;"><thead><tr><th>质检码</th><th>品类</th><th>问题描述</th><th>问题照片</th><th>正确方向</th><th>方向示例照片</th><th>录入时间</th><th class="admin-only">操作</th></tr></thead><tbody>'+rowsHtml+'</tbody></table></div></div>';
 document.body.appendChild(ov);
 ov.querySelector('#ccClose').onclick=function(){ov.remove();};
 ov.onclick=function(e){if(e.target===ov)ov.remove();};
@@ -9203,6 +9212,8 @@ URL.revokeObjectURL(url);
     }
 
     function switchNav(nav) {
+        // 关闭所有弹窗
+        document.querySelectorAll('.modal-overlay').forEach(function(m) { m.remove(); });
         // 游客拦截
         var guestBlocked = ['frontend','dataAnalysis','examSystem','admin'];
         if (guestBlocked.indexOf(nav) >= 0 && !isAdminMode()) {
@@ -9231,6 +9242,8 @@ URL.revokeObjectURL(url);
     }
 
     function renderSubContent(nav) {
+        // 切换模块时关闭所有弹窗
+        document.querySelectorAll('.modal-overlay').forEach(function(m) { m.remove(); });
         if (!nav) return;
         if (nav === 'dashboard') renderDashboard();
         else if (nav === 'frontend') renderFrontend();
