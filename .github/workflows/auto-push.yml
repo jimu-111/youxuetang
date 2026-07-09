@@ -7,14 +7,11 @@
     flag:
       runs-on: ubuntu-latest
       steps:
-        - run: |
-            curl -X POST "$SUPABASE_URL/rest/v1/app_data" \
-              -H "apikey: $SUPABASE_KEY" \
-              -H "Authorization: Bearer $SUPABASE_KEY" \
-              -H "Content-Type: application/json" \
-              -H "Prefer: resolution=merge-duplicates" \
-              -d '[{"key":"_auto_push_flag","value":"{\"needed\":true}","updated_at":"'"$(date -u
-  +%Y-%m-%dT%H:%M:%SZ)"'"}]'
-          env:
-            SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-            SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+        - name: Set flag
+          run: |
+            curl -s -X POST '${{ secrets.SUPABASE_URL }}/rest/v1/app_data' \
+              -H 'apikey: ${{ secrets.SUPABASE_KEY }}' \
+              -H 'Authorization: Bearer ${{ secrets.SUPABASE_KEY }}' \
+              -H 'Content-Type: application/json' \
+              -H 'Prefer: resolution=merge-duplicates' \
+              -d '[{"key":"_auto_push_flag","value":"{\"needed\":true}","updated_at":"2026-07-09T00:00:00Z"}]'
