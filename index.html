@@ -16429,7 +16429,8 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
                 '<div style="margin-bottom:8px;font-size:0.7rem;color:#94a3b8;">共 <span id="fpEmailCount">0</span> 个邮箱地址 &nbsp;<span style="color:#2a5298;cursor:pointer;text-decoration:underline;" onclick="window._editEmails &amp;&amp; window._editEmails()">📝 管理邮箱</span></div>' +
                 '<div id="fpUserList" style="max-height:360px;overflow-y:auto;"></div>' +
                 '<div style="display:flex;gap:8px;margin-top:12px;">' +
-                    '<button id="fpConfirmBtn" style="flex:1;background:#e67e22;color:white;border:none;padding:10px;border-radius:14px;cursor:pointer;font-weight:600;font-size:0.85rem;">📤 推送给所选联系人</button>' +
+                    '<button id="fpConfirmBtn" style="flex:1;background:#e67e22;color:white;border:none;padding:10px;border-radius:14px;cursor:pointer;font-weight:600;font-size:0.85rem;">📤 立即推送</button>' +
+                    '<button id="fpQueueBtn" style="flex:1;background:#2a5298;color:white;border:none;padding:10px;border-radius:14px;cursor:pointer;font-weight:600;font-size:0.85rem;">📅 周一自动推送</button>' +
                     '<button id="fpCancelBtn" style="flex:1;background:#f1f5f9;border:1px solid #cbd5e1;padding:10px;border-radius:14px;cursor:pointer;font-size:0.85rem;">取消</button>' +
                 '</div></div></div>';
         document.body.appendChild(overlay);
@@ -16437,6 +16438,7 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
         overlay._fpOnConfirm = onConfirm;
         overlay._fpType = type;
         overlay._fpData = data;
+        overlay._fpMeta = meta;
         window.renderFeishuSelected = function(ov) {
             var area = ov.querySelector('#fpSelectedArea');
             if (!area) return;
@@ -16547,6 +16549,27 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
         document.getElementById('fpConfirmBtn').addEventListener('click', function() {
             if (overlay._fpSelected.length === 0) { showToast('请至少选择一位联系人', 'warning'); return; }
             overlay._fpOnConfirm(overlay._fpSelected); overlay.remove();
+        });
+        document.getElementById('fpQueueBtn').addEventListener('click', function() {
+            if (overlay._fpSelected.length === 0) { showToast('请至少选择一位联系人', 'warning'); return; }
+            var curWeek = getCurrentWeekKey();
+            var queue = getAutoPushQueue();
+            if (!queue[curWeek]) queue[curWeek] = [];
+            var key = overlay._fpType + '_' + (overlay._fpData.reviewerName || overlay._fpData.title || overlay._fpData.pushId || Date.now());
+            // 同人同类型不重复
+            if (queue[curWeek].some(function(p) { return p.key === key; })) {
+                showToast('该推送已在周一队列中', 'info'); return;
+            }
+            queue[curWeek].push({
+                key: key,
+                type: overlay._fpType,
+                data: overlay._fpData,
+                meta: { reviewerName: overlay._fpData.reviewerName || '', site: overlay._fpMeta ? overlay._fpMeta.site || '' : '', users: overlay._fpSelected },
+                addedAt: Date.now()
+            });
+            saveAutoPushQueue(queue);
+            overlay.remove();
+            showToast('📅 已加入周一推送（当前队列 ' + queue[curWeek].length + ' 人）', 'success');
         });
         document.getElementById('fpCancelBtn').addEventListener('click', function() { overlay.remove(); });
         document.getElementById('fpClose').addEventListener('click', function() { overlay.remove(); });
@@ -16747,6 +16770,104 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
             if (ok) callback();
         } else { callback(); }
     }
+    // ==================== 周一自动推送系统 ====================
+    const AUTO_PUSH_QUEUE_KEY = 'autoPushQueue';
+    function getAutoPushQueue() { try { return JSON.parse(localStorage.getItem(AUTO_PUSH_QUEUE_KEY) || '{}'); } catch(e) { return {}; } }
+    function saveAutoPushQueue(d) { localStorage.setItem(AUTO_PUSH_QUEUE_KEY, JSON.stringify(d)); }
+    // 加入周一自动推送队列
+    window._addToAutoPush = function(type, data, meta) {
+        var curWeek = getCurrentWeekKey();
+        var queue = getAutoPushQueue();
+        if (!queue[curWeek]) queue[curWeek] = [];
+        // 同一个人同类型不重复
+        var key = type + '_' + (data.reviewerName || data.title || data.pushId || '');
+        if (queue[curWeek].some(function(p) { return p.key === key; })) return;
+        queue[curWeek].push({ key: key, type: type, data: data, meta: meta, addedAt: Date.now() });
+        saveAutoPushQueue(queue);
+        showToast('📤 已加入周一自动推送队列（' + queue[curWeek].length + '人待推送）', 'success');
+    };
+    // 清除某周的自动推送记录
+    function clearAutoPushWeek(weekKey) {
+        var queue = getAutoPushQueue();
+        delete queue[weekKey];
+        saveAutoPushQueue(queue);
+    }
+    // 处理自动推送
+    async function processAutoPush() {
+        var now = new Date();
+        var curWeek = getCurrentWeekKey();
+        var autoKey = 'auto_push_done_' + curWeek;
+        if (localStorage.getItem(autoKey)) return; // 本周已推送过
+        var queue = getAutoPushQueue();
+        var items = queue[curWeek] || [];
+        // 也检查上周的（如果周一还没推送，补上）
+        if (items.length === 0) {
+            var lastWeek = getWeekKey(new Date(now.getFullYear(), now.getMonth(), now.getDate() - 7));
+            items = queue[lastWeek] || [];
+            if (items.length > 0) {
+                var ok = await showConfirm('📤 上周有 ' + items.length + ' 人待推送未处理，现在推送？', '📤');
+                if (!ok) return;
+            }
+        }
+        if (items.length === 0) return;
+        var ok = await showConfirm('📤 检测到 ' + items.length + ' 人待推送（考试/学习/培训），是否立即推送？', '📤');
+        if (!ok) { localStorage.setItem(autoKey, '1'); return; }
+        var success = 0, fail = 0;
+        for (var i = 0; i < items.length; i++) {
+            var p = items[i];
+            try {
+                var card = buildFeishuCard(p.type, p.data);
+                var users = (p.meta.users || []).map(function(u) { return u.email || u; });
+                if (users.length === 0) { fail++; continue; }
+                for (var j = 0; j < users.length; j++) {
+                    if (!users[j]) continue;
+                    await sendFeishuCard(users[j], card);
+                }
+                markFeishuPushed(p.key, { type: p.type, title: p.data.title || '', reviewerName: p.meta.reviewerName || '', users: users.map(function(u) { return { name: u }; }), site: p.meta.site || '' });
+                success++;
+            } catch(e) { fail++; }
+        }
+        clearAutoPushWeek(curWeek);
+        localStorage.setItem(autoKey, '1');
+        if (success > 0) showToast('✅ 自动推送完成：' + success + ' 人成功' + (fail > 0 ? '，' + fail + ' 人失败' : ''), 'success');
+    }
+    // 页面加载时检测是否需要自动推送
+    function initAutoPush() {
+        if (!isAdminMode()) return;
+        var now = new Date();
+        var day = now.getDay(), hour = now.getHours();
+        var curWeek = getCurrentWeekKey();
+        var autoKey = 'auto_push_done_' + curWeek;
+        if (localStorage.getItem(autoKey)) return;
+        var queue = getAutoPushQueue();
+
+        function doAutoPush() {
+            var items = queue[curWeek] || [];
+            if (items.length === 0) return;
+            // 周一10点后，或周二到周五补推
+            if ((day === 1 && hour >= 10) || (day >= 2 && day <= 5)) {
+                setTimeout(function() { processAutoPush(); }, 5000);
+            }
+        }
+
+        // 本地队列有内容 → 直接判断时间
+        if ((queue[curWeek] || []).length > 0) { doAutoPush(); return; }
+
+        // 本地无队列 → 检查 GitHub Actions 是否设置了兜底标记
+        fetch(SUPABASE_URL + '/rest/v1/app_data?select=value&key=eq._auto_push_flag', {
+            headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY }
+        }).then(function(r) { return r.json(); }).then(function(rows) {
+            if (rows && rows.length > 0) {
+                try {
+                    var flag = JSON.parse(rows[0].value);
+                    if (flag.needed && flag.week && (queue[flag.week] || []).length > 0) {
+                        doAutoPush();
+                    }
+                } catch(e) {}
+            }
+        }).catch(function() {});
+    }
+
     // 迁移旧数据到推送记录
     function migrateOldPushRecords() {
         try {
@@ -17662,6 +17783,7 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
         // 先确保token就绪，再加载数据
         setTimeout(function(){
             migrateOldPushRecords();
+            initAutoPush();
             getFeishuToken().then(function(){
                 fetchLearningMapData(false).then(function(){ buildLMCache(); });
                 refreshErrorDashboardData(true, true);
