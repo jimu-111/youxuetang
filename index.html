@@ -16792,26 +16792,20 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
         delete queue[weekKey];
         saveAutoPushQueue(queue);
     }
-    // 处理自动推送
-    async function processAutoPush() {
+    // 处理自动推送（无需确认，全自动）
+    async function processAutoPush(silent) {
         var now = new Date();
         var curWeek = getCurrentWeekKey();
         var autoKey = 'auto_push_done_' + curWeek;
-        if (localStorage.getItem(autoKey)) return; // 本周已推送过
+        if (localStorage.getItem(autoKey)) return;
         var queue = getAutoPushQueue();
         var items = queue[curWeek] || [];
-        // 也检查上周的（如果周一还没推送，补上）
         if (items.length === 0) {
             var lastWeek = getWeekKey(new Date(now.getFullYear(), now.getMonth(), now.getDate() - 7));
             items = queue[lastWeek] || [];
-            if (items.length > 0) {
-                var ok = await showConfirm('📤 上周有 ' + items.length + ' 人待推送未处理，现在推送？', '📤');
-                if (!ok) return;
-            }
         }
         if (items.length === 0) return;
-        var ok = await showConfirm('📤 检测到 ' + items.length + ' 人待推送（考试/学习/培训），是否立即推送？', '📤');
-        if (!ok) { localStorage.setItem(autoKey, '1'); return; }
+        if (!silent) showToast('📤 正在自动推送 ' + items.length + ' 人...', 'info');
         var success = 0, fail = 0;
         for (var i = 0; i < items.length; i++) {
             var p = items[i];
@@ -16829,7 +16823,8 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
         }
         clearAutoPushWeek(curWeek);
         localStorage.setItem(autoKey, '1');
-        if (success > 0) showToast('✅ 自动推送完成：' + success + ' 人成功' + (fail > 0 ? '，' + fail + ' 人失败' : ''), 'success');
+        if (success > 0) showToast('✅ 已自动推送 ' + success + ' 人' + (fail > 0 ? '，' + fail + ' 人失败' : ''), 'success');
+        else if (fail > 0) showToast('⚠️ 自动推送失败', 'error');
     }
     // 页面加载时检测是否需要自动推送
     function initAutoPush() {
@@ -16846,7 +16841,7 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
             if (items.length === 0) return;
             // 周一10点后，或周二到周五补推
             if ((day === 1 && hour >= 10) || (day >= 2 && day <= 5)) {
-                setTimeout(function() { processAutoPush(); }, 5000);
+                setTimeout(function() { processAutoPush(true); }, 5000);
             }
         }
 
