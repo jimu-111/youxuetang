@@ -4,9 +4,9 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
     <title>优学堂</title>
-    <script src="https://cdn.sheetjs.com/xlsx-0.20.2/package/dist/xlsx.full.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
+    <script src="https://cdn.sheetjs.com/xlsx-0.20.2/package/dist/xlsx.full.min.js" defer></script>
+    <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js" defer></script>
+    <script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js" defer></script>
 
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; font-family: 'Microsoft YaHei', 'SimHei', 'PingFang SC', 'Helvetica Neue', sans-serif; }
@@ -446,7 +446,7 @@
     function saveReportToLocal(name, htmlContent) { generatedReports[name] = htmlContent; localStorage.setItem('generatedReports', JSON.stringify(generatedReports)); refreshReportSection(); }
     function deleteReport(name) { delete generatedReports[name]; localStorage.setItem('generatedReports', JSON.stringify(generatedReports)); refreshReportSection(); }
     
-    // ==================== 新人进度模块 ====================
+    // ==================== 新人情况模块 ====================
     const ADMIN_PASSWORD = "888888";
     const ADMIN_ACCOUNT = { user: 'admin', pass: 'admin123' };
     // ==================== 游客/管理员双模式 ====================
@@ -1053,6 +1053,7 @@
     }
 
     function showFrontendAdminModal(){
+        if(!isAdminMode()){showToast('❌ 请先登录管理员','warning');return;}
         const filtered = getFilteredStudents();
         const cityOpts = ['all','成都','青岛','深圳'];
         const cityLabels = ['🌍 全站点','🐼 成都','🌊 青岛','📱 深圳'];
@@ -1079,12 +1080,15 @@
         });
         overlay.querySelector('#feAddStudentBtn')?.addEventListener('click',()=>showAddStudentModal(overlay));
         overlay.querySelectorAll('.fe-admin-avatar').forEach(img=>{img.addEventListener('click',()=>showAvatarManageModal(parseInt(img.dataset.id), overlay));});
-        overlay.querySelectorAll('.edit-student').forEach(btn=>{btn.addEventListener('click',()=>alert('编辑学员功能已保留'));});
+        overlay.querySelectorAll('.edit-student').forEach(btn=>{btn.addEventListener('click',()=>{if(!isAdminMode()){showToast('❌ 请先登录管理员','warning');return;} showEditStudentModal(parseInt(btn.dataset.id), overlay);});});
         overlay.querySelectorAll('.delete-student').forEach(btn=>{
             btn.addEventListener('click',async ()=>{
-                if(await confirmDelete('学员')){
+                if(!isAdminMode()){showToast('❌ 请先登录管理员','warning');return;}
+                if(await confirmDelete('学员（可回收站恢复，保留3天）')){
                     const sid=parseInt(btn.dataset.id);
-                    students=students.filter(s=>s.id!==sid);
+                    var stu = students.find(function(s){return s.id===sid;});
+                    if(stu){ addToRecycleBin(stu); }
+                    students=students.filter(function(s){return s.id!==sid;});
                     if(currentPanoramaStudentId===sid) currentPanoramaStudentId=students[0]?.id;
                     saveToLocal();
                     overlay.remove();
@@ -1639,12 +1643,21 @@
         refreshEmailTable = function() { _origRefreshEmail(); updateAdminCards(); };
         refreshEmailTable();
 
-        // 导出备份（自动捕获全部 localStorage 数据，未来新增模块无需手动更新）
+        // 导出备份（包含 localStorage + IndexedDB 图片数据）
         document.getElementById('exportDataBtn')?.addEventListener('click',()=>{
-            const backup = { _backupVersion: 2, _exportTime: new Date().toISOString(), _data: {} };
+            const backup = { _backupVersion: 3, _exportTime: new Date().toISOString(), _data: {} };
+            // 1. localStorage 数据
             for (let i = 0; i < localStorage.length; i++) {
                 const key = localStorage.key(i);
                 if (key) backup._data[key] = localStorage.getItem(key);
+            }
+            // 2. IndexedDB 图片数据（ci_*/ki_*），避免因迁移后 localStorage 中已删除而遗漏
+            if (window._imageCache) {
+                for (var cacheKey in window._imageCache) {
+                    if (window._imageCache.hasOwnProperty(cacheKey) && window._imageCache[cacheKey]) {
+                        backup._data[cacheKey] = window._imageCache[cacheKey];
+                    }
+                }
             }
             const blob = new Blob([JSON.stringify(backup, null, 2)], {type:'application/json'});
             const url = URL.createObjectURL(blob);
@@ -1667,6 +1680,8 @@
                 try {
                     const data = JSON.parse(e.target.result);
                     if(!data._backupVersion) { alert('❌ 不是有效的备份文件'); return; }
+                    // v3: 包含 IndexedDB 图片, v2/v1: 纯 localStorage
+                    const isV3 = data._backupVersion >= 3;
                     const info = [`备份时间：${data._exportTime ? new Date(data._exportTime).toLocaleString('zh-CN') : '未知'}`];
 
                     // 新格式 (v2): 数据在 _data 中
@@ -1703,15 +1718,24 @@
 
                     if(!await showConfirm(`确认导入以下备份？\n\n${info.join('\n')}\n\n⚠️ 导入将覆盖当前所有数据，此操作不可撤销！`, '📥', true)) return;
 
-                    // 恢复所有数据
-                    const keys = Object.keys(dataMap);
-                    keys.forEach(k => {
-                        if (k.startsWith('_')) return; // 跳过元数据
-                        localStorage.setItem(k, dataMap[k]);
+                    // 分离图片 key 和普通 key
+                    const allKeys = Object.keys(dataMap);
+                    const imgKeys = allKeys.filter(k => k.indexOf('ci_') === 0 || k.indexOf('ki_') === 0);
+                    const normalKeys = allKeys.filter(k => k.indexOf('ci_') !== 0 && k.indexOf('ki_') !== 0 && !k.startsWith('_'));
+                    // 普通数据写 localStorage
+                    normalKeys.forEach(k => { localStorage.setItem(k, dataMap[k]); });
+                    // 图片数据写 IndexedDB + 内存缓存（localStorage 迁移只跑一次，导入需直接写 IDB）
+                    var importedImgs = 0;
+                    imgKeys.forEach(function(k) {
+                        window._imageCache[k] = dataMap[k];
+                        if (window._imageDB) { try { var tx = window._imageDB.transaction('imgs', 'readwrite'); tx.objectStore('imgs').put(dataMap[k], k); } catch(e) {} }
+                        importedImgs++;
                     });
                     loadData();
                     renderAdminContent();
-                    alert('✅ 数据导入成功！已恢复 ' + (keys.length - Object.keys(dataMap).filter(k => k.startsWith('_')).length) + ' 个数据项');
+                    var msg = '✅ 数据导入成功！已恢复 ' + normalKeys.length + ' 个数据项';
+                    if (importedImgs > 0) msg += '，' + importedImgs + ' 张图片';
+                    alert(msg);
                 } catch(err) {
                     alert('❌ 备份文件解析失败：' + err.message);
                 }
@@ -1731,40 +1755,33 @@
             if(parsed.length>0){ 
                 students=parsed.map(s=>{let stu=new Student(s.id,s.name,s.avatar,s.joinDate,s.site); Object.assign(stu.stageProgress,s.stageProgress); stu.stage=s.stage; stu.graduatedToArchive=s.graduatedToArchive; stu.returnReason=s.returnReason||null; stu.graduatedDate=s.graduatedDate||null; return stu;}); 
                 nextId=Math.max(...students.map(s=>s.id),400)+1; 
-            }else{ initDefault(); saveToLocal(); } 
-        }else{ initDefault(); saveToLocal(); } 
-    }
+            }else{ initDefault(); saveToLocal(); }(function(){var ch=false;var sts=["陈远航","王若曦","张敏仪"];var avs=["men/32","women/45","men/90"];var ss=["青岛","深圳","成都"];for(var i=1;i<4;i++){if(!students.some(function(x){return x.stage===i;})){var mid=Math.max(400,students.reduce(function(m,x){return Math.max(m,x.id)},0));var t=new Student(mid+1,sts[i-1],"https://randomuser.me/api/portraits/"+avs[i-1]+".jpg","2026-07-08",ss[i-1]);t.stage=i;t.stageProgress.theoryPassed=true;t.stageProgress.onlinePassed=true;t.stageProgress.practicalPassed=true;if(i>1){t.stageProgress.mentorComplete=true;t.stageProgress.fullCheckPassed=true;t.stageProgress.fullCheckRate=80;t.stageProgress.fullCheckScores=[80];t.stageProgress.fullCheckAttempts=1}if(i>2){t.stageProgress.mockRate=85;t.stageProgress.mockScores=[85];t.stageProgress.mockAttempts=1}students.push(t);ch=true}}if(ch)saveToLocal();})(); 
+        }else{ initDefault(); saveToLocal(); }(function(){var ch=false;var sts=["陈远航","王若曦","张敏仪"];var avs=["men/32","women/45","men/90"];var ss=["青岛","深圳","成都"];for(var i=1;i<4;i++){if(!students.some(function(x){return x.stage===i;})){var mid=Math.max(400,students.reduce(function(m,x){return Math.max(m,x.id)},0));var t=new Student(mid+1,sts[i-1],"https://randomuser.me/api/portraits/"+avs[i-1]+".jpg","2026-07-08",ss[i-1]);t.stage=i;t.stageProgress.theoryPassed=true;t.stageProgress.onlinePassed=true;t.stageProgress.practicalPassed=true;if(i>1){t.stageProgress.mentorComplete=true;t.stageProgress.fullCheckPassed=true;t.stageProgress.fullCheckRate=80;t.stageProgress.fullCheckScores=[80];t.stageProgress.fullCheckAttempts=1}if(i>2){t.stageProgress.mockRate=85;t.stageProgress.mockScores=[85];t.stageProgress.mockAttempts=1}students.push(t);ch=true}}if(ch)saveToLocal();})();
+
+    // 回收站功能
+    const RECYCLE_KEY = "studentRecycleBin";
+    function getRecycleBin(){try{return JSON.parse(localStorage.getItem(RECYCLE_KEY)||"[]");}catch(e){return[];}}
+    function saveRecycleBin(data){localStorage.setItem(RECYCLE_KEY,JSON.stringify(data));}
+    function addToRecycleBin(stu){var bin=getRecycleBin();stu._deletedAt=Date.now();bin.push(stu);saveRecycleBin(bin);cleanExpiredRecycle();}
+    function cleanExpiredRecycle(){var bin=getRecycleBin();var cutoff=Date.now()-3*86400000;bin=bin.filter(function(s){return s._deletedAt>cutoff;});saveRecycleBin(bin);}
+    function restoreFromRecycle(sid){var bin=getRecycleBin();var idx=bin.findIndex(function(s){return s.id===sid;});if(idx<0)return null;var stu=bin[idx];bin.splice(idx,1);saveRecycleBin(bin);delete stu._deletedAt;return stu;}
+    cleanExpiredRecycle();    }
+    
     function initDefault(){ 
         students=[]; 
         const avatars=["https://randomuser.me/api/portraits/women/68.jpg","https://randomuser.me/api/portraits/men/32.jpg","https://randomuser.me/api/portraits/women/45.jpg","https://randomuser.me/api/portraits/men/90.jpg","https://randomuser.me/api/portraits/women/89.jpg","https://randomuser.me/api/portraits/men/52.jpg","https://randomuser.me/api/portraits/women/33.jpg","https://randomuser.me/api/portraits/men/75.jpg","https://randomuser.me/api/portraits/women/12.jpg","https://randomuser.me/api/portraits/men/88.jpg","https://randomuser.me/api/portraits/women/55.jpg","https://randomuser.me/api/portraits/men/41.jpg"]; 
         const names=["李思源","陈远航","王若曦","张敏仪","赵一航","林小夕","周子墨","吴俊杰","郑雨晴","孙浩然","刘思琪","何志强"]; 
         const sites=["成都","青岛","深圳","成都","青岛","深圳","成都","青岛","深圳","成都","青岛","深圳"]; 
         
-        // 阶段一：学习地图SOP（2人）
-        let s0=new Student(1,names[0],avatars[0],"2025-05-20",sites[0]); s0.stage=0; 
-        let s1=new Student(2,names[6],avatars[6],"2025-05-22",sites[6]); s1.stage=0; 
+        // 每阶段1个模拟学员
+        let s0=new Student(1,"李思源",avatars[0],"2025-05-20","成都"); s0.stage=0;
+        let s1=new Student(2,"陈远航",avatars[1],"2025-05-15","青岛"); s1.stage=1; s1.stageProgress.theoryPassed=true; s1.stageProgress.onlinePassed=true; s1.stageProgress.practicalPassed=true;
+        let s2=new Student(3,"王若曦",avatars[2],"2025-05-10","深圳"); s2.stage=2; s2.stageProgress.theoryPassed=true; s2.stageProgress.onlinePassed=true; s2.stageProgress.practicalPassed=true; s2.stageProgress.mentorComplete=true; s2.stageProgress.fullCheckRate=80; s2.stageProgress.fullCheckAttempts=1; s2.stageProgress.fullCheckScores=[80]; s2.stageProgress.fullCheckPassed=true;
+        let s3=new Student(4,"张敏仪",avatars[3],"2025-05-05","成都"); s3.stage=3; s3.stageProgress.theoryPassed=true; s3.stageProgress.onlinePassed=true; s3.stageProgress.practicalPassed=true; s3.stageProgress.mentorComplete=true; s3.stageProgress.fullCheckPassed=true; s3.stageProgress.mockRate=85; s3.stageProgress.mockAttempts=1; s3.stageProgress.mockScores=[85]; s3.stageProgress.mockPassed=true;
+        let s4=new Student(5,"赵一航",avatars[4],"2025-04-20","青岛"); s4.stage=4; s4.stageProgress.theoryPassed=true; s4.stageProgress.onlinePassed=true; s4.stageProgress.practicalPassed=true; s4.stageProgress.mentorComplete=true; s4.stageProgress.fullCheckPassed=true; s4.stageProgress.mockPassed=true; s4.stageProgress.formalWeek=2; s4.stageProgress.currentEfficiency=65; s4.stageProgress.currentMistakes=8;
+        let s5=new Student(6,"林小夕",avatars[5],"2025-04-01","深圳"); s5.stage=4; s5.stageProgress.theoryPassed=true; s5.stageProgress.onlinePassed=true; s5.stageProgress.practicalPassed=true; s5.stageProgress.mentorComplete=true; s5.stageProgress.fullCheckPassed=true; s5.stageProgress.mockPassed=true; s5.stageProgress.graduatedFormal=true; s5.graduatedToArchive=true; s5.graduatedDate="2025-06-09";
         
-        // 阶段二：师傅带教（2人）
-        let s2=new Student(3,names[1],avatars[1],"2025-05-15",sites[1]); s2.stage=1; s2.stageProgress.theoryPassed=true; s2.stageProgress.onlinePassed=true; s2.stageProgress.practicalPassed=true; 
-        let s3=new Student(4,names[7],avatars[7],"2025-05-18",sites[7]); s3.stage=1; s3.stageProgress.theoryPassed=true; s3.stageProgress.onlinePassed=true; s3.stageProgress.practicalPassed=true; 
-        
-        // 阶段三：实操全检（2人）
-        let s4=new Student(5,names[2],avatars[2],"2025-05-10",sites[2]); s4.stage=2; s4.stageProgress.theoryPassed=true; s4.stageProgress.onlinePassed=true; s4.stageProgress.practicalPassed=true; s4.stageProgress.mentorComplete=true; s4.stageProgress.fullCheckRate=75; s4.stageProgress.fullCheckAttempts=1; s4.stageProgress.fullCheckScores=[75]; 
-        let s5=new Student(6,names[8],avatars[8],"2025-05-08",sites[8]); s5.stage=2; s5.stageProgress.theoryPassed=true; s5.stageProgress.onlinePassed=true; s5.stageProgress.practicalPassed=true; s5.stageProgress.mentorComplete=true; s5.stageProgress.fullCheckRate=92; s5.stageProgress.fullCheckAttempts=1; s5.stageProgress.fullCheckScores=[92]; s5.stageProgress.fullCheckPassed=true; s5.stage=3; 
-        
-        // 阶段四：模拟判责（2人）
-        let s6=new Student(7,names[3],avatars[3],"2025-05-05",sites[3]); s6.stage=3; s6.stageProgress.theoryPassed=true; s6.stageProgress.onlinePassed=true; s6.stageProgress.practicalPassed=true; s6.stageProgress.mentorComplete=true; s6.stageProgress.fullCheckPassed=true; s6.stageProgress.mockRate=82; s6.stageProgress.mockAttempts=1; s6.stageProgress.mockScores=[82]; 
-        let s7=new Student(8,names[9],avatars[9],"2025-05-03",sites[9]); s7.stage=3; s7.stageProgress.theoryPassed=true; s7.stageProgress.onlinePassed=true; s7.stageProgress.practicalPassed=true; s7.stageProgress.mentorComplete=true; s7.stageProgress.fullCheckPassed=true; s7.stageProgress.mockRate=95; s7.stageProgress.mockAttempts=1; s7.stageProgress.mockScores=[95]; s7.stageProgress.mockPassed=true; s7.stage=4; s7.stageProgress.formalWeek=1; s7.stageProgress.currentEfficiency=55; s7.stageProgress.currentMistakes=6; 
-        
-        // 阶段五：正式判责（2人）
-        let s8=new Student(9,names[4],avatars[4],"2025-04-20",sites[4]); s8.stage=4; s8.stageProgress.theoryPassed=true; s8.stageProgress.onlinePassed=true; s8.stageProgress.practicalPassed=true; s8.stageProgress.mentorComplete=true; s8.stageProgress.fullCheckPassed=true; s8.stageProgress.mockPassed=true; s8.stageProgress.formalWeek=2; s8.stageProgress.currentEfficiency=65; s8.stageProgress.currentMistakes=8; 
-        let s9=new Student(10,names[10],avatars[10],"2025-04-15",sites[10]); s9.stage=4; s9.stageProgress.theoryPassed=true; s9.stageProgress.onlinePassed=true; s9.stageProgress.practicalPassed=true; s9.stageProgress.mentorComplete=true; s9.stageProgress.fullCheckPassed=true; s9.stageProgress.mockPassed=true; s9.stageProgress.formalWeek=4; s9.stageProgress.currentEfficiency=105; s9.stageProgress.currentMistakes=5; 
-        
-        // 已毕业（2人）
-        let s10=new Student(11,names[5],avatars[5],"2025-04-01",sites[5]); s10.stage=4; s10.stageProgress.theoryPassed=true; s10.stageProgress.onlinePassed=true; s10.stageProgress.practicalPassed=true; s10.stageProgress.mentorComplete=true; s10.stageProgress.fullCheckPassed=true; s10.stageProgress.mockPassed=true; s10.stageProgress.graduatedFormal=true; s10.graduatedToArchive=true; s10.graduatedDate="2025-06-09"; 
-        let s11=new Student(12,names[11],avatars[11],"2025-03-20",sites[11]); s11.stage=4; s11.stageProgress.theoryPassed=true; s11.stageProgress.onlinePassed=true; s11.stageProgress.practicalPassed=true; s11.stageProgress.mentorComplete=true; s11.stageProgress.fullCheckPassed=true; s11.stageProgress.mockPassed=true; s11.stageProgress.graduatedFormal=true; s11.graduatedToArchive=true; s11.graduatedDate="2025-06-01"; 
-        
-        students.push(s0,s1,s2,s3,s4,s5,s6,s7,s8,s9,s10,s11); nextId=13; currentPanoramaStudentId=students[0].id; 
+        students.push(s0,s1,s2,s3,s4,s5); nextId=13; currentPanoramaStudentId=students[0].id;
     }
 
     // ==================== 数据分析模块 ====================
@@ -2979,165 +2996,6 @@
         points.forEach(p => { ctx.fillText(p.label, p.x, padT + plotH + 20); });
     }
 
-    // [已废弃] 旧版初审准确率识别函数，由aiRecognizeAccRate替代
-    async function recognizeAccRateFromImage(input, periodKey, btnId) {
-        const file = input.files && input.files[0];
-        if (!file) return;
-        input.value = '';
-        const btn = btnId ? document.getElementById(btnId) : null;
-        const origText = btn ? btn.textContent : '';
-        if (btn) { btn.disabled = true; btn.innerHTML = '⏳ 识别中...'; }
-        try {
-            // 1. 上传图片到Coze
-            const reader = new FileReader();
-            const base64 = await new Promise((resolve, reject) => {
-                reader.onload = () => resolve(reader.result);
-                reader.onerror = reject;
-                reader.readAsDataURL(file);
-            });
-            const parts = base64.split(',');
-            const mime = parts[0].match(/:(.*?);/)[1];
-            const byteChars = atob(parts[1]);
-            const byteArrays = [];
-            for (let offset = 0; offset < byteChars.length; offset += 512) {
-                const slice = byteChars.slice(offset, offset + 512);
-                const byteNumbers = new Array(slice.length);
-                for (let i = 0; i < slice.length; i++) byteNumbers[i] = slice.charCodeAt(i);
-                byteArrays.push(new Uint8Array(byteNumbers));
-            }
-            const blob = new Blob(byteArrays, { type: mime });
-            const ext = mime.split('/')[1] || 'png';
-            const formData = new FormData();
-            formData.append('file', blob, 'acc_rate.' + ext);
-            const uploadRes = await fetch('https://api.coze.cn/v1/files/upload', {
-                method: 'POST',
-                headers: { 'Authorization': 'Bearer ' + COZE_PAT },
-                body: formData
-            });
-            const uploadData = await uploadRes.json();
-            if (uploadData.code !== 0) throw new Error('上传失败: ' + (uploadData.msg || JSON.stringify(uploadData)));
-            const fileId = uploadData.data.id;
-
-            // 2. 发起AI对话
-            const chatRes = await fetch('https://api.coze.cn/v3/chat', {
-                method: 'POST',
-                headers: { 'Authorization': 'Bearer ' + COZE_PAT, 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    bot_id: COZE_BOT_ID,
-                    user_id: 'zhixun_user',
-                    stream: true,
-                    auto_save_history: false,
-                    additional_messages: [{
-                        role: 'user',
-                        content: JSON.stringify([
-                            { type: 'text', text: '请识别这张截图中的表格数据。不管截图有几列，我只需要两列信息：1）人员姓名列（通常是第一列，包含中文人名）；2）准确率/正确率列（包含百分比数字的列，如99.50%）。请忽略其他所有列。返回JSON格式：[{"name":"姓名","value":数字}]，其中value只填数字（如99.50表示99.50%）' },
-                            { type: 'image', file_id: fileId }
-                        ]),
-                        content_type: 'object_string'
-                    }]
-                })
-            });
-
-            // 3. 读取SSE流式响应
-            if (!chatRes.ok) throw new Error('对话请求失败(' + chatRes.status + ')');
-            let aiReply = '';
-            let currentEvent = '';
-            const reader2 = chatRes.body.getReader();
-            const decoder = new TextDecoder();
-            let sseBuffer = '';
-            while (true) {
-                const { done, value } = await reader2.read();
-                if (done) break;
-                sseBuffer += decoder.decode(value, { stream: true });
-                const lines = sseBuffer.split('\n');
-                sseBuffer = lines.pop() || '';
-                for (const line of lines) {
-                    const trimmed = line.trim();
-                    if (!trimmed) { currentEvent = ''; continue; }
-                    if (trimmed.startsWith('event:')) { currentEvent = trimmed.slice(6).trim(); continue; }
-                    if (!trimmed.startsWith('data:')) continue;
-                    const dataStr = trimmed.slice(5).trim();
-                    if (dataStr === '[DONE]') continue;
-                    try {
-                        const parsed = JSON.parse(dataStr);
-                        const eventName = parsed.event || currentEvent;
-                        const msgData = parsed.data || parsed;
-                        if (eventName === 'conversation.message.completed' && msgData.role === 'assistant' && msgData.type === 'answer' && msgData.content) {
-                            aiReply = msgData.content;
-                        }
-                    } catch(e) {}
-                }
-            }
-            if (!aiReply) throw new Error('AI未返回有效内容');
-
-            // 4. 解析结果并应用名字修正
-            const aiNameFix = {'吴晖':'吴辉','樊昱舜':'樊景舜','樊慧舞':'樊景舜','李思林':'李忠林','姜钧琪':'麦钧淇','姜钧淇':'麦钧淇'};
-            const validNames = module3NameList;
-            function levenshtein(a, b) {
-                const m = a.length, n = b.length;
-                const dp = Array.from({length: m+1}, (_, i) => [i]);
-                for (let j = 1; j <= n; j++) dp[0][j] = j;
-                for (let i = 1; i <= m; i++) for (let j = 1; j <= n; j++) {
-                    dp[i][j] = Math.min(dp[i-1][j]+1, dp[i][j-1]+1, dp[i-1][j-1]+(a[i-1]===b[j-1]?0:1));
-                }
-                return dp[m][n];
-            }
-            function fixName(name) {
-                name = name.trim();
-                if (!name) return name;
-                if (aiNameFix[name]) return aiNameFix[name];
-                if (validNames.includes(name)) return name;
-                let bestName = null, bestDist = 999;
-                for (const v of validNames) { const d = levenshtein(name, v); if (d < bestDist) { bestDist = d; bestName = v; } }
-                if (bestDist <= 2 && bestName) return bestName;
-                return name;
-            }
-
-            let result = {};
-            const jsonMatch = aiReply.match(/\[[\s\S]*?\]/);
-            if (jsonMatch) {
-                try {
-                    const arr = JSON.parse(jsonMatch[0]);
-                    arr.forEach(item => {
-                        let name = fixName((item.name || '').trim());
-                        const val = parseFloat(item.value || item.rate || item.accuracy || 0);
-                        if (name && !isNaN(val)) result[name] = val;
-                    });
-                } catch(e) {}
-            }
-            // 逐行文本解析fallback（与模块3一致）
-            if (Object.keys(result).length === 0) {
-                const lineParsed = parseModule3Text(aiReply);
-                for (const [oldN, val] of Object.entries(lineParsed)) {
-                    const fixed = fixName(oldN);
-                    result[fixed] = val;
-                }
-            }
-            if (Object.keys(result).length === 0) throw new Error('未能提取有效数据\nAI回复: ' + aiReply.substring(0, 200));
-
-            // 5. 保存到localStorage（按期存储）
-            let existing = {};
-            try { existing = JSON.parse(localStorage.getItem('reviewerAccRateData') || '{}'); } catch(e) {}
-            if (!existing[periodKey]) existing[periodKey] = {};
-            Object.assign(existing[periodKey], result);
-            localStorage.setItem('reviewerAccRateData', JSON.stringify(existing));
-            if (typeof window._doAnalysis === 'function') window._doAnalysis(currentAnalysisType || 'week');
-            // 更新按钮状态
-            const pr = window._analysisPeriodRanges || [];
-            const prIdx = pr.findIndex(p => p.periodKey === periodKey);
-            const prLabel = prIdx >= 0 ? (prIdx === 0 ? '本期' : pr[prIdx].periodName) : periodKey;
-            if (btn) btn.innerHTML = '📸 ' + prLabel + ' <span style="color:#27ae60;font-size:0.75rem;">✅已录入</span>';
-            // 刷新弹窗中其他按钮的已录入状态
-            setTimeout(() => { if (typeof showAccRateModal === 'function') { const m = document.getElementById('accRateModal'); if (m) { m.remove(); showAccRateModal(); } } }, 800);
-        } catch(err) {
-            if (btn) btn.innerHTML = '❌ 识别失败';
-            setTimeout(() => { if (btn) { btn.innerHTML = origText || '📸'; btn.disabled = false; } }, 2000);
-            alert('识别失败: ' + err.message);
-        } finally {
-            if (btn) btn.disabled = false;
-        }
-    }
-
     function parseModule3Text(text) {
         const map = {};
         if (!text || !text.trim()) return map;
@@ -4285,7 +4143,7 @@
             });
         }
         const issueItems = topIssues.length > 0 ? topIssues.slice(0, 5).map(issue => `<li>${escapeHtml(issue)}</li>`).join('') : '<li>暂无高频问题</li>';
-        return `<div style="background:#f8fafc;border-radius:16px;padding:16px;margin-top:16px;"><div style="font-weight:700;margin-bottom:12px;text-align:center;">📌 问题点总结</div><div style="background:#fff8f0;border-left:3px solid #f39c12;padding:12px;margin:8px 0;border-radius:12px;"><ul class="issue-vertical-list" style="list-style:none;padding-left:0;" contenteditable="true">${issueItems}</ul></div><div style="font-size:0.7rem;color:#94a3b8;text-align:center;margin-top:4px;">💡 点击文字可手动编辑</div><div style="font-weight:700;margin:16px 0 12px 0;text-align:center;">✅ 改善措施</div><div style="background:#e8f5e9;border-left:3px solid #4caf50;padding:12px;margin:8px 0;border-radius:12px;" contenteditable="true">1. 加强对新人的判责引导、失误订单即时剖析、判责规范等；<br>2. 判责项、判责等级确认完整，避免组合差异未同步判责，提交判责前确认判责照片、备注、检测判责项勾选等；<br>3. 加强新人对判责标准的学习、疑难问题判责方向的熟悉、训练拍照手法等；<br>4. 典型案例收集至复盘文档全员同步，新人除当周全员复盘外、针对失误问题点进行单独复盘剖析。</div><div style="font-size:0.7rem;color:#94a3b8;text-align:center;margin-top:4px;">💡 点击文字可手动编辑</div></div>`;
+        return `<div style="background:#f8fafc;border-radius:16px;padding:16px;margin-top:16px;"><div style="font-weight:700;margin-bottom:12px;text-align:center;">📌 问题点总结</div><div style="background:#fff8f0;border-left:3px solid #f39c12;padding:12px;margin:8px 0;border-radius:12px;"><ul class="issue-vertical-list" style="list-style:none;padding-left:0;" contenteditable="true">${issueItems}</ul></div><div style="font-size:0.7rem;color:#94a3b8;text-align:center;margin-top:4px;">💡 点击文字可手动编辑</div></div>`;
     }
     
     function generateWeeklyReport(analysis, filterResult, weekRange, periodRanges, allRows, dateColumn, reviewerColumn, sourceColumn, reviewerPeriodStats, sortedReviewers, totalCounts, totalThisWeek, totalLastWeek, increaseCount, decreaseCount, sameCount, top3Reviewers, diffClass, diffText, persona, accRateThisPeriod, accRateLastPeriod, categoryRowsHtml, sourceRowsHtml, siteColumn) {
@@ -4544,8 +4402,6 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
 <h2>📝 问题汇总</h2>
 <div style="font-weight:600;margin-bottom:8px;">📌 问题点总结</div>
 <div class="issue-box"><ul>${issueItems}</ul></div>
-<div style="font-weight:600;margin:16px 0 8px;">✅ 改善措施</div>
-<div class="measure-box">1. 加强对新人的判责引导、失误订单即时剖析、判责规范等；<br>2. 判责项、判责等级确认完整，避免组合差异未同步判责，提交判责前确认判责照片、备注、检测判责项勾选等；<br>3. 加强新人对判责标准的学习、疑难问题判责方向的熟悉、训练拍照手法等；<br>4. 典型案例收集至复盘文档全员同步，新人除当周全员复盘外、针对失误问题点进行单独复盘剖析。</div>
 <div class="summary-card" style="margin-top:24px;text-align:center;color:#94a3b8;font-size:0.85rem;">
 <p>报告生成时间：${new Date().toLocaleString()}</p>
 <p>智训通+数据分析中心 v1.3</p>
@@ -4944,8 +4800,9 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
         const topPersonnel = sortedReviewersForPersona.slice(0, topN).map((r, idx) => ({ rank: idx + 1, name: r.name, count: r.count, percentage: r.percentage.toFixed(2), mistakes: [], focusLevel: getFocusLevel(r.count) }));
         const persona = { totalPeople, totalMistakesCount: totalMistakes, avgMistakesPerPerson, topPersonnel, topN };
         
-        // === 新人进度模块 ===
-        const NEWCOMER_NAMES = ['延依飞', '李忠林'];
+        // === 新人情况模块 ===
+        // 从学员列表自动获取正式判责阶段的新人
+        const NEWCOMER_NAMES = students.filter(function(s){return s.stage === 4 && !s.graduatedToArchive;}).map(function(s){return s.name;});
         let newcomerSectionHtml = '';
         const ncData = getNewcomerAnalysisData();
         const ncPeriodData = ncData[thisPeriodKey] || {};
@@ -5042,8 +4899,9 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
             <div class="section-divider"></div>
             <div class="analysis-section" id="section-newcomer" style="position:relative;">
                 <div style="display:flex;justify-content:space-between;align-items:center;">
-                    <div class="analysis-section-title">👥 新人进度</div>
+                    <div class="analysis-section-title">👥 新人情况</div>
                     <button class="screenshot-btn" data-section="section-newcomer" style="background:#eef2ff;border:none;padding:6px 12px;border-radius:20px;cursor:pointer;font-size:0.75rem;">📸 截取全部</button>
+                    <button id="newcomerAdminBtn" class="admin-only" onclick="showFrontendAdminModal()" style="background:#e6f7ee;border:1px solid #27ae60;color:#27ae60;padding:6px 12px;border-radius:20px;cursor:pointer;font-size:0.75rem;font-weight:500;">👥 管理</button>
                 </div>
                 ${ncCardsHtml}
             </div>`;
@@ -5086,7 +4944,6 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
                 </table>
             </div>
             
-            ${((window._selectedSites || []).length === 1 && (window._selectedSites || [])[0] === '成都') ? `
             <div class="section-divider"></div>
 
             <div class="analysis-section" id="section-sampling">
@@ -5095,7 +4952,8 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
                 </div>
                 <div id="samplingCard1" style="background:#fff;border-radius:12px;border:1px solid #e2e8f0;padding:16px;margin-bottom:16px;overflow-x:auto;">
                     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;"><div style="font-weight:700;font-size:0.95rem;color:#1f3a6b;">📊 抽检失误数据</div><button class="sampling-card-screenshot-btn" data-card-id="samplingCard1" style="background:#eef2ff;border:none;padding:4px 10px;border-radius:20px;cursor:pointer;font-size:0.72rem;">📸 截图</button></div>
-                    <div id="samplingSummary" contenteditable="true" data-auto="1" style="margin-bottom:10px;padding:8px 12px;background:#f0f4f8;border-radius:10px;font-size:0.82rem;color:#1f3a6b;font-weight:500;outline:none;min-height:24px;" oninput="this.dataset.auto='0';window._saveSamplingCache&&window._saveSamplingCache()"></div>
+                    
+                    <div id="samplingSummary" contenteditable="true" data-auto="1" style="margin-bottom:10px;padding:8px 12px;background:#f0f4f8;border-radius:10px;font-size:0.82rem;color:#1f3a6b;font-weight:500;outline:none;min-height:24px;" oninput="this.dataset.auto='0'"></div>
                     <table id="samplingCard1Table" style="border-collapse:collapse;table-layout:fixed;width:100%;">
                     <colgroup><col style="width:11%"><col style="width:11%"><col style="width:11%"><col style="width:11%"><col style="width:11%"><col style="width:11%"><col style="width:11%"><col style="width:11%"><col style="width:12%"></colgroup>
                     <tr style="background:#f8fafc;font-weight:700;">
@@ -5224,7 +5082,6 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
             </div>
 
             <div class="section-divider"></div>
-            ` : ''}
             
             <div class="analysis-section" id="section-category">
                 <div style="display:flex;justify-content:space-between;align-items:center;">
@@ -5475,7 +5332,6 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
                 return siteHtml;
             } catch(e) { console.error('Site analysis error:', e); return '<div class="empty-placeholder">⚠️ 站点分析加载失败</div>'; } })()}
 
-            ${((window._selectedSites || []).length === 1 && (window._selectedSites || [])[0] === '成都') ? `
             <div class="section-divider"></div>
 
             <div class="analysis-section" id="section-summary">
@@ -5486,7 +5342,6 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
                 ${renderIssueSummary(analysis)}
             </div>
             ${newcomerSectionHtml}
-            ` : ''}
             <div style="text-align:center; margin-top:20px;">
                 <button id="screenshotMainBtn" class="generate-btn" style="background:#27ae60;">📸 截图当前分析结果</button>
             </div>
@@ -5515,7 +5370,7 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
             'section-portrait': 'F_初审画像总览',
             'section-site': 'H_站点分析',
             'section-summary': 'G_问题汇总',
-            'section-newcomer': '新人进度'
+            'section-newcomer': '新人情况'
         };
         document.getElementById('screenshotMainBtn')?.addEventListener('click', () => {
             takeModalScreenshot(`数据分析结果_${periodName}`, container);
@@ -5539,7 +5394,7 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
                 e.stopPropagation();
                 const ncName = btn.dataset.ncname;
                 const card = btn.closest('.nc-person-card');
-                if (card) takeModalScreenshot(`新人进度_${escapeHtml(ncName)}_${periodName}`, card);
+                if (card) takeModalScreenshot(`新人情况_${escapeHtml(ncName)}_${periodName}`, card);
             });
         });
         
@@ -5623,7 +5478,7 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
             });
         });
         
-        // === 新人进度模块事件 ===
+        // === 新人情况模块事件 ===
         // 可编辑单元格保存（总结）
         document.querySelectorAll('.nc-editable.nc-summary').forEach(el => {
             el.addEventListener('blur', () => {
@@ -6100,29 +5955,10 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
                         
                         if (!html) html = '<div style="text-align:center;color:#94a3b8;padding:20px;">未识别到有效数据板块</div>';
                         
-                        // 优先使用缓存（本地→云端→Excel），避免覆盖手动数据
-                        var cached = null;
-                        try { cached = localStorage.getItem('samplingCardCache'); } catch(e) {}
-                        var restoreCached = function() {
-                            if (cached) {
-                                var sec = document.getElementById('section-sampling');
-                                if (sec) { sec.innerHTML = cached; setTimeout(function(){ if(window._calcSum) window._calcSum(); }, 200); }
-                            } else if (html) {
-                                tableEl.outerHTML = '<div id="samplingDataTable">' + html + '</div>';
-                                setTimeout(function(){ if(window._calcSum) window._calcSum(); window._saveSamplingCache&&window._saveSamplingCache(); }, 200);
-                            }
-                        };
-                        if (cached) { restoreCached(); }
-                        else {
-                            fetch(SUPABASE_URL + '/rest/v1/app_data?key=eq.samplingCardCache&select=value&limit=1', {
-                                headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY }
-                            }).then(function(r){ return r.json(); }).then(function(data){
-                                if (data && data.length > 0 && data[0].value) {
-                                    cached = data[0].value;
-                                    localStorage.setItem('samplingCardCache', cached);
-                                    restoreCached();
-                                } else { restoreCached(); }
-                            }).catch(function(){ restoreCached(); });
+                        // Excel数据直接渲染，不使用缓存
+                        if (html) {
+                            tableEl.outerHTML = '<div id="samplingDataTable">' + html + '</div>';
+                            setTimeout(function(){ if(window._calcSum) window._calcSum(); }, 200);
                         }
                         if (noteEl) noteEl.textContent = '数据来源：工作表「' + sheetName + '」';
                         // 初始化列宽拖拽
@@ -6353,6 +6189,46 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
         return { rows: jsonData, headers, mapping, missingFields, sheetName, totalRows: jsonData.length };
     }
     
+    // 从飞书获取数据做分析（复用看板同一份飞书表格）
+    async function fetchAnalysisFromFeishu() {
+        var area = document.getElementById('feishuFetchArea');
+        if (area) { area.style.opacity = '0.5'; area.querySelector('p').textContent = '⏳ 正在从飞书获取...'; }
+        try {
+            var token = getErrorDashboardToken();
+            if (!token) token = await feishuRefreshToken();
+            if (!token) token = await getCloudToken();
+            if (!token) token = await getFeishuToken();
+            if (!token) { alert('❌ 未授权，请先在失误分析看板中完成飞书授权'); if(area){area.style.opacity='1';area.querySelector('p').textContent='使用看板同一份飞书表格';} return; }
+            // 如果看板数据为空，先刷新
+            if (errorDashboardData.length === 0) { await refreshErrorDashboardData(true, false); }
+            if (errorDashboardData.length === 0) { alert('❌ 飞书数据为空，请检查授权或表格'); if(area){area.style.opacity='1';area.querySelector('p').textContent='使用看板同一份飞书表格';} return; }
+            // 转换为分析模块能用的格式
+            var rows = errorDashboardData.map(function(e) {
+                return { '日期': e.dateStr, '来源': e.source, '站点': e.site, '质检码': e.qcCode, '初审': e.reviewer, '失误类别': e.category, '失误明细': e.note, '品类': e.product||'' };
+            });
+            var headers = ['日期','来源','站点','质检码','初审','失误类别','失误明细','品类'];
+            var mapping = { source: '来源', category: '失误类别', reviewer: '初审', detail: '失误明细', qcCode: '质检码', site: '站点', date: '日期' };
+            currentParseResult = { rows: rows, headers: headers, mapping: mapping, missingFields: [], sheetName: '飞书表格', totalRows: rows.length };
+            window._analysisAllRows = rows;
+            window._analysisDateCol = 0;
+            window._analysisReviewerCol = 4;
+            window._analysisSourceCol = 1;
+            window._analysisSiteCol = 2;
+            window._analysisQcCol = 3;
+            window._analysisCategoryCol = 5;
+            window._analysisDetailCol = 6;
+            window._analysisProductCol = 7;
+            window._analysisWeekRange = null;
+            // 隐藏上传区和飞书区，直接显示分析
+            document.getElementById('uploadAndSheetRow').style.display = 'none';
+            document.getElementById('analysisTypePanel').style.display = 'block';
+            document.getElementById('uploadStatus').textContent = '☁️ 数据来源：飞书表格（' + errorDashboardData.length + ' 条记录）';
+            document.querySelectorAll('.analysis-type-btn[data-type]').forEach(function(btn){ btn.classList.toggle('active', btn.dataset.type === 'week'); });
+            errorCurrentPeriod = 'week';
+            var now3=new Date();var dw3=now3.getDay();dw3=dw3===0?7:dw3;var thisMon=new Date(now3);thisMon.setDate(now3.getDate()-dw3+1);thisMon.setHours(0,0,0,0);var thisSun=new Date(thisMon);thisSun.setDate(thisMon.getDate()+6);thisSun.setHours(23,59,59,999);var wr={start:thisMon.getFullYear()+'-'+String(thisMon.getMonth()+1).padStart(2,'0')+'-'+String(thisMon.getDate()).padStart(2,'0'),end:thisSun.getFullYear()+'-'+String(thisSun.getMonth()+1).padStart(2,'0')+'-'+String(thisSun.getDate()).padStart(2,'0'),startDate:thisMon,endDate:thisSun,startDateNum:thisMon.getFullYear()*10000+(thisMon.getMonth()+1)*100+thisMon.getDate(),endDateNum:thisSun.getFullYear()*10000+(thisSun.getMonth()+1)*100+thisSun.getDate(),periodName:getWeekLabel(thisMon)};window.doAnalysis('week',wr);localStorage.removeItem('samplingCardCache');refreshSamplingFromFeishu();
+            if (area) { area.style.opacity = '1'; area.querySelector('p').textContent = '☁️ 从飞书获取数据（' + errorDashboardData.length + ' 条）'; }
+        } catch(e) { alert('❌ 获取失败：' + e.message); if(area){area.style.opacity='1';area.querySelector('p').textContent='使用看板同一份飞书表格';} }
+    }
     async function parseFileSheets(file) {
         return new Promise((resolve, reject) => {
             const reader = new FileReader();
@@ -6380,7 +6256,8 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
         const container = document.getElementById('mainContent');
         container.innerHTML = `
             <div id="uploadAndSheetRow" style="display:flex; gap:16px; align-items:stretch; flex-wrap:wrap; margin-bottom:16px;">
-                <div class="upload-area" id="dataUploadArea" style="flex:1; min-width:200px;"><span>📎 点击上传Excel/CSV文件</span><p style="font-size:0.7rem; margin-top:8px; color:#94a3b8;">支持 .xlsx, .xls, .csv 格式</p><input type="file" id="dataFileInput" accept=".xlsx,.xls,.csv" style="display:none"></div>
+                <div class="upload-area" id="dataUploadArea" style="flex:1; min-width:200px;"><span>📎 上传Excel/CSV文件</span><p style="font-size:0.7rem; margin-top:8px; color:#94a3b8;">支持 .xlsx, .xls, .csv 格式</p><input type="file" id="dataFileInput" accept=".xlsx,.xls,.csv" style="display:none"></div>
+                <div class="upload-area" id="feishuFetchArea" style="flex:1; min-width:200px;cursor:pointer;" onclick="fetchAnalysisFromFeishu()"><span>☁️ 从飞书获取数据</span><p style="font-size:0.7rem; margin-top:8px; color:#94a3b8;">使用看板同一份飞书表格</p></div>
                 <div id="sheetSelectorPanel" style="display:none; flex:1; min-width:280px; background:#f8fafc; border-radius:20px; padding:16px 20px; display:flex; align-items:center; gap:12px;">
                     <label style="font-weight:600; color:#1f3a6b; white-space:nowrap;">📄 选择工作表：</label>
                     <select id="sheetSelect" style="padding:8px 12px; border:1px solid #cbd5e1; border-radius:8px; font-size:0.85rem; background:white; min-width:120px; flex:1;"></select>
@@ -6424,7 +6301,9 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
             </div>
             <div id="fileInfoPanel" class="file-info" style="display:none; margin-bottom:16px;"></div>
             <div class="report-box" id="analysisResultBox" style="display:none;"><div class="report-title">📊 数据分析结果</div><div id="analysisContent"></div></div>
+            <div id="reportGenSection"></div>
         `;
+        setTimeout(function(){ refreshReportSection(); }, 100);
         
         const uploadArea = document.getElementById('dataUploadArea');
         const fileInput = document.getElementById('dataFileInput');
@@ -6610,7 +6489,7 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
             
             // 保存当前筛选结果和时间范围到全局变量（供模块3失误量计算使用）
             currentFilterResult = filterResult;
-            currentDateRange = dateRange;
+            currentDateRange = dateRange; window._samplingDateRange = dateRange;
 
             // 计算模块3失误量：从筛选后的行中，来源=抽检的行，统计初审名字出现次数
             const mistakeMap = {};
@@ -6697,6 +6576,10 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
             }
             container.innerHTML = html;
         }
+        window.populateWeekButtons = populateWeekButtons;
+        window.populateMonthButtons = populateMonthButtons;
+        window.populateYearButtons = populateYearButtons;
+        window.doAnalysis = doAnalysis;
 
         // 辅助：生成最近3个月按钮
         function populateMonthButtons(containerId) {
@@ -6874,6 +6757,8 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
                     periodName: getWeekLabel(startDate)
                 };
                 doAnalysis('week', weekRange);
+                localStorage.removeItem('samplingCardCache');
+                refreshSamplingFromFeishu();
             }
         });
 
@@ -6895,6 +6780,8 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
                     monthName: `${year}年${month}月`, periodName: `${year}年${month}月`
                 };
                 doAnalysis('month', monthRange);
+                localStorage.removeItem('samplingCardCache');
+                refreshSamplingFromFeishu();
             }
         });
 
@@ -6913,6 +6800,8 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
                     yearName: `${yr}年`, periodName: `${yr}年`
                 };
                 doAnalysis('year', yearRange);
+                localStorage.removeItem('samplingCardCache');
+                refreshSamplingFromFeishu();
             }
         });
 
@@ -7100,18 +6989,127 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
     function saveBiweeklyCases(data) {
         try { localStorage.setItem('biweeklyCases', JSON.stringify(data)); } catch(e) { alert('存储空间不足，请清理一些旧数据'); }
     }
-    function _ciGet(id) { try { return localStorage.getItem('ci_' + id); } catch(e) { return null; } }
-    function _ciSet(id, base64) { try { localStorage.setItem('ci_' + id, base64); } catch(e) {} }
-    function _ciDel(id) { try { localStorage.removeItem('ci_' + id); } catch(e) {} }
-    function _ciListAll() { var ids = []; for (var i = 0; i < localStorage.length; i++) { var k = localStorage.key(i); if (k && k.indexOf('ci_') === 0) ids.push(k.substring(3)); } return ids; }
-    function _kiGet(id) { try { return localStorage.getItem('ki_' + id); } catch(e) { return null; } }
-    function _kiSet(id, base64) { try { localStorage.setItem('ki_' + id, base64); } catch(e) {} }
-    function _kiDel(id) { try { localStorage.removeItem('ki_' + id); } catch(e) {} }
-    function _kiListAll() { var ids = []; for (var i = 0; i < localStorage.length; i++) { var k = localStorage.key(i); if (k && k.indexOf('ki_') === 0) ids.push(k.substring(3)); } return ids; }
+    // ==================== IndexedDB 图片存储（突破 localStorage 5MB 限制） ====================
+    (function() {
+        var DB_NAME = 'yxt_images', STORE = 'imgs';
+        window._imageCache = {};
+        window._imageCacheReady = false;
+
+        function _idbOpen() {
+            return new Promise(function(resolve) {
+                var r = indexedDB.open(DB_NAME, 1);
+                r.onupgradeneeded = function(e) { if (!e.target.result.objectStoreNames.contains(STORE)) e.target.result.createObjectStore(STORE); };
+                r.onsuccess = function(e) { resolve(e.target.result); };
+                r.onerror = function() { console.warn('IndexedDB 不可用，降级使用 localStorage'); resolve(null); };
+            });
+        }
+
+        function _idbPut(db, key, val) {
+            return new Promise(function(resolve) {
+                if (!db) { resolve(); return; }
+                try { var tx = db.transaction(STORE, 'readwrite'); tx.objectStore(STORE).put(val, key); tx.oncomplete = resolve; tx.onerror = resolve; }
+                catch(e) { resolve(); }
+            });
+        }
+
+        function _idbDelete(db, key) {
+            return new Promise(function(resolve) {
+                if (!db) { resolve(); return; }
+                try { var tx = db.transaction(STORE, 'readwrite'); tx.objectStore(STORE).delete(key); tx.oncomplete = resolve; tx.onerror = resolve; }
+                catch(e) { resolve(); }
+            });
+        }
+
+        // 启动：先迁移旧 localStorage 图片 → 预加载全部到内存缓存
+        _idbOpen().then(function(db) {
+            if (!db) { window._imageCacheReady = true; return; }
+            // 迁移 localStorage 中的旧图片
+            if (!localStorage.getItem('_idx_v1')) {
+                var tx = db.transaction(STORE, 'readwrite'), store = tx.objectStore(STORE), count = 0;
+                for (var i = 0; i < localStorage.length; i++) {
+                    var k = localStorage.key(i);
+                    if (k && (k.indexOf('ci_') === 0 || k.indexOf('ki_') === 0)) {
+                        var v = localStorage.getItem(k);
+                        if (v) { store.put(v, k); count++; }
+                    }
+                }
+                tx.oncomplete = function() {
+                    var keys = [];
+                    for (var j = 0; j < localStorage.length; j++) {
+                        var k2 = localStorage.key(j);
+                        if (k2 && (k2.indexOf('ci_') === 0 || k2.indexOf('ki_') === 0)) keys.push(k2);
+                    }
+                    keys.forEach(function(k2) { localStorage.removeItem(k2); });
+                    localStorage.setItem('_idx_v1', '1');
+                    if (count > 0) console.log('📦 已迁移 ' + count + ' 张图片到 IndexedDB，释放 localStorage 空间');
+                };
+            }
+            // 预加载全部图片到内存缓存
+            var tx2 = db.transaction(STORE, 'readonly'), store2 = tx2.objectStore(STORE), req = store2.openCursor(), loaded = 0;
+            req.onsuccess = function(e) { var c = e.target.result; if (c) { window._imageCache[c.key] = c.value; loaded++; c.continue(); } else { window._imageCacheReady = true; console.log('📦 已加载 ' + loaded + ' 张图片缓存'); } };
+            req.onerror = function() { window._imageCacheReady = true; };
+            // 保存 db 引用供后续写操作复用
+            window._imageDB = db;
+        }).catch(function() { window._imageCacheReady = true; });
+    })();
+
+    function _ciGet(id) {
+        var key = 'ci_' + id;
+        if (window._imageCache[key] !== undefined) return window._imageCache[key];
+        try { return localStorage.getItem(key); } catch(e) { return null; }
+    }
+    function _ciSet(id, base64) {
+        var key = 'ci_' + id;
+        window._imageCache[key] = base64;
+        if (window._imageDB) _idbPut_inline(window._imageDB, key, base64);
+        // IndexedDB 未就绪时，兜底写 localStorage（迁移时会自动同步）
+        else { try { localStorage.setItem(key, base64); } catch(e) {} }
+    }
+    function _ciDel(id) {
+        var key = 'ci_' + id;
+        delete window._imageCache[key];
+        if (window._imageDB) _idbDelete_inline(window._imageDB, key);
+        try { localStorage.removeItem(key); } catch(e) {}
+    }
+    function _ciListAll() {
+        var ids = [], cache = window._imageCache || {};
+        for (var k in cache) { if (k.indexOf('ci_') === 0 && cache.hasOwnProperty(k)) ids.push(k.substring(3)); }
+        return ids;
+    }
+    function _kiGet(id) {
+        var key = 'ki_' + id;
+        if (window._imageCache[key] !== undefined) return window._imageCache[key];
+        try { return localStorage.getItem(key); } catch(e) { return null; }
+    }
+    function _kiSet(id, base64) {
+        var key = 'ki_' + id;
+        window._imageCache[key] = base64;
+        if (window._imageDB) _idbPut_inline(window._imageDB, key, base64);
+        else { try { localStorage.setItem(key, base64); } catch(e) {} }
+    }
+    function _kiDel(id) {
+        var key = 'ki_' + id;
+        delete window._imageCache[key];
+        if (window._imageDB) _idbDelete_inline(window._imageDB, key);
+        try { localStorage.removeItem(key); } catch(e) {}
+    }
+    function _kiListAll() {
+        var ids = [], cache = window._imageCache || {};
+        for (var k in cache) { if (k.indexOf('ki_') === 0 && cache.hasOwnProperty(k)) ids.push(k.substring(3)); }
+        return ids;
+    }
+    // 内联版的 IDB 写/删（不创建 Promise 链，轻量级）
+    function _idbPut_inline(db, key, val) {
+        try { var tx = db.transaction(STORE, 'readwrite'); tx.objectStore(STORE).put(val, key); } catch(e) {}
+    }
+    function _idbDelete_inline(db, key) {
+        try { var tx = db.transaction(STORE, 'readwrite'); tx.objectStore(STORE).delete(key); } catch(e) {}
+    }
+    var STORE = 'imgs'; // 供内联函数使用
 
     function _splitCaseImages(c, prefix) {
         var setFn = prefix === 'ci' ? _ciSet : _kiSet;
-        ['issuePhotos', 'dirPhotos', 'files'].forEach(function(field) {
+        ['issuePhotos', 'dirPhotos', 'dirExamplePhotos', 'files'].forEach(function(field) {
             if (!c[field] || !Array.isArray(c[field])) return;
             c[field] = c[field].map(function(img) {
                 if (!img || typeof img !== 'string' || img.indexOf('data:') !== 0) return img;
@@ -7126,7 +7124,7 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
     function _joinCaseImages(c, prefix) {
         var getFn = prefix === 'ci' ? _ciGet : _kiGet;
         var clone = JSON.parse(JSON.stringify(c));
-        ['issuePhotos', 'dirPhotos', 'files'].forEach(function(field) {
+        ['issuePhotos', 'dirPhotos', 'dirExamplePhotos', 'files'].forEach(function(field) {
             if (!clone[field] || !Array.isArray(clone[field])) return;
             clone[field] = clone[field].map(function(img) {
                 if (!img || typeof img !== 'string' || img.indexOf('data:') === 0) return img;
@@ -7147,7 +7145,7 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
         var cases = getFn();
         var used = {};
         cases.forEach(function(c) {
-            ['issuePhotos', 'dirPhotos', 'files'].forEach(function(f) {
+            ['issuePhotos', 'dirPhotos', 'dirExamplePhotos', 'files'].forEach(function(f) {
                 if (c[f]) c[f].forEach(function(id) { if (typeof id === 'string' && id.indexOf('data:') !== 0) used[id] = true; });
             });
         });
@@ -7221,7 +7219,7 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
             var totalRefs = 0, missingRefs = 0, orphanKeys = 0, totalSize = 0;
             var usedIds = {};
             cases.forEach(function(c) {
-                ['issuePhotos', 'dirPhotos', 'files'].forEach(function(f) {
+                ['issuePhotos', 'dirPhotos', 'dirExamplePhotos', 'files'].forEach(function(f) {
                     if (c[f]) c[f].forEach(function(id) { if (typeof id === 'string' && id.indexOf('data:') !== 0) { usedIds[id] = true; totalRefs++; } });
                 });
             });
@@ -7261,7 +7259,7 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
         var manualCases = getManualCases();
         var dataIssues = { tokens: 0, base64Inline: 0, empty: 0, invalid: 0, samples: [] };
         manualCases.forEach(function(c) {
-            ['issuePhotos', 'dirPhotos', 'files'].forEach(function(f) {
+            ['issuePhotos', 'dirPhotos', 'dirExamplePhotos', 'files'].forEach(function(f) {
                 if (!c[f]) return;
                 c[f].forEach(function(img) {
                     if (!img) { dataIssues.empty++; return; }
@@ -7281,13 +7279,6 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
         console.log('✅ 诊断完成。如有丢失的图片，打开对应案例重新上传图片即可恢复');
         return { manual: mc, knowledge: kc, dataIssues: dataIssues };
     };
-    function getCurrentWeekKey() {
-        const now = new Date();
-        const day = now.getDay();
-        const diff = now.getDate() - day + (day === 0 ? -6 : 1);
-        const monday = new Date(now.getFullYear(), now.getMonth(), diff);
-        return 'w_' + monday.getFullYear() + String(monday.getMonth()+1).padStart(2,'0') + String(monday.getDate()).padStart(2,'0');
-    }
     function isInCurrentWeek(timestamp) {
         const now = new Date();
         const day = now.getDay();
@@ -7335,6 +7326,7 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
         if (!fileToken) return null;
         try {
             var token = getErrorDashboardToken();
+            if (!token) { console.warn('[飞书图片] 本地token已过期，尝试刷新...'); }
             if (!token) token = await feishuRefreshToken();
             if (!token) token = await getCloudToken();
             if (!token) token = await getFeishuToken();
@@ -7345,7 +7337,16 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
             };
             if (token) headers['x-target-auth'] = 'Bearer ' + token;
             var resp = await fetch(FEISHU_PROXY_URL, { method: 'POST', headers: headers });
-            if (!resp.ok) throw new Error('状态:' + resp.status);
+            if (!resp.ok) {
+                console.warn('[飞书图片] 代理返回' + resp.status + '，尝试直连...');
+                if (token) {
+                    var _dr = await fetch('https://open.feishu.cn/open-apis/drive/v1/medias/' + fileToken + '/download', {
+                        headers: { 'Authorization': 'Bearer ' + token }
+                    });
+                    if (_dr.ok) { var _db = await _dr.arrayBuffer(); if (_db && _db.byteLength > 0) return URL.createObjectURL(new Blob([_db], { type: 'image/png' })); }
+                }
+                throw new Error('状态:' + resp.status + '（直连也失败）');
+            }
             var buf = await resp.arrayBuffer();
             if (!buf || buf.byteLength === 0) return null;
             var bytes = new Uint8Array(buf);
@@ -7372,39 +7373,83 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
         } catch(e) { console.log('图片下载失败:', fileToken, e.message); }
         return null;
     }
-    // 飞书图片缓存（仅会话期间，不存 localStorage）
+    // 飞书图片缓存（当前会话 + IndexedDB 持久化缩略图）
     var _photoCache = {};
-    // 自动加载飞书图片的队列
     var _pendingPhotoTokens = [];
     var _autoLoadTimer = null;
+    // 缩略图生成（200px，JPEG 60%质量，约10-20KB）
+    function _generateThumbnail(imgSrc, maxSize) {
+        maxSize = maxSize || 200;
+        return new Promise(function(resolve) {
+            var img = new Image();
+            img.onload = function() {
+                var scale = Math.min(maxSize / img.width, maxSize / img.height, 1);
+                var w = Math.round(img.width * scale), h = Math.round(img.height * scale);
+                var canvas = document.createElement('canvas');
+                canvas.width = w; canvas.height = h;
+                var ctx = canvas.getContext('2d');
+                ctx.drawImage(img, 0, 0, w, h);
+                resolve(canvas.toDataURL('image/jpeg', 0.6));
+            };
+            img.onerror = function() { resolve(null); };
+            img.src = imgSrc;
+        });
+    }
+    // 加载飞书原图（点击缩略图时调用）
+    window._loadFullPhoto = async function(thumbEl, token) {
+        thumbEl.style.opacity = '0.5'; thumbEl.style.cursor = 'wait';
+        try {
+            var full = await fetchFeishuImage(token);
+            if (full && (full.indexOf('data:image') === 0 || full.indexOf('blob:') === 0)) {
+                _photoCache[token] = full;
+                showImageViewer(full);
+            } else {
+                alert('原图加载失败，请稍后重试');
+            }
+        } catch(e) { alert('原图加载失败：' + e.message); }
+        thumbEl.style.opacity = '1'; thumbEl.style.cursor = 'pointer';
+    };
+    var _autoLoadBatchSize = 3; // 每批加载数，避免飞书限流
     function _autoLoadPhotos() {
-        var tokens = _pendingPhotoTokens.splice(0);
-        if (tokens.length === 0) return;
-        tokens.forEach(function(token) {
+        var allTokens = _pendingPhotoTokens.splice(0);
+        if (allTokens.length === 0) return;
+        // 取第一批，剩下的放回队列
+        var batch = allTokens.splice(0, _autoLoadBatchSize);
+        if (allTokens.length > 0) _pendingPhotoTokens = _pendingPhotoTokens.concat(allTokens);
+        batch.forEach(function(token) {
             var els = document.querySelectorAll('[data-ftoken="' + token + '"]');
             els.forEach(function(el) {
                 if (!el.dataset.loading) { el.dataset.loading = '1'; loadPhotoToken(el, token); }
             });
         });
+        // 还有剩余则继续下一批
+        if (_pendingPhotoTokens.length > 0) {
+            _autoLoadTimer = setTimeout(_autoLoadPhotos, 800);
+        }
     }
     function _scheduleAutoLoad(token) {
         if (_pendingPhotoTokens.indexOf(token) < 0) _pendingPhotoTokens.push(token);
         if (_autoLoadTimer) clearTimeout(_autoLoadTimer);
-        _autoLoadTimer = setTimeout(_autoLoadPhotos, 150);
+        _autoLoadTimer = setTimeout(_autoLoadPhotos, 200);
     }
-    // 渲染照片标签：支持 base64/URL 字符串 和 飞书 fileToken 对象 {t: token}
+    // 渲染照片标签：缩略图优先（IndexedDB持久化）→ 飞书 token 自动加载
     function photoTag(p, maxW, maxH) {
         maxW = maxW || 150; maxH = maxH || 150;
         if (typeof p === 'object' && p.t) {
             var token = p.t;
+            // 1. 当前会话已加载的完整图片
             if (_photoCache[token]) {
                 return '<img src="' + _photoCache[token] + '" style="max-width:' + maxW + 'px;max-height:' + maxH + 'px;border-radius:8px;border:1px solid #e2e8f0;object-fit:cover;cursor:pointer;margin:2px;" onclick="event.stopPropagation();showImageViewer(this.src)">';
             }
-            // 未缓存的飞书token：显示占位符并自动后台加载
+            // 2. IndexedDB 持久化缩略图（跨会话秒开）
+            var thumbKey = 'thumb_' + token;
+            if (window._imageCache && window._imageCache[thumbKey]) {
+                return '<img src="' + window._imageCache[thumbKey] + '" style="max-width:' + maxW + 'px;max-height:' + maxH + 'px;border-radius:8px;border:1px solid #e2e8f0;object-fit:cover;cursor:pointer;margin:2px;" title="点击查看原图" onclick="event.stopPropagation();window._loadFullPhoto(this,\'' + token + '\')">';
+            }
+            // 3. 无缓存：占位符 + 后台自动加载
             _scheduleAutoLoad(token);
             return '<div class="photo-loadable" data-ftoken="' + token + '" style="width:' + Math.min(maxW, 100) + 'px;height:' + Math.min(maxH, 80) + 'px;background:#f1f5f9;border-radius:8px;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;border:1px dashed #cbd5e1;margin:2px;flex-shrink:0;" onclick="event.stopPropagation();loadPhotoToken(this,\'' + token + '\')"><span style="font-size:1.2rem;">📷</span></div>';
         }
-        // 防止引用ID未被还原直接渲染（如 ci_xxx / ki_xxx），显示占位符而非破图
         if (typeof p === 'string' && (p.indexOf('ci_') === 0 || p.indexOf('ki_') === 0)) {
             return '<div style="width:' + Math.min(maxW, 100) + 'px;height:' + Math.min(maxH, 80) + 'px;background:#fff5f5;border-radius:8px;display:inline-flex;align-items:center;justify-content:center;border:1px dashed #e53e3e;margin:2px;flex-shrink:0;font-size:0.65rem;color:#c0392b;text-align:center;padding:4px;" title="图片数据丢失，请重新上传">📷<br>已丢失</div>';
         }
@@ -7416,18 +7461,39 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
             var img = await fetchFeishuImage(token);
             if (img && (img.indexOf('data:image') === 0 || img.indexOf('blob:') === 0)) {
                 _photoCache[token] = img;
+                // 生成缩略图持久化到 IndexedDB（下次打开秒显示）
+                _generateThumbnail(img, 200).then(function(thumb) {
+                    if (thumb) {
+                        var thumbKey = 'thumb_' + token;
+                        window._imageCache[thumbKey] = thumb;
+                        if (window._imageDB) { try { var tx = window._imageDB.transaction('imgs','readwrite'); tx.objectStore('imgs').put(thumb, thumbKey); } catch(e) {} }
+                    }
+                });
                 el.outerHTML = '<img src="' + img + '" style="max-width:150px;max-height:150px;border-radius:8px;border:1px solid #e2e8f0;object-fit:cover;cursor:pointer;margin:2px;" onclick="event.stopPropagation();showImageViewer(this.src)">';
+            } else {
+                // 第一次失败：2秒后自动重试
+                if (!el.dataset.retried) {
+                    el.dataset.retried = '1';
+                    el.innerHTML = '<span style="color:#f39c12;font-size:0.65rem;text-align:center;">⏳ 重试中...</span>';
+                    setTimeout(function() { el.dataset.loading = ''; loadPhotoToken(el, token); }, 2000);
+                } else {
+                    el.innerHTML = '<span style="color:#c0392b;font-size:0.65rem;text-align:center;">⚠️ 加载失败<br>点击重试</span>';
+                    el.style.cursor = 'pointer';
+                    el.dataset.loading = '';
+                    el.onclick = function(e) { e.stopPropagation(); loadPhotoToken(el, token); };
+                }
+            }
+        } catch(e) {
+            if (!el.dataset.retried) {
+                el.dataset.retried = '1';
+                el.innerHTML = '<span style="color:#f39c12;font-size:0.65rem;text-align:center;">⏳ 重试中...</span>';
+                setTimeout(function() { el.dataset.loading = ''; loadPhotoToken(el, token); }, 2000);
             } else {
                 el.innerHTML = '<span style="color:#c0392b;font-size:0.65rem;text-align:center;">⚠️ 加载失败<br>点击重试</span>';
                 el.style.cursor = 'pointer';
                 el.dataset.loading = '';
-                el.onclick = function(e) { e.stopPropagation(); loadPhotoToken(el, token); };
+                el.onclick = function(ev) { ev.stopPropagation(); loadPhotoToken(el, token); };
             }
-        } catch(e) {
-            el.innerHTML = '<span style="color:#c0392b;font-size:0.65rem;text-align:center;">⚠️ 加载失败<br>点击重试</span>';
-            el.style.cursor = 'pointer';
-            el.dataset.loading = '';
-            el.onclick = function(ev) { ev.stopPropagation(); loadPhotoToken(el, token); };
         }
     }
     async function fetchImageAsBase64(url) {
@@ -7450,7 +7516,14 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
             };
             if (token) headers['x-target-auth'] = 'Bearer ' + token;
             var resp = await fetch(FEISHU_PROXY_URL, { method: 'POST', headers: headers });
-            if (!resp.ok) throw new Error('状态:' + resp.status);
+            if (!resp.ok) {
+                console.warn('[飞书图片] 代理返回' + resp.status + '，尝试直连...');
+                if (token) {
+                    var _dr2 = await fetch(targetUrl, { headers: { 'Authorization': 'Bearer ' + token } });
+                    if (_dr2.ok) { var _db2 = await _dr2.arrayBuffer(); if (_db2 && _db2.byteLength > 0) { var _blob2 = new Blob([_db2]); return new Promise(function(r2) { var _r2 = new FileReader(); _r2.onloadend = function() { r2(_r2.result); }; _r2.onerror = function() { r2(url); }; _r2.readAsDataURL(_blob2); }); } }
+                }
+                throw new Error('状态:' + resp.status + '（直连也失败）');
+            }
             // 尝试JSON格式（代理可能base64包裹返回）
             var ct = resp.headers.get('content-type') || '';
             if (ct.indexOf('json') >= 0) {
@@ -7556,50 +7629,70 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
                     var data = await resp.json();
                     var rows = (data.data && data.data.valueRange && data.data.valueRange.values) || [];
                     if (rows.length <= 1) { alert('表格无数据'); importBtn.textContent = '📥 从飞书导入'; importBtn.disabled = false; return; }
+
+                    // 按表头字段名构建列索引映射（忽略列顺序）
+                    var headerRow = rows[0];
+                    var col = {}; // col['质检码'] = 列索引
+                    for (var ci = 0; ci < headerRow.length; ci++) {
+                        var hdr = (headerRow[ci] || '').toString().trim();
+                        if (hdr) col[hdr] = ci;
+                    }
+                    function cell(row, fieldName) {
+                        var idx = col[fieldName];
+                        return (idx !== undefined && row[idx] !== undefined) ? row[idx] : undefined;
+                    }
+                    // 用 fileToken 下载飞书图片
+                    function getFileTokens(cellVal) {
+                        if (!cellVal) return [];
+                        if (Array.isArray(cellVal)) return cellVal.map(function(a){ return a.fileToken || ''; }).filter(Boolean);
+                        if (cellVal.fileToken) return [cellVal.fileToken];
+                        return [];
+                    }
+                    function parseTokens(row, fieldName) {
+                        var tokens = getFileTokens(cell(row, fieldName));
+                        return tokens.map(function(t) { return {t: t}; });
+                    }
+
                     var cases = getManualCasesFull();
-                    var added = 0;
+                    var added = 0, updated = 0;
                     for (var r = 1; r < rows.length; r++) {
                         var row = rows[r];
-                        var qcCode = (row[0] || '').toString().trim();
+                        var qcCode = (cell(row, '质检码') || '').toString().trim();
                         if (!qcCode) continue;
+
+                        var newData = {
+                            qcCode: qcCode,
+                            errorCategory: (cell(row, '失误类别') || '').toString().trim(),
+                            issueDesc: (cell(row, '问题描述') || '').toString().trim(),
+                            issuePhotos: parseTokens(row, '问题照片'),
+                            correctDir: (cell(row, '正确方向') || '').toString().trim(),
+                            dirPhotos: parseTokens(row, '方向照片'),
+                            dirExamplePhotos: parseTokens(row, '方向示例照片'),
+                            productCategory: (cell(row, '品类') || '').toString().trim()
+                        };
+
                         var exists = cases.find(function(c) { return c.qcCode === qcCode; });
-                        if (exists) continue;
-                        var errorCategory = (row[1] || '').toString().trim();
-                        var issueDesc = (row[2] || '').toString().trim();
-                        var dirText = (row[4] || '').toString().trim();
-                        var issuePhotos = [];
-                        var dirPhotos = [];
-                        // 支持多种附件格式
-                        function extractLinks(cell) {
-                            if (!cell) return [];
-                            if (Array.isArray(cell)) return cell.map(function(a){ return a.link || a.fileUrl || a.url || ''; }).filter(Boolean);
-                            if (cell.link) return [cell.link];
-                            if (cell.fileUrl) return [cell.fileUrl];
-                            if (cell.url) return [cell.url];
-                            if (typeof cell === 'string' && cell.indexOf('http') === 0) return [cell];
-                            return [];
+                        if (exists) {
+                            // 已有案例：补充缺失字段
+                            var needsUpdate = false;
+                            ['errorCategory','issueDesc','correctDir','productCategory'].forEach(function(f) {
+                                if (!exists[f] && newData[f]) { exists[f] = newData[f]; needsUpdate = true; }
+                            });
+                            ['issuePhotos','dirPhotos','dirExamplePhotos'].forEach(function(f) {
+                                if ((!exists[f] || exists[f].length === 0) && newData[f].length > 0) {
+                                    exists[f] = newData[f]; needsUpdate = true;
+                                }
+                            });
+                            if (needsUpdate) { updated++; }
+                            continue;
                         }
-                        // 用 fileToken 下载飞书图片
-                        function getFileTokens(cell) {
-                            if (!cell) return [];
-                            if (Array.isArray(cell)) return cell.map(function(a){ return a.fileToken || ''; }).filter(Boolean);
-                            if (cell.fileToken) return [cell.fileToken];
-                            return [];
-                        }
-                        // 只存 fileToken，点击时才下载图片
-                        var issueTokens = getFileTokens(row[3]);
-                        var dirTokens = getFileTokens(row[5]);
-                        for (var il = 0; il < issueTokens.length; il++) {
-                            issuePhotos.push({t: issueTokens[il]});
-                        }
-                        for (var dl = 0; dl < dirTokens.length; dl++) {
-                            dirPhotos.push({t: dirTokens[dl]});
-                        }
-                        cases.unshift({ qcCode: qcCode, errorCategory: errorCategory, issueDesc: issueDesc, issuePhotos: issuePhotos, correctDir: dirText, dirPhotos: dirPhotos, createTime: Date.now() });
+                        newData.createTime = Date.now();
+                        cases.unshift(newData);
                         added++;
                     }
+                    if (updated > 0) saveManualCases(cases);
                     saveManualCases(cases);
-                    alert('✅ 导入完成：新增 ' + added + ' 条案例（跳过 ' + (rows.length - 1 - added) + ' 条重复）');
+                    alert('✅ 导入完成：新增 ' + added + ' 条' + (updated > 0 ? '，更新 ' + updated + ' 条' : '') + '（跳过 ' + (rows.length - 1 - added - updated) + ' 条重复）');
                     renderManualTab();
                 } catch(e) {
                     alert('❌ 导入失败：' + e.message);
@@ -7740,10 +7833,12 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
                         <button class="deleteManualCaseBtn" data-idx="${idx}" style="background:#fef2f2;border:none;padding:4px 12px;border-radius:20px;cursor:pointer;font-size:0.75rem;color:#c0392b;">🗑️ 删除</button>
                     </div>
                     ${c.errorCategory ? `<span style="display:inline-block;background:#fff3e0;color:#e67e22;padding:2px 10px;border-radius:10px;font-size:0.7rem;font-weight:500;margin-bottom:6px;">🏷️ ${escapeHtml(c.errorCategory)}</span>` : ''}
+                    ${c.productCategory ? '<div style="font-size:0.7rem;color:#2a5298;margin-bottom:4px;">🏷️ ' + escapeHtml(c.productCategory) + '</div>' : ''}
                     <div style="font-size:0.85rem;color:#4a5568;margin-bottom:8px;">📝 ${escapeHtml(c.issueDesc || '无描述')}</div>
                     ${c.issuePhotos && c.issuePhotos.length > 0 ? '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px;">' + c.issuePhotos.map(function(p) { return photoTag(p, 150, 150); }).join('') + '</div>' : ''}
                     <div style="background:#eef2ff;padding:8px 12px;border-radius:10px;font-size:0.85rem;color:#2a5298;">✅ 正确方向：${escapeHtml(c.correctDir || '无')}</div>
                     ${c.dirPhotos && c.dirPhotos.length > 0 ? '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;">' + c.dirPhotos.map(function(p) { return photoTag(p, 150, 150); }).join('') + '</div>' : ''}
+                    ${c.dirExamplePhotos && c.dirExamplePhotos.length > 0 ? '<div style="margin-top:4px;font-size:0.7rem;color:#5e6f8d;">📷 方向示例：</div><div style="display:flex;gap:6px;flex-wrap:wrap;">' + c.dirExamplePhotos.map(function(p) { return photoTag(p, 150, 150); }).join('') + '</div>' : ''}
                     <div style="font-size:0.7rem;color:#94a3b8;margin-top:6px;">${new Date(c.createTime).toLocaleString('zh-CN')}</div>
                 </div>
             `).join('');
@@ -7772,6 +7867,10 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
                 </select>
             </div>
             <div style="margin-bottom:12px;">
+                <label style="font-weight:600;color:#1f3a6b;">🏷️ 品类</label>
+                <input id="manualProductCategory" type="text" placeholder="如：手机、平板、手表等" style="width:100%;padding:8px 12px;border:1px solid #d1d5db;border-radius:10px;margin-top:4px;font-size:0.9rem;">
+            </div>
+            <div style="margin-bottom:12px;">
                 <label style="font-weight:600;color:#1f3a6b;">问题点描述 <span style="color:#c0392b;">*</span></label>
                 <textarea id="manualIssueDesc" placeholder="描述发现的问题" rows="3" style="width:100%;padding:8px 12px;border:1px solid #d1d5db;border-radius:10px;margin-top:4px;font-size:0.9rem;resize:vertical;"></textarea>
             </div>
@@ -7788,6 +7887,11 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
                 <label style="font-weight:600;color:#1f3a6b;">📷 方向示例照片（可多选）</label>
                 <input id="manualDirPhotos" type="file" accept="image/*" multiple style="margin-top:4px;">
                 <div id="manualDirPhotosPreview" style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap;"></div>
+            </div>
+            <div style="margin-bottom:12px;">
+                <label style="font-weight:600;color:#1f3a6b;">📸 方向示例补充照片（可多选）</label>
+                <input id="manualDirExamplePhotos" type="file" accept="image/*" multiple style="margin-top:4px;">
+                <div id="manualDirExamplePhotosPreview" style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap;"></div>
             </div>
             <div style="text-align:right;">
                 <button id="saveManualCaseBtn" class="primary" style="padding:10px 30px;border-radius:30px;">💾 保存案例</button>
@@ -7823,6 +7927,17 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
                 });
             }
         });
+        document.getElementById('manualDirExamplePhotos').addEventListener('change', function() {
+            const preview = document.getElementById('manualDirExamplePhotosPreview');
+            preview.innerHTML = '';
+            if (this.files) {
+                Array.from(this.files).forEach(file => {
+                    const reader = new FileReader();
+                    reader.onload = e => { preview.innerHTML += `<img src="${e.target.result}" style="max-width:90px;max-height:70px;border-radius:8px;border:1px solid #e2e8f0;object-fit:cover;">`; };
+                    reader.readAsDataURL(file);
+                });
+            }
+        });
 
         // 保存手动录入案例
         document.getElementById('saveManualCaseBtn').addEventListener('click', async () => {
@@ -7830,19 +7945,25 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
             const errorCategory = document.getElementById('manualErrorCategory').value;
             const issueDesc = document.getElementById('manualIssueDesc').value.trim();
             const correctDir = document.getElementById('manualCorrectDir').value.trim();
+            const productCategory = document.getElementById('manualProductCategory').value.trim();
             if (!qcCode) { alert('请输入质检码'); return; }
             if (!errorCategory) { alert('请选择失误类别'); return; }
             if (!issueDesc) { alert('请输入问题点描述'); return; }
             if (!correctDir) { alert('请输入应操作方向'); return; }
             const issuePhotosInput = document.getElementById('manualIssuePhotos');
             const dirPhotosInput = document.getElementById('manualDirPhotos');
+            const dirExamplePhotosInput = document.getElementById('manualDirExamplePhotos');
             let issuePhotos = [];
             let dirPhotos = [];
+            let dirExamplePhotos = [];
             if (issuePhotosInput.files && issuePhotosInput.files.length > 0) {
                 issuePhotos = await readFilesAsDataURLs(issuePhotosInput.files);
             }
             if (dirPhotosInput.files && dirPhotosInput.files.length > 0) {
                 dirPhotos = await readFilesAsDataURLs(dirPhotosInput.files);
+            }
+            if (dirExamplePhotosInput.files && dirExamplePhotosInput.files.length > 0) {
+                dirExamplePhotos = await readFilesAsDataURLs(dirExamplePhotosInput.files);
             }
             const cases = getManualCasesFull();
             const editIdx = parseInt(document.getElementById('saveManualCaseBtn').dataset.editIdx);
@@ -7850,26 +7971,30 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
                 // 编辑模式：保留原创建时间和照片（如未重新选择）
                 const old = cases[editIdx];
                 cases[editIdx] = {
-                    qcCode, errorCategory, issueDesc, correctDir,
+                    qcCode, errorCategory, issueDesc, correctDir, productCategory,
                     issuePhotos: issuePhotos.length > 0 ? issuePhotos : (old.issuePhotos || []),
                     dirPhotos: dirPhotos.length > 0 ? dirPhotos : (old.dirPhotos || []),
+                    dirExamplePhotos: dirExamplePhotos.length > 0 ? dirExamplePhotos : (old.dirExamplePhotos || []),
                     createTime: old.createTime,
                     updateTime: Date.now()
                 };
                 document.getElementById('saveManualCaseBtn').textContent = '💾 保存案例';
                 document.getElementById('saveManualCaseBtn').removeAttribute('data-edit-idx');
             } else {
-                cases.unshift({ qcCode, errorCategory, issueDesc, issuePhotos, correctDir, dirPhotos, createTime: Date.now() });
+                cases.unshift({ qcCode, errorCategory, issueDesc, issuePhotos, correctDir, dirPhotos, dirExamplePhotos, productCategory, createTime: Date.now() });
             }
             saveManualCases(cases);
             document.getElementById('manualQcCode').value = '';
             document.getElementById('manualErrorCategory').value = '';
             document.getElementById('manualIssueDesc').value = '';
             document.getElementById('manualCorrectDir').value = '';
+            document.getElementById('manualProductCategory').value = '';
             document.getElementById('manualIssuePhotos').value = '';
             document.getElementById('manualDirPhotos').value = '';
+            document.getElementById('manualDirExamplePhotos').value = '';
             document.getElementById('manualIssuePhotosPreview').innerHTML = '';
             document.getElementById('manualDirPhotosPreview').innerHTML = '';
+            document.getElementById('manualDirExamplePhotosPreview').innerHTML = '';
             renderManualTab();
         });
 
@@ -7884,6 +8009,7 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
                 document.getElementById('manualErrorCategory').value = c.errorCategory || '';
                 document.getElementById('manualIssueDesc').value = c.issueDesc || '';
                 document.getElementById('manualCorrectDir').value = c.correctDir || '';
+                document.getElementById('manualProductCategory').value = c.productCategory || '';
                 document.getElementById('saveManualCaseBtn').textContent = '💾 更新案例';
                 document.getElementById('saveManualCaseBtn').dataset.editIdx = idx;
                 document.getElementById('manualEntryForm').scrollIntoView({ behavior: 'smooth' });
@@ -8175,6 +8301,8 @@ ov.innerHTML='<div class="modal-container" style="max-width:550px;"><div class="
 '<label style="font-weight:600;color:#1f3a6b;">正确方向</label><textarea id="acDir" rows="2" placeholder="描述正确操作方向" style="width:100%;padding:8px 12px;border:1px solid #d1d5db;border-radius:10px;margin:4px 0 12px;font-size:0.9rem;"></textarea>'+
 '<label style="font-weight:600;color:#1f3a6b;">问题照片</label><input id="acIssuePhotos" type="file" accept="image/*" multiple style="margin:4px 0 12px;font-size:0.85rem;"><div id="acIssuePreview" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px;"></div>'+
 '<label style="font-weight:600;color:#1f3a6b;">方向照片</label><input id="acDirPhotos" type="file" accept="image/*" multiple style="margin:4px 0 12px;font-size:0.85rem;"><div id="acDirPreview" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px;"></div>'+
+'<label style="font-weight:600;color:#1f3a6b;">方向示例补充照片</label><input id="acDirExamplePhotos" type="file" accept="image/*" multiple style="margin:4px 0 12px;font-size:0.85rem;"><div id="acDirExamplePreview" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px;"></div>'+
+'<label style="font-weight:600;color:#1f3a6b;">品类</label><input id="acProductCategory" type="text" placeholder="如：手机、平板、手表" style="width:100%;padding:8px 12px;border:1px solid #d1d5db;border-radius:10px;margin:4px 0 12px;font-size:0.9rem;">'+
 '<div style="display:flex;gap:8px;margin-top:12px;"><button id="acSave" class="primary" style="flex:1;background:#2563eb;border-radius:20px;padding:10px;font-weight:600;">💾 保存</button><button id="acCancel" style="flex:1;background:#f1f5f9;border:1px solid #cbd5e1;border-radius:20px;padding:10px;">取消</button></div>'+
 '</div></div>';
 document.body.appendChild(ov);
@@ -8185,9 +8313,11 @@ ov.onclick=function(e){if(e.target===ov)ov.remove();};
 // 照片预览
 var ipInput=ov.querySelector('#acIssuePhotos');
 var dpInput=ov.querySelector('#acDirPhotos');
+var depInput=ov.querySelector('#acDirExamplePhotos');
 var ipPreview=ov.querySelector('#acIssuePreview');
 var dpPreview=ov.querySelector('#acDirPreview');
-var ipFiles=[],dpFiles=[];
+var depPreview=ov.querySelector('#acDirExamplePreview');
+var ipFiles=[],dpFiles=[],depFiles=[];
 function previewFiles(input,previewEl,filesArr){
 input.onchange=function(){
 Array.from(this.files).forEach(function(f){
@@ -8206,24 +8336,27 @@ this.value='';
 }
 previewFiles(ipInput,ipPreview,ipFiles);
 previewFiles(dpInput,dpPreview,dpFiles);
+previewFiles(depInput,depPreview,depFiles);
 ov.querySelector('#acSave').onclick=async function(){
 var qc=document.getElementById('acQcCode').value.trim();
 var cat2=document.getElementById('acCategory').value;
 var desc=document.getElementById('acDesc').value.trim();
 var dir=document.getElementById('acDir').value.trim();
+var pc2 = document.getElementById('acProductCategory') ? document.getElementById('acProductCategory').value.trim() : '';
 if(!qc){alert('请输入质检码');return;}
 if(!cat2){alert('请选择失误类别');return;}
 var ips=await Promise.all(ipFiles.map(function(f){return new Promise(function(r){var rd=new FileReader();rd.onload=async function(e){r(await compressImageBase64(e.target.result))};rd.readAsDataURL(f)});}));
 var dps=await Promise.all(dpFiles.map(function(f){return new Promise(function(r){var rd=new FileReader();rd.onload=async function(e){r(await compressImageBase64(e.target.result))};rd.readAsDataURL(f)});}));
+var deps=await Promise.all(depFiles.map(function(f){return new Promise(function(r){var rd=new FileReader();rd.onload=async function(e){r(await compressImageBase64(e.target.result))};rd.readAsDataURL(f)});}));
 var cases=getManualCasesFull();
 var editIdx=window._editCaseIdx;
 if(editIdx!==undefined&&editIdx>=0&&cases[editIdx]){
 // 编辑模式：更新已有案例，保留旧照片（如果没有新上传）
 var old=cases[editIdx];
-cases[editIdx]={qcCode:qc,errorCategory:cat2,issueDesc:desc,issuePhotos:ips.length>0?ips:old.issuePhotos,correctDir:dir,dirPhotos:dps.length>0?dps:old.dirPhotos,createTime:old.createTime};
+cases[editIdx]={qcCode:qc,errorCategory:cat2,issueDesc:desc,issuePhotos:ips.length>0?ips:old.issuePhotos,correctDir:dir,dirPhotos:dps.length>0?dps:old.dirPhotos,dirExamplePhotos:deps.length>0?deps:old.dirExamplePhotos,productCategory:pc2||old.productCategory,createTime:old.createTime};
 delete window._editCaseIdx;
 }else{
-cases.unshift({qcCode:qc,errorCategory:cat2,issueDesc:desc,issuePhotos:ips,correctDir:dir,dirPhotos:dps,createTime:Date.now()});
+cases.unshift({qcCode:qc,errorCategory:cat2,issueDesc:desc,issuePhotos:ips,correctDir:dir,dirPhotos:dps,dirExamplePhotos:deps,productCategory:pc2,createTime:Date.now()});
 }
 saveManualCases(cases);
 ov.remove();
@@ -8264,6 +8397,7 @@ var qc=document.getElementById('acQcCode');if(qc)qc.value=c.qcCode||'';
 var cat=document.getElementById('acCategory');if(cat)cat.value=c.errorCategory||'';
 var desc=document.getElementById('acDesc');if(desc)desc.value=c.issueDesc||'';
 var dir=document.getElementById('acDir');if(dir)dir.value=c.correctDir||'';
+var pc=document.getElementById('acProductCategory');if(pc)pc.value=c.productCategory||'';
 // 标记为编辑模式
 window._editCaseIdx=idx;
 var saveBtn=document.getElementById('acSave');
@@ -8429,6 +8563,9 @@ selected.forEach(c => {
         <div class="correct">${escapeHtml(c.correctDir)}</div>`;
     if (c.dirPhotos && c.dirPhotos.length > 0) {
         docHtml += '<div class="label">📷 方向示例照片</div>' + c.dirPhotos.map(function(p) { return photoTag(p, 300, 300); }).join('');
+    if (c.dirExamplePhotos && c.dirExamplePhotos.length > 0) {
+        docHtml += '<div class="label">📸 方向示例补充照片</div>' + c.dirExamplePhotos.map(function(p) { return photoTag(p, 300, 300); }).join('');
+    }
     }
     docHtml += `</div>`;
 });
@@ -8608,36 +8745,42 @@ URL.revokeObjectURL(url);
         
         // 统计各阶段数据
         const totalStudents = students.length;
-        let stage1Passed = 0, stage2Passed = 0, stage3Passed = 0, stage4Passed = 0, stage5Passed = 0;
+        let stage1Count=0,stage2Count=0,stage3Count=0,stage4Count=0,stage5Count=0;
+        let theoryPassed=0,onlinePassed=0,practicalPassed=0,fullCheckPassed=0,mockPassed=0;
         let totalProgress = 0;
         let activities = [];
-        
+
+        const activityKeys = new Set();
         students.forEach(s => {
             const progress = s.getOverallProgress();
             totalProgress += progress;
-            if (STAGES_DETAIL[0].checkCompletion(s)) stage1Passed++;
-            if (STAGES_DETAIL[1].checkCompletion(s)) stage2Passed++;
-            if (STAGES_DETAIL[2].checkCompletion(s)) stage3Passed++;
-            if (STAGES_DETAIL[3].checkCompletion(s)) stage4Passed++;
-            if (s.stageProgress.graduatedFormal) stage5Passed++;
+            if(s.stage===0)stage1Count++;if(s.stage===1)stage2Count++;if(s.stage===2)stage3Count++;if(s.stage===3)stage4Count++;if(s.stage===4&&!s.graduatedToArchive)stage5Count++;
+            if(s.stageProgress.theoryPassed)theoryPassed++;if(s.stageProgress.onlinePassed)onlinePassed++;if(s.stageProgress.practicalPassed)practicalPassed++;
+            if(s.stageProgress.fullCheckPassed)fullCheckPassed++;if(s.stageProgress.mockPassed)mockPassed++;
             
-            // 最近活动记录
-            if (s.stageProgress.theoryPassed && !activities.find(a => a.name === s.name && a.type === 'theory')) {
+            // 最近活动记录（使用 Set 做 O(1) 去重，替代 O(n) 的 activities.find）
+            if (s.stageProgress.theoryPassed && !activityKeys.has(s.name + '|theory')) {
+                activityKeys.add(s.name + '|theory');
                 activities.push({ name: s.name, type: 'theory', text: '完成理论学习', time: s.stageProgress.theoryDate || s.joinDate });
             }
-            if (s.stageProgress.onlinePassed && !activities.find(a => a.name === s.name && a.type === 'online')) {
+            if (s.stageProgress.onlinePassed && !activityKeys.has(s.name + '|online')) {
+                activityKeys.add(s.name + '|online');
                 activities.push({ name: s.name, type: 'online', text: '通过线上考试', time: s.stageProgress.onlineDate || s.joinDate });
             }
-            if (s.stageProgress.practicalPassed && !activities.find(a => a.name === s.name && a.type === 'practical')) {
+            if (s.stageProgress.practicalPassed && !activityKeys.has(s.name + '|practical')) {
+                activityKeys.add(s.name + '|practical');
                 activities.push({ name: s.name, type: 'practical', text: '通过实操考试', time: s.stageProgress.practicalDate || s.joinDate });
             }
-            if (s.stageProgress.fullCheckPassed && !activities.find(a => a.name === s.name && a.type === 'fullCheck')) {
+            if (s.stageProgress.fullCheckPassed && !activityKeys.has(s.name + '|fullCheck')) {
+                activityKeys.add(s.name + '|fullCheck');
                 activities.push({ name: s.name, type: 'fullCheck', text: '通过实操全检', time: s.stageProgress.fullCheckDate || s.joinDate });
             }
-            if (s.stageProgress.mockPassed && !activities.find(a => a.name === s.name && a.type === 'mock')) {
+            if (s.stageProgress.mockPassed && !activityKeys.has(s.name + '|mock')) {
+                activityKeys.add(s.name + '|mock');
                 activities.push({ name: s.name, type: 'mock', text: '通过模拟判责', time: s.stageProgress.mockDate || s.joinDate });
             }
-            if (s.stageProgress.graduatedFormal && !activities.find(a => a.name === s.name && a.type === 'graduated')) {
+            if (s.stageProgress.graduatedFormal && !activityKeys.has(s.name + '|graduated')) {
+                activityKeys.add(s.name + '|graduated');
                 activities.push({ name: s.name, type: 'graduated', text: '完成全部培训', time: s.stageProgress.graduatedDate || s.joinDate });
             }
         });
@@ -8659,9 +8802,9 @@ URL.revokeObjectURL(url);
             <div class="stat-card" onclick="showDashboardDetail('theory', '理论通过学员', students.filter(s => STAGES_DETAIL[0].checkCompletion(s)))" style="cursor:pointer;">
                 <div class="stat-card-header">
                     <div class="stat-card-icon" style="background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%);">📚</div>
-                    <span class="stat-card-trend up">↑ ${totalStudents > 0 ? Math.round(stage1Passed / totalStudents * 100) : 0}%</span>
+                    <span class="stat-card-trend up">↑ ${totalStudents > 0 ? Math.round(stage1Count / totalStudents * 100) : 0}%</span>
                 </div>
-                <div class="stat-card-value" style="color:${getDashboardProgressColor(totalStudents > 0 ? stage1Passed / totalStudents * 100 : 0)}">${Math.round(totalStudents > 0 ? stage1Passed / totalStudents * 100 : 0)}%</div>
+                <div class="stat-card-value" style="color:${getDashboardProgressColor(totalStudents > 0 ? stage1Count / totalStudents * 100 : 0)}">${Math.round(totalStudents > 0 ? stage1Count / totalStudents * 100 : 0)}%</div>
                 <div class="stat-card-label">理论通过率</div>
             </div>
             <div class="stat-card" onclick="showDashboardDetail('progress', '各阶段学员分布', null, true)" style="cursor:pointer;">
@@ -8677,7 +8820,7 @@ URL.revokeObjectURL(url);
                     <div class="stat-card-icon" style="background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);">🏆</div>
                     <span class="stat-card-trend up">+3</span>
                 </div>
-                <div class="stat-card-value">${stage5Passed}</div>
+                <div class="stat-card-value">${stage5Count}</div>
                 <div class="stat-card-label">已完成培训</div>
             </div>
         `;
@@ -8738,46 +8881,46 @@ URL.revokeObjectURL(url);
                     <div style="margin-top:16px;">
                         <div style="display:flex;justify-content:space-between;margin-bottom:8px;">
                             <span style="color:#5e6f8d;">阶段一：理论学习</span>
-                            <span style="font-weight:600;color:#1f3a6b;">${stage1Passed}/${totalStudents}人</span>
+                            <span style="font-weight:600;color:#1f3a6b;">${stage1Count}/${totalStudents}人</span>
                         </div>
                         <div style="background:#eef2f6;border-radius:8px;height:12px;overflow:hidden;">
-                            <div style="background:${getDashboardProgressColor(totalStudents > 0 ? stage1Passed / totalStudents * 100 : 0)};height:100%;width:${totalStudents > 0 ? stage1Passed / totalStudents * 100 : 0}%;border-radius:8px;"></div>
+                            <div style="background:${getDashboardProgressColor(totalStudents > 0 ? stage1Count / totalStudents * 100 : 0)};height:100%;width:${totalStudents > 0 ? stage1Count / totalStudents * 100 : 0}%;border-radius:8px;"></div>
                         </div>
                     </div>
                     <div style="margin-top:16px;">
                         <div style="display:flex;justify-content:space-between;margin-bottom:8px;">
                             <span style="color:#5e6f8d;">阶段二：师傅带教</span>
-                            <span style="font-weight:600;color:#1f3a6b;">${stage2Passed}/${totalStudents}人</span>
+                            <span style="font-weight:600;color:#1f3a6b;">${stage2Count}/${totalStudents}人</span>
                         </div>
                         <div style="background:#eef2f6;border-radius:8px;height:12px;overflow:hidden;">
-                            <div style="background:${getDashboardProgressColor(totalStudents > 0 ? stage2Passed / totalStudents * 100 : 0)};height:100%;width:${totalStudents > 0 ? stage2Passed / totalStudents * 100 : 0}%;border-radius:8px;"></div>
+                            <div style="background:${getDashboardProgressColor(totalStudents > 0 ? stage2Count / totalStudents * 100 : 0)};height:100%;width:${totalStudents > 0 ? stage2Count / totalStudents * 100 : 0}%;border-radius:8px;"></div>
                         </div>
                     </div>
                     <div style="margin-top:16px;">
                         <div style="display:flex;justify-content:space-between;margin-bottom:8px;">
                             <span style="color:#5e6f8d;">阶段三：实操全检</span>
-                            <span style="font-weight:600;color:#1f3a6b;">${stage3Passed}/${totalStudents}人</span>
+                            <span style="font-weight:600;color:#1f3a6b;">${stage3Count}/${totalStudents}人</span>
                         </div>
                         <div style="background:#eef2f6;border-radius:8px;height:12px;overflow:hidden;">
-                            <div style="background:${getDashboardProgressColor(totalStudents > 0 ? stage3Passed / totalStudents * 100 : 0)};height:100%;width:${totalStudents > 0 ? stage3Passed / totalStudents * 100 : 0}%;border-radius:8px;"></div>
+                            <div style="background:${getDashboardProgressColor(totalStudents > 0 ? stage3Count / totalStudents * 100 : 0)};height:100%;width:${totalStudents > 0 ? stage3Count / totalStudents * 100 : 0}%;border-radius:8px;"></div>
                         </div>
                     </div>
                     <div style="margin-top:16px;">
                         <div style="display:flex;justify-content:space-between;margin-bottom:8px;">
                             <span style="color:#5e6f8d;">阶段四：模拟判责</span>
-                            <span style="font-weight:600;color:#1f3a6b;">${stage4Passed}/${totalStudents}人</span>
+                            <span style="font-weight:600;color:#1f3a6b;">${stage4Count}/${totalStudents}人</span>
                         </div>
                         <div style="background:#eef2f6;border-radius:8px;height:12px;overflow:hidden;">
-                            <div style="background:${getDashboardProgressColor(totalStudents > 0 ? stage4Passed / totalStudents * 100 : 0)};height:100%;width:${totalStudents > 0 ? stage4Passed / totalStudents * 100 : 0}%;border-radius:8px;"></div>
+                            <div style="background:${getDashboardProgressColor(totalStudents > 0 ? stage4Count / totalStudents * 100 : 0)};height:100%;width:${totalStudents > 0 ? stage4Count / totalStudents * 100 : 0}%;border-radius:8px;"></div>
                         </div>
                     </div>
                     <div style="margin-top:16px;">
                         <div style="display:flex;justify-content:space-between;margin-bottom:8px;">
                             <span style="color:#5e6f8d;">完成培训</span>
-                            <span style="font-weight:600;color:#1f3a6b;">${stage5Passed}/${totalStudents}人</span>
+                            <span style="font-weight:600;color:#1f3a6b;">${stage5Count}/${totalStudents}人</span>
                         </div>
                         <div style="background:#eef2f6;border-radius:8px;height:12px;overflow:hidden;">
-                            <div style="background:${getDashboardProgressColor(totalStudents > 0 ? stage5Passed / totalStudents * 100 : 0)};height:100%;width:${totalStudents > 0 ? stage5Passed / totalStudents * 100 : 0}%;border-radius:8px;"></div>
+                            <div style="background:${getDashboardProgressColor(totalStudents > 0 ? stage5Count / totalStudents * 100 : 0)};height:100%;width:${totalStudents > 0 ? stage5Count / totalStudents * 100 : 0}%;border-radius:8px;"></div>
                         </div>
                     </div>
                 </div>
@@ -9213,7 +9356,7 @@ URL.revokeObjectURL(url);
         }
     }
     
-    loadData();
+    document.addEventListener('DOMContentLoaded', loadData);
     // ==================== 题库模块 ====================
     const QB_STORAGE_KEY = 'questionBankData';
     function getQuestionBank() {
@@ -12738,8 +12881,156 @@ URL.revokeObjectURL(url);
             { id: '4054dd', name: '初审失误登记', source: '初审', colDate: 0, colSite: 1, colQcCode: 3, colCategory: 6, colReviewer: 8, colNote: 9, colProduct: 5 },
             { id: 'mEiT35', name: '抽检失误登记', source: '抽检', colDate: 0, colSite: 1, colQcCode: 3, colCategory: 10, colReviewer: 6, colNote: 11, colProduct: 5 },
             { id: 'LIfICo', name: 'QA失误登记', source: 'QA', colDate: 0, colSite: 1, colQcCode: 2, colCategory: 4, colReviewer: 5, colNote: 6, colProduct: 3 }
+        ],
+        samplingSheets: [
+            { id: 'HC6Mm6', name: '抽检数据源【线上】', type: 'online', token: 'D6FewOnrhiyLX7kuNFEcdHSZntx' },
+            { id: 'HIkyyf', name: '抽检数据源【实物】', type: 'physical', token: 'D6FewOnrhiyLX7kuNFEcdHSZntx' }
         ]
     };
+    // 每周一自动刷新抽检数据
+    async function refreshSamplingFromFeishu() {
+        try {
+            var token = getErrorDashboardToken();
+            if (!token) token = await feishuRefreshToken();
+            if (!token) token = await getCloudToken();
+            if (!token) token = await getFeishuToken();
+            if (!token) return;
+            var table = document.getElementById('samplingCard1Table');
+            if (!table) return;
+            // 获取本周一到周日的日期
+            var range2 = window._samplingDateRange;
+            var mon = range2 && range2.startDate ? new Date(range2.startDate) : (function(){var n=new Date();var dw=n.getDay();dw=dw===0?7:dw;var m=new Date(n);m.setDate(n.getDate()-dw+1);return m;})();
+            var dates = []; for (var i = 0; i < 7; i++) { var d = new Date(mon); d.setDate(mon.getDate()+i); dates.push(d); }
+            // 更新表头日期
+            var hdrRow = table.querySelectorAll('tr')[0];
+            var hdrCells = hdrRow.querySelectorAll('th input');
+            for (var i = 0; i < Math.min(7, hdrCells.length); i++) {
+                var di = i + (hdrCells.length >= 8 ? 1 : 0); // skip first th if colspan
+                hdrCells[i].value = dates[i].getFullYear()+'/'+String(dates[i].getMonth()+1).padStart(2,'0')+'/'+String(dates[i].getDate()).padStart(2,'0');
+            }
+            // 拉取线上和实物数据，按日期+站点计数（row[0]=日期, row[1]=站点）
+            var selSites = (window._selectedSites && window._selectedSites.length > 0 && window._selectedSites.length < 3) ? window._selectedSites : ['成都','青岛','深圳'];
+            var onlineCounts = {}, physicalCounts = {};
+            for (var si = 0; si < FEISHU_CONFIG.samplingSheets.length; si++) {
+                var sh = FEISHU_CONFIG.samplingSheets[si];
+                try {
+                    var st = sh.token || FEISHU_CONFIG.spreadsheetToken;
+                    var rows = await fetchFeishuSheetWithToken(st, sh.id, token);
+
+                    for (var ri = 1; ri < rows.length; ri++) {
+                        var row = rows[ri]; if (!row || !row[0]) continue;
+                        var rawDate = row[0]; var site = String(row[1]||'').trim();
+                        var dateStr = rawDate;
+                        if (typeof rawDate === 'number') { var d = new Date((rawDate - 25569) * 86400 * 1000); dateStr = d.getFullYear() + '/' + String(d.getMonth()+1).padStart(2,'0') + '/' + String(d.getDate()).padStart(2,'0'); }
+                        else { dateStr = String(rawDate).trim(); }
+                        if (selSites.indexOf(site) < 0) continue;
+                        var key = dateStr + '|' + site;
+                        if (sh.type === 'online') onlineCounts[key] = (onlineCounts[key]||0) + 1;
+                        else physicalCounts[key] = (physicalCounts[key]||0) + 1;
+                    }
+
+                } catch(e) { console.error('Sampling fetch error:', e); }
+            }
+
+            // 填充线上行(row1)和实物行(row2)
+            var allRows = table.querySelectorAll('tr');
+            if (allRows.length >= 5) {
+                var onlineRow = allRows[1], physicalRow = allRows[2];
+                var oCells = onlineRow.querySelectorAll('td input'), pCells = physicalRow.querySelectorAll('td input');
+                for (var i = 0; i < 7 && i < oCells.length && i < pCells.length; i++) {
+                    var ds = dates[i].getFullYear()+'/'+String(dates[i].getMonth()+1).padStart(2,'0')+'/'+String(dates[i].getDate()).padStart(2,'0');
+                    var ov = 0, pv = 0;
+                    selSites.forEach(function(s){ var k=ds+'|'+s; ov+=onlineCounts[k]||0; pv+=physicalCounts[k]||0; });
+                    oCells[i].value = ov; pCells[i].value = pv;
+                }
+            }
+            // 从飞书"抽检失误登记"sheet拉取抽检失误数（日期+站点+质检码，每行质检码计1个）
+            var errCounts = {};
+            try {
+                var errRows = await fetchFeishuSheet('mEiT35', token);
+                for (var ri = 1; ri < errRows.length; ri++) {
+                    var erow = errRows[ri]; if (!erow || !erow[0]) continue;
+                    var rawDate = erow[0]; var site2 = String(erow[1]||'').trim();
+                    var dateStr2 = rawDate;
+                    if (typeof rawDate === 'number') { var d2 = new Date((rawDate - 25569) * 86400 * 1000); dateStr2 = d2.getFullYear() + '/' + (d2.getMonth()+1) + '/' + d2.getDate(); }
+                    else { dateStr2 = String(rawDate).trim(); }
+                    if (selSites.indexOf(site2) < 0) continue;
+                    var key = dateStr2 + '|' + site2;
+                    errCounts[key] = (errCounts[key]||0) + 1;
+                }
+            } catch(e) {}
+            for (var j = 0; j < 7 && allRows.length > 4; j++) {
+                var errRow = allRows[4]; if (!errRow) continue;
+                var errCells = errRow.querySelectorAll('td input');
+                if (j+1 < errCells.length) {
+                    var ds3 = dates[j].getFullYear()+'/'+(dates[j].getMonth()+1)+'/'+dates[j].getDate();
+                    var ec = 0;
+                    selSites.forEach(function(s){ ec += errCounts[ds3+'|'+s] || 0; });
+                    errCells[j+1].value = ec;
+                }
+            }
+            // 触发重算
+            // 卡2：抽检失误类型占比 — 从飞书mEiT35读取（K列=失误类别，H列=抽检类别，按质检码计数）
+            try {
+                var c2Rows = await fetchFeishuSheet('mEiT35', token);
+                var c2Online = {}, c2Physical = {};
+                for (var ri = 1; ri < c2Rows.length; ri++) {
+                    var cr = c2Rows[ri]; if (!cr || !cr[0]) continue;
+                    var rawDate = cr[0]; var dateStr3 = rawDate;
+                    if (typeof rawDate === 'number') { var d3 = new Date((rawDate - 25569) * 86400 * 1000); dateStr3 = d3.getFullYear() + '/' + (d3.getMonth()+1) + '/' + d3.getDate(); }
+                    else { dateStr3 = String(rawDate).trim(); }
+                    // 只取本周一~周日的数据
+                    var inRange = false;
+                    for (var di = 0; di < dates.length; di++) { if (dateStr3 === dates[di].getFullYear()+'/'+(dates[di].getMonth()+1)+'/'+dates[di].getDate()) { inRange = true; break; } }
+                    if (!inRange) continue;
+                    var cat = String(cr[10]||'').trim(); // K列=失误类别
+                    var type = String(cr[7]||'').trim();   // H列=抽检类别
+                    var qc = String(cr[3]||'').trim();     // D列=质检码
+                    if (!cat || !qc) continue;
+                    if (type.indexOf('线上')>=0) { var k=cat; if(!c2Online[k])c2Online[k]={};c2Online[k][qc]=true; }
+                    else if (type.indexOf('实物')>=0) { var k2=cat; if(!c2Physical[k2])c2Physical[k2]={};c2Physical[k2][qc]=true; }
+                }
+                // 填充卡2表格
+                var c2Table = document.getElementById('samplingCard2Table');
+                if (c2Table) {
+                    var c2Rows2 = c2Table.querySelectorAll('tr');
+                    // 收集所有类别
+                    var allCats = {}; Object.keys(c2Online).forEach(function(c){allCats[c]=1;}); Object.keys(c2Physical).forEach(function(c){allCats[c]=1;});
+                    var catList = Object.keys(allCats);
+                    // 卡2：从飞书数据动态读取类别，零值隐藏，按占比降序，均分列宽
+                    var c2Table = document.getElementById('samplingCard2Table');
+                    if (c2Table) {
+                        var allCats2 = {}; Object.keys(c2Online).forEach(function(c){allCats2[c]=(allCats2[c]||0)+Object.keys(c2Online[c]).length;}); Object.keys(c2Physical).forEach(function(c){allCats2[c]=(allCats2[c]||0)+Object.keys(c2Physical[c]).length;});
+                        var catList2 = Object.keys(allCats2).filter(function(c){return allCats2[c]>0;}).sort(function(a,b){return allCats2[b]-allCats2[a];});
+                        var n = catList2.length, wp = (100/(n+1)).toFixed(2);
+                        var h2 = '<colgroup><col style=\"width:'+wp+'%\">'; for(var i=0;i<n;i++) h2 += '<col style=\"width:'+wp+'%\">'; h2 += '</colgroup>';
+                        h2 += '<tr style=\"background:#f8fafc;font-weight:700\"><td style=\"padding:6px 8px;font-size:0.78rem;text-align:center;border:1px solid #e2e8f0;\">失误类别</td>';
+                        catList2.forEach(function(c){h2+='<td style=\"padding:6px 8px;font-size:0.78rem;text-align:center;border:1px solid #e2e8f0;\">'+escapeHtml(c)+'</td>';});h2+='</tr>';
+                        h2+='<tr><td style=\"padding:6px 8px;font-size:0.78rem;text-align:center;border:1px solid #e2e8f0;\">线上抽检</td>';
+                        catList2.forEach(function(c){var ov=c2Online[c]?Object.keys(c2Online[c]).length:0;h2+='<td style=\"padding:0;border:1px solid #e2e8f0;\"><input type=\"text\" value=\"'+ov+'\" style=\"width:100%;border:none;font-size:0.78rem;text-align:center;padding:6px 8px;\" readonly></td>';});h2+='</tr>';
+                        h2+='<tr><td style=\"padding:6px 8px;font-size:0.78rem;text-align:center;border:1px solid #e2e8f0;\">实物抽检</td>';
+                        catList2.forEach(function(c){var pv=c2Physical[c]?Object.keys(c2Physical[c]).length:0;h2+='<td style=\"padding:0;border:1px solid #e2e8f0;\"><input type=\"text\" value=\"'+pv+'\" style=\"width:100%;border:none;font-size:0.78rem;text-align:center;padding:6px 8px;\" readonly></td>';});h2+='</tr>';
+                        h2+='<tr style=\"background:#fff7e5;font-weight:700\"><td style=\"padding:6px 8px;font-size:0.78rem;text-align:center;border:1px solid #e2e8f0;\">抽检失误占比</td>';
+                        catList2.forEach(function(c){h2+='<td style=\"padding:6px 8px;font-size:0.78rem;text-align:center;border:1px solid #e2e8f0;\">-</td>';});h2+='</tr>';
+                        c2Table.innerHTML = h2;
+                    }
+                }
+            } catch(e) {}
+            if (window._calcSum) { window._calcSum(); if(window._samplingRecalc) setTimeout(function(){ window._samplingRecalc(); }, 100); }
+        } catch(e) {}
+    }
+    // 周一自动刷新：检查是否为周一，如果是则延迟执行
+    (function(){
+        var now = new Date(); var dw = now.getDay(); dw = dw === 0 ? 7 : dw;
+        if (dw === 1) { setTimeout(function(){ refreshSamplingFromFeishu(); }, 3000); }
+        // 页面加载后延迟拉一次（等token就绪）
+        setTimeout(function(){ refreshSamplingFromFeishu(); }, 5000);
+        // 之后每6小时检查一次
+        setInterval(function(){
+            var now2 = new Date(); var dw2 = now2.getDay(); dw2 = dw2 === 0 ? 7 : dw2;
+            if (dw2 === 1) { refreshSamplingFromFeishu(); }
+        }, 21600000);
+    })();
 
     let errorDashboardData = [];
     let errorDashboardRefreshing = false;
@@ -13037,6 +13328,13 @@ URL.revokeObjectURL(url);
         if (data.code !== 0) throw new Error(data.msg || '请求失败');
         return (data.data && data.data.valueRange && data.data.valueRange.values) || [];
     }
+    async function fetchFeishuSheetWithToken(spreadsheetToken, sheetId, token) {
+        var url = 'https://open.feishu.cn/open-apis/sheets/v2/spreadsheets/' + spreadsheetToken + '/values/' + sheetId + '?majorDimension=ROWS';
+        var resp = await feishuApiFetch(url, { headers: { 'Authorization': 'Bearer ' + token } });
+        var data = await resp.json();
+        if (data.code !== 0) throw new Error(data.msg || '请求失败');
+        return (data.data && data.data.valueRange && data.data.valueRange.values) || [];
+    }
 
     async function refreshErrorDashboardData(force, silent) {
         if (errorDashboardRefreshing) return;
@@ -13056,7 +13354,7 @@ URL.revokeObjectURL(url);
                 if (!storedToken) reason = '<p style="color:#94a3b8;font-size:0.8rem;">未检测到已保存的授权</p>';
                 else if (storedToken.expiresAt <= Date.now()) reason = '<p style="color:#e67e22;font-size:0.8rem;">授权已过期，请重新授权</p>';
                 else reason = '<p style="color:#94a3b8;font-size:0.8rem;">授权信息异常，请重新授权</p>';
-                var authUrl = 'https://open.feishu.cn/open-apis/authen/v1/authorize?app_id=' + FEISHU_CONFIG.appId + '&redirect_uri=https%3A%2F%2Fjimu-111.github.io%2Fyouxuetang%2F&scope=sheets:spreadsheet:readonly%20drive:drive:readonly%20wiki:wiki:readonly%20im:message:send';
+                var authUrl = 'https://open.feishu.cn/open-apis/authen/v1/authorize?app_id=' + FEISHU_CONFIG.appId + '&redirect_uri=https%3A%2F%2Fjimu-111.github.io%2Fyouxuetang%2F&scope=sheets:spreadsheet:readonly%20drive:drive:readonly%20wiki:wiki:readonly';
                 document.getElementById('mainContent').innerHTML =
                 '<div class="panorama-card" style="text-align:center;padding:40px;max-width:600px;margin:40px auto;">' +
                     '<div style="font-size:1.5rem;margin-bottom:8px;">🔐 需要飞书授权</div>' + reason +
@@ -13153,6 +13451,7 @@ URL.revokeObjectURL(url);
             }
             errorDashboardSheetStatus = status;
             errorDashboardLastRefresh = new Date();
+            window._errorLastRefresh = Date.now();
             errorDashboardPage = 1;
             // 全部Sheet加载失败（通常授权过期降级到了无权限的租户token）
             var prevAllFailed = errorDashboardAllFailed;
@@ -14936,6 +15235,9 @@ URL.revokeObjectURL(url);
             docHtml += "<div class=\"label\">✅ 应操作方向</div><div class=\"correct\">" + escapeHtml(c.correctDir || "") + "</div>";
             if (c.dirPhotos && c.dirPhotos.length > 0) {
                 docHtml += "<div class=\"label\">📷 方向示例照片</div>" + c.dirPhotos.map(function(p) { return photoTag(p, 400, 400); }).join("");
+            if (c.dirExamplePhotos && c.dirExamplePhotos.length > 0) {
+                docHtml += "<div class=\"label\">📸 方向示例补充照片</div>" + c.dirExamplePhotos.map(function(p) { return photoTag(p, 400, 400); }).join("");
+            }
             }
             docHtml += "</div>";
         });
@@ -15074,7 +15376,7 @@ URL.revokeObjectURL(url);
         // 表格行
         var tableRows = '';
         if (errorDashboardAllFailed) {
-            tableRows = '<tr><td colspan="8" style="padding:40px;text-align:center;"><div style="font-size:1.2rem;color:#c0392b;margin-bottom:12px;">⚠️ 飞书授权已过期</div><div style="color:#5e6f8d;font-size:0.8rem;margin-bottom:16px;">无法从飞书表格加载数据，请重新授权</div><a href="https://open.feishu.cn/open-apis/authen/v1/authorize?app_id=' + FEISHU_CONFIG.appId + '&redirect_uri=https%3A%2F%2Fjimu-111.github.io%2Fyouxuetang%2F&scope=sheets:spreadsheet:readonly%20drive:drive:readonly%20wiki:wiki:readonly%20im:message:send" style="display:inline-block;background:#1f3a6b;color:white;padding:10px 24px;border-radius:30px;text-decoration:none;font-size:0.85rem;">🔗 前往飞书授权</a></td></tr>';
+            tableRows = '<tr><td colspan="8" style="padding:40px;text-align:center;"><div style="font-size:1.2rem;color:#c0392b;margin-bottom:12px;">⚠️ 飞书授权已过期</div><div style="color:#5e6f8d;font-size:0.8rem;margin-bottom:16px;">无法从飞书表格加载数据，请重新授权</div><a href="https://open.feishu.cn/open-apis/authen/v1/authorize?app_id=' + FEISHU_CONFIG.appId + '&redirect_uri=https%3A%2F%2Fjimu-111.github.io%2Fyouxuetang%2F&scope=sheets:spreadsheet:readonly%20drive:drive:readonly%20wiki:wiki:readonly" style="display:inline-block;background:#1f3a6b;color:white;padding:10px 24px;border-radius:30px;text-decoration:none;font-size:0.85rem;">🔗 前往飞书授权</a></td></tr>';
         } else if (pageData.length === 0) {
             tableRows = '<tr><td colspan="8" style="padding:30px;color:#94a3b8;">暂无匹配的失误记录</td></tr>';
         } else {
@@ -15266,7 +15568,7 @@ URL.revokeObjectURL(url);
                     '</div>' +
                 '</div>' +
                 '<div class="sheet-status">' + statusDots + '<span style="margin-left:12px;font-size:0.75rem;color:#5e6f8d;">总失误数（' + errorDashboardData.length + '条）</span></div>' +
-                (errorDashboardAllFailed ? '<div style="background:#fff5f5;border-left:4px solid #c0392b;padding:12px 16px;border-radius:12px;margin-top:12px;"><div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;"><span style="font-size:1.2rem;">⚠️</span><span style="color:#c0392b;font-weight:600;font-size:0.85rem;">飞书授权已过期，无法从飞书表格加载最新数据</span><a href="https://open.feishu.cn/open-apis/authen/v1/authorize?app_id=' + FEISHU_CONFIG.appId + '&redirect_uri=https%3A%2F%2Fjimu-111.github.io%2Fyouxuetang%2F&scope=sheets:spreadsheet:readonly%20drive:drive:readonly%20wiki:wiki:readonly%20im:message:send" style="display:inline-block;background:#c0392b;color:white;padding:8px 20px;border-radius:30px;text-decoration:none;font-size:0.8rem;font-weight:600;white-space:nowrap;">🔗 前往飞书授权</a><span onclick="var s=document.getElementById(\'bannerQrSection\');var show=s.style.display===\'block\';s.style.display=show?\'none\':\'block\';this.textContent=show?\'📱 扫码授权\':\'收起\'" style="color:#2a5298;cursor:pointer;font-size:0.75rem;text-decoration:underline;white-space:nowrap;">📱 扫码授权</span></div><div id="bannerQrSection" style="display:none;margin-top:10px;padding-top:10px;border-top:1px dashed #f5c6cb;"><div style="display:flex;gap:16px;align-items:center;flex-wrap:wrap;justify-content:center;"><div id="bannerQrcode" style="background:white;padding:6px;border-radius:8px;border:1px solid #eef2f6;"></div><div style="flex:1;min-width:160px;"><p style="font-size:0.7rem;color:#5e6f8d;margin-bottom:6px;">📱 手机扫码授权 → token自动上传云端 → 本机自动检测</p><p id="bannerPolling" style="font-size:0.68rem;color:#2a5298;"></p><div style="margin-top:8px;"><input id="manualCodeInput2" type="text" placeholder="或粘贴授权码…" style="width:100%;padding:6px 10px;border:1px solid #cbd5e1;border-radius:8px;font-size:0.75rem;font-family:monospace;margin-bottom:4px;"><button id="manualCodeBtn2" onclick="var code=document.getElementById(\'manualCodeInput2\').value;var btn=this;btn.disabled=true;btn.textContent=\'⏳\';exchangeCodeForToken(code).then(function(r){if(r.success){clearInterval(window._bannerQrPoll);errorDashboardData=[];errorDashboardSheetStatus={};errorDashboardAllFailed=false;localStorage.removeItem(\'errorDashboardCache\');refreshErrorDashboardData(true,false);}else{btn.disabled=false;btn.textContent=\'🔓\';alert(\'❌ \'+r.error);}}).catch(function(e){btn.disabled=false;btn.textContent=\'🔓\';alert(\'❌ \'+e.message);});" style="width:100%;padding:6px;background:#2a5298;color:white;border:none;border-radius:8px;cursor:pointer;font-size:0.75rem;font-weight:600;">🔓 激活</button></div></div></div></div></div>' +
+                (errorDashboardAllFailed ? '<div style="background:#fff5f5;border-left:4px solid #c0392b;padding:12px 16px;border-radius:12px;margin-top:12px;"><div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;"><span style="font-size:1.2rem;">⚠️</span><span style="color:#c0392b;font-weight:600;font-size:0.85rem;">飞书授权已过期，无法从飞书表格加载最新数据</span><a href="https://open.feishu.cn/open-apis/authen/v1/authorize?app_id=' + FEISHU_CONFIG.appId + '&redirect_uri=https%3A%2F%2Fjimu-111.github.io%2Fyouxuetang%2F&scope=sheets:spreadsheet:readonly%20drive:drive:readonly%20wiki:wiki:readonly" style="display:inline-block;background:#c0392b;color:white;padding:8px 20px;border-radius:30px;text-decoration:none;font-size:0.8rem;font-weight:600;white-space:nowrap;">🔗 前往飞书授权</a><span onclick="var s=document.getElementById(\'bannerQrSection\');var show=s.style.display===\'block\';s.style.display=show?\'none\':\'block\';this.textContent=show?\'📱 扫码授权\':\'收起\'" style="color:#2a5298;cursor:pointer;font-size:0.75rem;text-decoration:underline;white-space:nowrap;">📱 扫码授权</span></div><div id="bannerQrSection" style="display:none;margin-top:10px;padding-top:10px;border-top:1px dashed #f5c6cb;"><div style="display:flex;gap:16px;align-items:center;flex-wrap:wrap;justify-content:center;"><div id="bannerQrcode" style="background:white;padding:6px;border-radius:8px;border:1px solid #eef2f6;"></div><div style="flex:1;min-width:160px;"><p style="font-size:0.7rem;color:#5e6f8d;margin-bottom:6px;">📱 手机扫码授权 → token自动上传云端 → 本机自动检测</p><p id="bannerPolling" style="font-size:0.68rem;color:#2a5298;"></p><div style="margin-top:8px;"><input id="manualCodeInput2" type="text" placeholder="或粘贴授权码…" style="width:100%;padding:6px 10px;border:1px solid #cbd5e1;border-radius:8px;font-size:0.75rem;font-family:monospace;margin-bottom:4px;"><button id="manualCodeBtn2" onclick="var code=document.getElementById(\'manualCodeInput2\').value;var btn=this;btn.disabled=true;btn.textContent=\'⏳\';exchangeCodeForToken(code).then(function(r){if(r.success){clearInterval(window._bannerQrPoll);errorDashboardData=[];errorDashboardSheetStatus={};errorDashboardAllFailed=false;localStorage.removeItem(\'errorDashboardCache\');refreshErrorDashboardData(true,false);}else{btn.disabled=false;btn.textContent=\'🔓\';alert(\'❌ \'+r.error);}}).catch(function(e){btn.disabled=false;btn.textContent=\'🔓\';alert(\'❌ \'+e.message);});" style="width:100%;padding:6px;background:#2a5298;color:white;border:none;border-radius:8px;cursor:pointer;font-size:0.75rem;font-weight:600;">🔓 激活</button></div></div></div></div></div>' +
                 '' : '') +
                 // ② 筛选看板 + 人员画像（置顶）
                 (function() {
@@ -15427,7 +15729,7 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
                 var totalFiltered = filtered.length;
                 var tableBlock;
                 if (errorDashboardAllFailed) {
-                    tableBlock = '<div style="flex:1;overflow:auto;min-height:0;"><div class="error-table-wrapper"><table class="error-table"><thead><tr><th>日期</th><th>站点</th><th>品类</th><th>来源</th><th>失误类别</th><th>初审人</th><th>失误备注</th><th>质检码</th></tr></thead><tbody><tr><td colspan="8" style="padding:40px;text-align:center;"><div style="font-size:1.2rem;color:#c0392b;margin-bottom:12px;">⚠️ 飞书授权已过期</div><div style="color:#5e6f8d;font-size:0.8rem;margin-bottom:16px;">无法从飞书表格加载最新数据，请重新授权</div><a href="https://open.feishu.cn/open-apis/authen/v1/authorize?app_id=' + FEISHU_CONFIG.appId + '&redirect_uri=https%3A%2F%2Fjimu-111.github.io%2Fyouxuetang%2F&scope=sheets:spreadsheet:readonly%20drive:drive:readonly%20wiki:wiki:readonly%20im:message:send" style="display:inline-block;background:#1f3a6b;color:white;padding:10px 24px;border-radius:30px;text-decoration:none;font-size:0.85rem;">🔗 前往飞书授权</a></td></tr></tbody></table><div class="pagination"><span>共0条</span></div></div></div>';
+                    tableBlock = '<div style="flex:1;overflow:auto;min-height:0;"><div class="error-table-wrapper"><table class="error-table"><thead><tr><th>日期</th><th>站点</th><th>品类</th><th>来源</th><th>失误类别</th><th>初审人</th><th>失误备注</th><th>质检码</th></tr></thead><tbody><tr><td colspan="8" style="padding:40px;text-align:center;"><div style="font-size:1.2rem;color:#c0392b;margin-bottom:12px;">⚠️ 飞书授权已过期</div><div style="color:#5e6f8d;font-size:0.8rem;margin-bottom:16px;">无法从飞书表格加载最新数据，请重新授权</div><a href="https://open.feishu.cn/open-apis/authen/v1/authorize?app_id=' + FEISHU_CONFIG.appId + '&redirect_uri=https%3A%2F%2Fjimu-111.github.io%2Fyouxuetang%2F&scope=sheets:spreadsheet:readonly%20drive:drive:readonly%20wiki:wiki:readonly" style="display:inline-block;background:#1f3a6b;color:white;padding:10px 24px;border-radius:30px;text-decoration:none;font-size:0.85rem;">🔗 前往飞书授权</a></td></tr></tbody></table><div class="pagination"><span>共0条</span></div></div></div>';
                 } else if (totalFiltered === 0) {
                     tableBlock = '<div style="flex:1;overflow:auto;min-height:0;"><div class="error-table-wrapper"><table class="error-table"><thead><tr><th>日期</th><th>站点</th><th>品类</th><th>来源</th><th>失误类别</th><th>初审人</th><th>失误备注</th><th>质检码</th></tr></thead><tbody><tr><td colspan="8" style="padding:30px;color:#94a3b8;">暂无匹配的失误记录</td></tr></tbody></table><div class="pagination"><span>共0条</span></div></div></div>';
                 } else if (totalFiltered <= PG_SIZE) {
@@ -15516,7 +15818,7 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
             var qr = document.getElementById('bannerQrcode');
             if (errorDashboardAllFailed && qr && typeof QRCode !== 'undefined') {
                 qr.innerHTML = '';
-                var au = 'https://open.feishu.cn/open-apis/authen/v1/authorize?app_id=' + FEISHU_CONFIG.appId + '&redirect_uri=https%3A%2F%2Fjimu-111.github.io%2Fyouxuetang%2F&scope=sheets:spreadsheet:readonly%20drive:drive:readonly%20wiki:wiki:readonly%20im:message:send';
+                var au = 'https://open.feishu.cn/open-apis/authen/v1/authorize?app_id=' + FEISHU_CONFIG.appId + '&redirect_uri=https%3A%2F%2Fjimu-111.github.io%2Fyouxuetang%2F&scope=sheets:spreadsheet:readonly%20drive:drive:readonly%20wiki:wiki:readonly';
                 new QRCode(qr, { text: au, width: 130, height: 130, correctLevel: QRCode.CorrectLevel.L });
                 var pollEl = document.getElementById('bannerPolling');
                 var pollCount = 0;
@@ -15861,20 +16163,24 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
         showToast('✅ 报告已下载', 'success');
     }
 
-    // 每5分钟自动刷新（优先 Web Worker，降级 setInterval）
+    // 每5分钟自动刷新（Worker + setInterval 双保险，防止浏览器节流导致停止）
     (function() {
+        window._errorLastRefresh = Date.now();
         var _doRefresh = function() {
-            if (currentNav === 'errorDashboard' && !window._isLearningPlanView) refreshErrorDashboardData(true);
+            if (currentNav === 'errorDashboard' && !window._isLearningPlanView) {
+                refreshErrorDashboardData(true);
+                window._errorLastRefresh = Date.now();
+            }
         };
+        // 主通道：Web Worker
         try {
             var _refreshWorkerCode = 'setInterval(function(){postMessage("tick")},300000);';
             var _refreshBlob = new Blob([_refreshWorkerCode], {type: 'application/javascript'});
             var _refreshWorker = new Worker(URL.createObjectURL(_refreshBlob));
             _refreshWorker.onmessage = _doRefresh;
-        } catch(e) {
-            // CSP 或 file:// 限制时降级为普通 setInterval
-            setInterval(_doRefresh, 300000);
-        }
+        } catch(e) {}
+        // 副通道：setInterval 始终兜底（Worker 被浏览器挂起时仍能触发）
+        setInterval(_doRefresh, 300000);
     })();
 
 
@@ -17115,6 +17421,8 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
 
     // 恢复初审准确率数据（一次性，用户手动提供）
     (function() {
+        // 已恢复过则跳过，避免每次加载都读写 localStorage
+        if (localStorage.getItem('_accrate_restored')) return;
         try {
             const restored = {
                 'w_20260608': {'向阳':99.78,'何显健':99.92,'陈毅军':100,'胡志鹏':99.92,'樊景舜':100,'周金山':99.54,'马浩':99.91,'伏鑫':99.8,'肖健平':99.8,'罗宁':99.8,'吴辉':99.91,'任青俊':99.8,'杜攀':99.74,'麦钧淇':99.74,'杨宏':100,'赵晨鸿':99.9,'李忠林':98.8,'延依飞':97.79,'张俊':99.73,'刘超':99.35,'李晓洋':97.53},
@@ -17132,6 +17440,7 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
                 }
             }
             localStorage.setItem('reviewerAccRateData', JSON.stringify(existing));
+            localStorage.setItem('_accrate_restored', '1');
         } catch(e) {}
     })();
     // ==================== Supabase 云同步 ====================
@@ -17312,18 +17621,28 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
         });
         // 监听底部管理后台按钮
         document.querySelector('.nav-btn[data-nav="admin"]').addEventListener('click', function() { switchNav('admin'); });
-        _syncPullAll().then(function(count) {
-            if (count > 0) { try { loadData(); } catch(e) {} }
-            // 恢复学习计划数据（防止云端同步覆盖本地新数据）
-            if (initLearnPlan && _lpBackup) { localStorage.setItem('learningPlanData', _lpBackup); }
-            if (initLearnPlan) { return; } // 已通过setTimeout提前渲染，不重复渲染
+        // 🚀 立即渲染仪表盘（不等待云端同步），从 localStorage 秒开
+        (function() {
+            // 先从 localStorage 同步加载数据（毫秒级），不等 DOMContentLoaded
+            try { loadData(); } catch(e) {}
             var initExam = initParams.get('exam');
             var initReport = initParams.get('report');
             if (initExam) { startStandaloneExam(initExam); }
             else if (initReport) { openSharedReport(initReport); }
-            else if (!currentNav) { // 仅在用户未手动导航时才自动跳转
-                if (_justAuthorized) { switchNav('errorDashboard'); } // 刚授权完→跳失误看板
-                else { renderSubContent('dashboard'); } // 正常打开→仪表盘
+            else if (!currentNav) {
+                if (_justAuthorized) { switchNav('errorDashboard'); }
+                else { renderSubContent('dashboard'); }
+            }
+        })();
+        // 后台静默同步云端数据，有变化再刷新
+        _syncPullAll().then(function(count) {
+            if (count > 0) { try { loadData(); } catch(e) {} }
+            // 恢复学习计划数据（防止云端同步覆盖本地新数据）
+            if (initLearnPlan && _lpBackup) { localStorage.setItem('learningPlanData', _lpBackup); }
+            if (initLearnPlan) { return; }
+            // 云端有新数据时静默刷新当前页面
+            if (count > 0 && typeof currentNav !== 'undefined' && currentNav) {
+                try { renderSubContent(currentNav); } catch(e) {}
             }
         });
         // 打开页面立刻后台预加载（不等云端同步，让失误看板秒开）
@@ -17336,10 +17655,12 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
             });
         }, 300);
 
-        // 页面可见性变化时自动刷新失误看板数据（切回页面时静默拉取最新）
+        // 页面可见性变化时自动刷新失误看板（切回页面时检测数据是否过期）
         document.addEventListener('visibilitychange', function() {
             if (!document.hidden && currentNav === 'errorDashboard' && !window._isLearningPlanView) {
-                refreshErrorDashboardData(false, true);
+                // 距离上次刷新超过 4 分钟则强制拉取，否则静默刷新
+                var staleMs = Date.now() - (window._errorLastRefresh || 0);
+                refreshErrorDashboardData(staleMs > 240000, true);
             }
         });
     })();
@@ -17375,6 +17696,8 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
 
     // 永久删除雍彬彬的数据 + 修正旧版名字（从localStorage清理）+ 迁移旧数据到扁平按周期存储
     (function() {
+        // 迁移完成后标记，避免每次页面加载都重复执行
+        if (localStorage.getItem('_migrated_v2')) return;
         try {
             const data = JSON.parse(localStorage.getItem('samplingModule3Data') || '{}');
             let changed = false;
@@ -17416,6 +17739,8 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
                 if (oldN in mm) { mm[newN] = mm[oldN]; delete mm[oldN]; mmChanged = true; }
             }
             if (mmChanged) localStorage.setItem('samplingModule3MistakeMap', JSON.stringify(mm));
+            // 标记迁移完成，后续加载跳过此段
+            localStorage.setItem('_migrated_v2', '1');
         } catch(e) {}
     })();</script>
 <script>
@@ -17709,20 +18034,7 @@ function showHistoryMonthRanking(highlightName) {
 }
 // 模块1+2自动保存：任何input改动后存缓存
 (function(){
-    function saveCards() {
-        try {
-            var d = document.getElementById('section-sampling');
-            if (!d) return;
-            d.querySelectorAll('input').forEach(function(inp){ inp.setAttribute('value', inp.value); });
-            var html = d.innerHTML;
-            localStorage.setItem('samplingCardCache', html);
-            // 同步到云端
-            fetch(SUPABASE_URL + '/rest/v1/app_data', {
-                method: 'POST',
-                headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY, 'Content-Type': 'application/json', 'Prefer': 'resolution=merge-duplicates' },
-                body: JSON.stringify({ key: 'samplingCardCache', value: html, updated_at: new Date().toISOString() })
-            }).catch(function() {});
-        } catch(e) {}
+    function saveCards() { /* 飞书数据不自动缓存 */
     }
     setInterval(function(){
         var card1 = document.getElementById('samplingCard1');
@@ -17732,26 +18044,7 @@ function showHistoryMonthRanking(highlightName) {
             if (!inp._autoSaved) { inp._autoSaved = true; inp.addEventListener('input', saveCards); inp.addEventListener('change', saveCards); }
         });
     }, 500);
-    // 页面加载时立即从缓存恢复（本地优先，云端兜底）
-    setTimeout(function(){
-        var cached = null;
-        try { cached = localStorage.getItem('samplingCardCache'); } catch(e) {}
-        if (!cached) {
-            fetch(SUPABASE_URL + '/rest/v1/app_data?key=eq.samplingCardCache&select=value&limit=1', {
-                headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY }
-            }).then(function(r){ return r.json(); }).then(function(data){
-                if (data && data.length > 0 && data[0].value) {
-                    localStorage.setItem('samplingCardCache', data[0].value);
-                    var sec = document.getElementById('section-sampling');
-                    if (sec) { sec.innerHTML = data[0].value; setTimeout(function(){ if(window._calcSum) window._calcSum(); }, 300); }
-                }
-            }).catch(function(){});
-        }
-        if (cached) {
-            var sec = document.getElementById('section-sampling');
-            if (sec) { sec.innerHTML = cached; setTimeout(function(){ if(window._calcSum) window._calcSum(); }, 300); }
-        }
-    }, 100);
+    localStorage.removeItem("samplingCardCache"); // 飞书数据源，清空旧缓存
 })();
 window._calcModule2Pct = function() {
     // 模块2抽检失误占比 = (线上抽检+实物抽检) / 模块1的B5
@@ -17864,6 +18157,94 @@ updateAdminUI();
         });
     }, 500);
 })();
+
+
+
+    function showEditStudentModal(sid, parentOverlay) {
+        var stu = students.find(function(s) { return s.id === sid; });
+        if (!stu) { alert('学员不存在'); return; }
+        var uploadedAvatar = stu.avatar || '';
+        var editOverlay = document.createElement('div');
+        editOverlay.className = 'modal-overlay';
+        editOverlay.style.display = 'flex';
+        editOverlay.style.zIndex = '10001';
+        var avaHtml = uploadedAvatar ? '<img src="' + uploadedAvatar + '" style="width:100%;height:100%;object-fit:cover;">' : '<span style="font-size:2rem;color:#94a3b8;">📷</span>';
+        var delStyle = uploadedAvatar ? 'inline-block' : 'none';
+        var selCD = function(v) { return stu.site === v ? ' selected' : ''; };
+        var selStg = function(v) { return stu.stage === v ? ' selected' : ''; };
+        editOverlay.innerHTML = '<div class="modal-container" style="max-width:500px;">' +
+            '<div class="modal-header"><span>✏️ 编辑学员</span><button class="modal-close-btn">✕</button></div>' +
+            '<div class="modal-body">' +
+                '<div style="text-align:center;margin-bottom:14px;">' +
+                    '<div id="editStuAvatarPreview" style="width:80px;height:80px;border-radius:50%;background:#e2e8f0;margin:0 auto 8px;display:flex;align-items:center;justify-content:center;overflow:hidden;border:3px solid #27ae60;cursor:pointer;">' + avaHtml + '</div>' +
+                    '<input id="editStuAvatarInput" type="file" accept="image/*" style="display:none;">' +
+                    '<div style="font-size:0.8rem;color:#94a3b8;">点击更换头像（选填）</div>' +
+                    '<button id="editStuAvatarDelBtn" style="display:' + delStyle + ';background:#fef2f2;border:1px solid #fecaca;color:#c0392b;padding:2px 10px;border-radius:12px;font-size:0.75rem;cursor:pointer;margin-top:4px;">🗑️ 移除头像</button>' +
+                '</div>' +
+                '<div style="margin-bottom:14px;"><label style="font-weight:600;color:#1f3a6b;">姓名 *</label><input id="editStuName" type="text" value="' + escapeHtml(stu.name) + '" style="width:100%;padding:10px 14px;border:2px solid #e2e8f0;border-radius:10px;font-size:0.95rem;"></div>' +
+                '<div style="margin-bottom:14px;"><label style="font-weight:600;color:#1f3a6b;">站点 *</label><select id="editStuSite" style="width:100%;padding:10px 14px;border:2px solid #e2e8f0;border-radius:10px;font-size:0.95rem;">' +
+                    '<option value="成都"' + selCD('成都') + '>🐼 成都</option>' +
+                    '<option value="青岛"' + selCD('青岛') + '>🌊 青岛</option>' +
+                    '<option value="深圳"' + selCD('深圳') + '>📱 深圳</option>' +
+                '</select></div>' +
+                '<div style="margin-bottom:14px;"><label style="font-weight:600;color:#1f3a6b;">入职日期</label><input id="editStuJoinDate" type="date" value="' + (stu.joinDate || '') + '" style="width:100%;padding:10px 14px;border:2px solid #e2e8f0;border-radius:10px;font-size:0.95rem;"></div>' +
+                '<div style="margin-bottom:14px;"><label style="font-weight:600;color:#1f3a6b;">初始阶段</label><select id="editStuStage" style="width:100%;padding:10px 14px;border:2px solid #e2e8f0;border-radius:10px;font-size:0.95rem;">' +
+                    '<option value="0"' + selStg(0) + '>阶段1：学习地图SOP</option>' +
+                    '<option value="1"' + selStg(1) + '>阶段2：师傅带教</option>' +
+                    '<option value="2"' + selStg(2) + '>阶段3：实操全检</option>' +
+                    '<option value="3"' + selStg(3) + '>阶段4：模拟判责</option>' +
+                    '<option value="4"' + selStg(4) + '>阶段5：正式判责</option>' +
+                '</select></div>' +
+                '<div id="editStuError" style="color:#c0392b;font-size:0.85rem;margin-bottom:8px;display:none;"></div>' +
+                '<div style="text-align:right;"><button id="confirmEditStuBtn" class="primary" style="padding:10px 30px;border-radius:30px;">💾 保存修改</button></div>' +
+            '</div></div>';
+        document.body.appendChild(editOverlay);
+        editOverlay.querySelector('.modal-close-btn').onclick = function() { editOverlay.remove(); };
+        editOverlay.addEventListener('click', function(e) { if (e.target === editOverlay) editOverlay.remove(); });
+        var ap = document.getElementById('editStuAvatarPreview');
+        var ai = document.getElementById('editStuAvatarInput');
+        var ad = document.getElementById('editStuAvatarDelBtn');
+        ap.addEventListener('click', function() { ai.click(); });
+        ai.addEventListener('change', function() {
+            if (this.files && this.files[0]) {
+                compressAvatar(this.files[0], function(d) {
+                    uploadedAvatar = d;
+                    ap.innerHTML = '<img src="' + d + '" style="width:100%;height:100%;object-fit:cover;">';
+                    ap.style.borderStyle = 'solid';
+                    ap.style.borderColor = '#27ae60';
+                    ad.style.display = 'inline-block';
+                });
+            }
+        });
+        ad.addEventListener('click', function() {
+            uploadedAvatar = '';
+            ap.innerHTML = '<span style="font-size:2rem;color:#94a3b8;">📷</span>';
+            ap.style.borderStyle = 'dashed';
+            ap.style.borderColor = '#cbd5e1';
+            ad.style.display = 'none';
+            ai.value = '';
+        });
+        document.getElementById('editStuName').focus();
+        document.getElementById('confirmEditStuBtn').addEventListener('click', function() {
+            var name = document.getElementById('editStuName').value.trim();
+            var site = document.getElementById('editStuSite').value;
+            var joinDate = document.getElementById('editStuJoinDate').value;
+            var stage = parseInt(document.getElementById('editStuStage').value);
+            var errDiv = document.getElementById('editStuError');
+            if (!name) { errDiv.textContent = '请输入学员姓名'; errDiv.style.display = 'block'; return; }
+            if (!joinDate) { errDiv.textContent = '请选择入职日期'; errDiv.style.display = 'block'; return; }
+            stu.name = name;
+            stu.site = site;
+            stu.joinDate = joinDate;
+            stu.stage = stage;
+            if (uploadedAvatar) stu.avatar = uploadedAvatar;
+            saveStudents();
+            editOverlay.remove();
+            if (parentOverlay) parentOverlay.remove();
+            showFrontendAdminModal();
+            showToast('✅ ' + name + ' 信息已更新', 'success');
+        });
+    }
 </script>
 </body>
 </html>
