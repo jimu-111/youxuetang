@@ -3154,10 +3154,15 @@
     
     function getLastMonthRange() {
         const now = new Date();
-        const year = now.getFullYear();
-        const month = now.getMonth();
-        const startDate = new Date(year, month - 1, 1);
-        const endDate = new Date(year, month, 0);
+        // 月度范围：上月27号 → 本月26号
+        var startDate, endDate;
+        if (now.getDate() >= 27) {
+            startDate = new Date(now.getFullYear(), now.getMonth(), 27);
+            endDate = new Date(now.getFullYear(), now.getMonth() + 1, 26);
+        } else {
+            startDate = new Date(now.getFullYear(), now.getMonth() - 1, 27);
+            endDate = new Date(now.getFullYear(), now.getMonth(), 26);
+        }
         const formatDate = (d) => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
         return {
             start: formatDate(startDate),
@@ -3166,8 +3171,9 @@
             endDateNum: endDate.getFullYear() * 10000 + (endDate.getMonth() + 1) * 100 + endDate.getDate(),
             startDate: startDate,
             endDate: endDate,
-            monthName: `${startDate.getFullYear()}年${startDate.getMonth()+1}月`,
-            periodName: `${startDate.getFullYear()}年${startDate.getMonth()+1}月`
+            monthName: `${endDate.getFullYear()}年${endDate.getMonth()+1}月`,
+            periodName: `${endDate.getFullYear()}年${endDate.getMonth()+1}月`,
+            monthLabel: `${endDate.getMonth()+1}月（${formatDate(startDate)}~${formatDate(endDate)}）`
         };
     }
     
@@ -5887,8 +5893,23 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
                                     let cell = row[ci];
                                     let cellDisplay = '';
                                     if (cell !== null && cell !== undefined && cell !== '') {
-                                        const dateVal = fmtExcelDate(cell);
-                                        cellDisplay = dateVal || String(cell).replace(/\n/g, '<br>');
+                                        // 月度模式：表头日期转为第N周
+                                        // 日期值转周标签
+                                        var dv2 = fmtExcelDate(cell);
+                                        if (dv2) {
+                                            var parts = String(dv2).split('/');
+                                            var dn = parseInt(parts[parts.length-1]);
+                                            if (!isNaN(dn) && dn >= 1 && dn <= 31) {
+                                                cellDisplay = '第' + Math.ceil(dn / 7) + '周';
+                                            } else { cellDisplay = dv2; }
+                                        } else {
+                                            var n2 = Number(cell);
+                                            if (!isNaN(n2) && n2 >= 1 && n2 <= 31) {
+                                                cellDisplay = '第' + Math.ceil(n2 / 7) + '周';
+                                            } else {
+                                                cellDisplay = String(cell).replace(/\n/g, '<br>');
+                                            }
+                                        }
                                     }
                                     if (fmtCellFn) cellDisplay = fmtCellFn(cell, ci, isHeader, cellDisplay, firstVal, validRows[0]);
                                     const tag = isHeader ? 'th' : 'td';
@@ -5958,6 +5979,22 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
                         // Excel数据直接渲染，不使用缓存
                         if (html) {
                             tableEl.outerHTML = '<div id="samplingDataTable">' + html + '</div>';
+                            // 月度模式：表头日期转第N周
+                            if (currentAnalysisType === 'month') {
+                                setTimeout(function(){
+                                    var ths = document.querySelectorAll('#samplingCard1Table th, #samplingCard1Table td');
+                                    ths.forEach(function(el){
+                                        var t = el.textContent.trim();
+                                        var m = t.match(/^(\d{4})[\/\-](\d{1,2})[\/\-](\d{1,2})$/);
+                                        if (m) {
+                                            var day = parseInt(m[3]);
+                                            if (day >= 1 && day <= 31) {
+                                                el.textContent = '第' + Math.ceil(day / 7) + '周';
+                                            }
+                                        }
+                                    });
+                                }, 300);
+                            }
                             setTimeout(function(){ if(window._calcSum) window._calcSum(); }, 200);
                         }
                         if (noteEl) noteEl.textContent = '数据来源：工作表「' + sheetName + '」';
@@ -6130,8 +6167,7 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
                     // 月度分析：使用"月度抽检数据"工作表
                     const monthIdx = currentSheetNames.findIndex(n => n.trim() === '月度抽检数据');
                     if (monthIdx >= 0) {
-                        samplingSelect.value = String(monthIdx);
-                        samplingSelect.dispatchEvent(new Event('change'));
+                        // 飞书模式：不触发Excel重建，避免覆盖卡2
                     } else {
                         // 月度抽检数据工作表不存在，板块1/2显示提示，但模块3仍显示
                         const tableEl = document.getElementById('samplingDataTable');
@@ -6769,8 +6805,9 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
                 e.target.classList.add('active');
                 const year = parseInt(e.target.dataset.monthYear);
                 const month = parseInt(e.target.dataset.monthMonth);
-                const startDate = new Date(year, month - 1, 1);
-                const endDate = new Date(year, month, 0);
+                // 月度范围：上上月27号 → 上月26号（按钮标签对应结束月）
+                var startDate = new Date(year, month - 2, 27);
+                var endDate = new Date(year, month - 1, 26);
                 const formatDate = (d) => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
                 const monthRange = {
                     start: formatDate(startDate), end: formatDate(endDate),
@@ -13149,80 +13186,204 @@ URL.revokeObjectURL(url);
             if (!token) return;
             var table = document.getElementById('samplingCard1Table');
             if (!table) return;
-            // 获取本周一到周日的日期
+            // 飞书拉取前：数据列清0（暂停事件防止覆盖卡2）
+            if (currentAnalysisType === 'month') {
+                var skipLabels = ['日期','线上','实物','总计','抽检失误','抽检量'];
+                var allTrs = table.querySelectorAll('tr');
+                var _savedRecalc = window._samplingRecalc;
+                var _savedCalcSum = window._calcSum;
+                window._samplingRecalc = null;
+                window._calcSum = null;
+                for (var _ri = 0; _ri < allTrs.length; _ri++) {
+                    for (var _ci = 0; _ci < allTrs[_ri].cells.length; _ci++) {
+                        var _td = allTrs[_ri].cells[_ci];
+                        var _txt = (_td.textContent||'').trim();
+                        if (skipLabels.indexOf(_txt) >= 0) continue;
+                        var _inp = _td.querySelector('input');
+                        if (_inp) _inp.value = 0; else _td.textContent = '0';
+                    }
+                }
+                window._samplingRecalc = _savedRecalc;
+                window._calcSum = _savedCalcSum;
+            }
+            // 获取日期范围
             var range2 = window._samplingDateRange;
-            var mon = range2 && range2.startDate ? new Date(range2.startDate) : (function(){var n=new Date();var dw=n.getDay();dw=dw===0?7:dw;var m=new Date(n);m.setDate(n.getDate()-dw+1);return m;})();
-            var dates = []; for (var i = 0; i < 7; i++) { var d = new Date(mon); d.setDate(mon.getDate()+i); dates.push(d); }
-            // 更新表头日期
+            var isMonth = currentAnalysisType === 'month';
+            var dates = [];
+            var numCols = 7;
+            if (isMonth) {
+                // 月度：上月27→本月26，按7天一周分组（最多5周）
+                var ms = range2 && range2.startDate ? new Date(range2.startDate) : new Date();
+                var monthStart = new Date(ms.getFullYear(), ms.getMonth()-1, 27);
+                if (ms.getDate() < 27) monthStart.setMonth(monthStart.getMonth()-1);
+                if (range2 && range2.startDate) monthStart = new Date(range2.startDate);
+                // 计算月末26号
+                var monthEnd = new Date(monthStart); monthEnd.setDate(monthStart.getDate() + 30); // 27+30→26号跨月
+                // 按周生成，最后一周期截断到26号
+                for (var w = 0; w < 5; w++) {
+                    var ws = new Date(monthStart); ws.setDate(monthStart.getDate() + w * 7);
+                    if (ws >= monthEnd) break; // 超过26号不生成
+                    dates.push(ws);
+                }
+                // 最后一周的结束日期修正为26号+1天
+                if (dates.length > 0) {
+                    var lastIdx = dates.length - 1;
+                    dates[lastIdx]._endDate = new Date(monthEnd); dates[lastIdx]._endDate.setDate(dates[lastIdx]._endDate.getDate() + 1);
+                }
+                numCols = dates.length;
+            } else {
+                var mon = range2 && range2.startDate ? new Date(range2.startDate) : (function(){var n=new Date();var dw=n.getDay();dw=dw===0?7:dw;var m=new Date(n);m.setDate(n.getDate()-dw+1);return m;})();
+                for (var i = 0; i < 7; i++) { var d = new Date(mon); d.setDate(mon.getDate()+i); dates.push(d); }
+            }
+            // 更新表头 + 多出列隐藏
             var hdrRow = table.querySelectorAll('tr')[0];
             var hdrCells = hdrRow.querySelectorAll('th input');
-            for (var i = 0; i < Math.min(7, hdrCells.length); i++) {
-                var di = i + (hdrCells.length >= 8 ? 1 : 0); // skip first th if colspan
-                hdrCells[i].value = dates[i].getFullYear()+'/'+String(dates[i].getMonth()+1).padStart(2,'0')+'/'+String(dates[i].getDate()).padStart(2,'0');
+            for (var i = 0; i < hdrCells.length; i++) {
+                var th = hdrCells[i].closest('th');
+                if (isMonth) hdrCells[i].value = '第' + (i + 1) + '周';
+                else {
+                    if(th)th.style.display='';
+                    if (i < 7) {
+                        var di2 = i + (hdrCells.length >= 8 ? 1 : 0);
+                        hdrCells[i].value = dates[i].getFullYear()+'/'+String(dates[i].getMonth()+1).padStart(2,'0')+'/'+String(dates[i].getDate()).padStart(2,'0');
+                    }
+                }
             }
-            // 拉取线上和实物数据，按日期+站点计数（row[0]=日期, row[1]=站点）
+            // 拉取线上和实物数据
             var selSites = (window._selectedSites && window._selectedSites.length > 0 && window._selectedSites.length < 3) ? window._selectedSites : ['成都','青岛','深圳'];
-            var onlineCounts = {}, physicalCounts = {};
+            var onlineWeekCounts = [], physicalWeekCounts = [], errWeekCounts = [];
+            for (var wi = 0; wi < numCols; wi++) {
+                onlineWeekCounts.push(0); physicalWeekCounts.push(0); errWeekCounts.push(0);
+            }
             for (var si = 0; si < FEISHU_CONFIG.samplingSheets.length; si++) {
                 var sh = FEISHU_CONFIG.samplingSheets[si];
                 try {
                     var st = sh.token || FEISHU_CONFIG.spreadsheetToken;
                     var rows = await fetchFeishuSheetWithToken(st, sh.id, token);
-
                     for (var ri = 1; ri < rows.length; ri++) {
                         var row = rows[ri]; if (!row || !row[0]) continue;
                         var rawDate = row[0]; var site = String(row[1]||'').trim();
-                        var dateStr = rawDate;
-                        if (typeof rawDate === 'number') { var d = new Date((rawDate - 25569) * 86400 * 1000); dateStr = d.getFullYear() + '/' + String(d.getMonth()+1).padStart(2,'0') + '/' + String(d.getDate()).padStart(2,'0'); }
-                        else { dateStr = String(rawDate).trim(); }
                         if (selSites.indexOf(site) < 0) continue;
-                        var key = dateStr + '|' + site;
-                        if (sh.type === 'online') onlineCounts[key] = (onlineCounts[key]||0) + 1;
-                        else physicalCounts[key] = (physicalCounts[key]||0) + 1;
+                        var dVal = rawDate;
+                        if (typeof rawDate === 'number') dVal = new Date((rawDate - 25569) * 86400 * 1000);
+                        else dVal = new Date(String(rawDate).trim());
+                        if (isNaN(dVal.getTime())) continue;
+                        if (isMonth) {
+                            // 按周聚合：找到日期属于哪一周
+                            for (var wi2 = 0; wi2 < numCols; wi2++) {
+                                var wStart = dates[wi2];
+                                var wEnd = new Date(wStart); wEnd.setDate(wStart.getDate() + 7);
+                                if (dVal >= wStart && dVal < (wStart._endDate || wEnd)) {
+                                    if (sh.type === 'online') onlineWeekCounts[wi2]++;
+                                    else physicalWeekCounts[wi2]++;
+                                    break;
+                                }
+                            }
+                        } else {
+                            var dateStr = dVal.getFullYear() + '/' + String(dVal.getMonth()+1).padStart(2,'0') + '/' + String(dVal.getDate()).padStart(2,'0');
+                            var key = dateStr + '|' + site;
+                            if (sh.type === 'online') onlineWeekCounts[wi2] = (onlineWeekCounts[wi2]||0); // fallback
+                        }
                     }
-
                 } catch(e) { console.error('Sampling fetch error:', e); }
             }
+            // 非月度模式：按日计数
+            var onlineCounts = {}, physicalCounts = {};
+            if (!isMonth) {
+                for (var si3 = 0; si3 < FEISHU_CONFIG.samplingSheets.length; si3++) {
+                    var sh3 = FEISHU_CONFIG.samplingSheets[si3];
+                    try {
+                        var st3 = sh3.token || FEISHU_CONFIG.spreadsheetToken;
+                        var rows3 = await fetchFeishuSheetWithToken(st3, sh3.id, token);
+                        for (var ri3 = 1; ri3 < rows3.length; ri3++) {
+                            var row3 = rows3[ri3]; if (!row3 || !row3[0]) continue;
+                            var rawDate3 = row3[0]; var site3 = String(row3[1]||'').trim();
+                            var dateStr3 = rawDate3;
+                            if (typeof rawDate3 === 'number') { var d3 = new Date((rawDate3 - 25569) * 86400 * 1000); dateStr3 = d3.getFullYear() + '/' + String(d3.getMonth()+1).padStart(2,'0') + '/' + String(d3.getDate()).padStart(2,'0'); }
+                            else { dateStr3 = String(rawDate3).trim(); }
+                            if (selSites.indexOf(site3) < 0) continue;
+                            var key3 = dateStr3 + '|' + site3;
+                            if (sh3.type === 'online') onlineCounts[key3] = (onlineCounts[key3]||0) + 1;
+                            else physicalCounts[key3] = (physicalCounts[key3]||0) + 1;
+                        }
+                    } catch(e) {}
+                }
+            }
 
-            // 填充线上行(row1)和实物行(row2)
+            // 填充线上和实物行 + 多出列隐藏
             var allRows = table.querySelectorAll('tr');
             if (allRows.length >= 5) {
                 var onlineRow = allRows[1], physicalRow = allRows[2];
-                var oCells = onlineRow.querySelectorAll('td input'), pCells = physicalRow.querySelectorAll('td input');
-                for (var i = 0; i < 7 && i < oCells.length && i < pCells.length; i++) {
-                    var ds = dates[i].getFullYear()+'/'+String(dates[i].getMonth()+1).padStart(2,'0')+'/'+String(dates[i].getDate()).padStart(2,'0');
-                    var ov = 0, pv = 0;
-                    selSites.forEach(function(s){ var k=ds+'|'+s; ov+=onlineCounts[k]||0; pv+=physicalCounts[k]||0; });
-                    oCells[i].value = ov; pCells[i].value = pv;
+                var oCells = onlineRow.querySelectorAll('td input');
+                var pCells = physicalRow.querySelectorAll('td input');
+                if (oCells.length === 0) oCells = onlineRow.querySelectorAll('td');
+                if (pCells.length === 0) pCells = physicalRow.querySelectorAll('td');
+                for (var i = 0; i < oCells.length; i++) {
+                    if (isMonth) {
+                        if (i < numCols) {
+                            if (oCells[i].tagName === 'INPUT') oCells[i].value = onlineWeekCounts[i];
+                            else oCells[i].textContent = onlineWeekCounts[i];
+                            if (pCells[i].tagName === 'INPUT') pCells[i].value = physicalWeekCounts[i];
+                            else pCells[i].textContent = physicalWeekCounts[i];
+                        } else {
+                            oCells[i].value = '0'; pCells[i].value = '0';
+                        }
+                    } else {
+                        if (i < 7) {
+                            var ds = dates[i].getFullYear()+'/'+String(dates[i].getMonth()+1).padStart(2,'0')+'/'+String(dates[i].getDate()).padStart(2,'0');
+                            var ov = 0, pv = 0;
+                            selSites.forEach(function(s){ var k=ds+'|'+s; ov+=onlineCounts[k]||0; pv+=physicalCounts[k]||0; });
+                            oCells[i].value = ov; pCells[i].value = pv;
+                        }
+                    }
                 }
             }
-            // 从飞书"抽检失误登记"sheet拉取抽检失误数（日期+站点+质检码，每行质检码计1个）
+            // 抽检失误
             var errCounts = {};
             try {
                 var errRows = await fetchFeishuSheet('mEiT35', token);
                 for (var ri = 1; ri < errRows.length; ri++) {
                     var erow = errRows[ri]; if (!erow || !erow[0]) continue;
                     var rawDate = erow[0]; var site2 = String(erow[1]||'').trim();
-                    var dateStr2 = rawDate;
-                    if (typeof rawDate === 'number') { var d2 = new Date((rawDate - 25569) * 86400 * 1000); dateStr2 = d2.getFullYear() + '/' + (d2.getMonth()+1) + '/' + d2.getDate(); }
-                    else { dateStr2 = String(rawDate).trim(); }
                     if (selSites.indexOf(site2) < 0) continue;
-                    var key = dateStr2 + '|' + site2;
-                    errCounts[key] = (errCounts[key]||0) + 1;
+                    var dVal2 = rawDate;
+                    if (typeof rawDate === 'number') dVal2 = new Date((rawDate - 25569) * 86400 * 1000);
+                    else dVal2 = new Date(String(rawDate).trim());
+                    if (isNaN(dVal2.getTime())) continue;
+                    if (isMonth) {
+                        for (var wi4 = 0; wi4 < numCols; wi4++) {
+                            var wStart2 = dates[wi4];
+                            var wEnd2 = new Date(wStart2); wEnd2.setDate(wStart2.getDate() + 7);
+                            if (dVal2 >= wStart2 && dVal2 < (wStart2._endDate || wEnd2)) { errWeekCounts[wi4]++; break; }
+                        }
+                    } else {
+                        var dateStr2 = dVal2.getFullYear() + '/' + (dVal2.getMonth()+1) + '/' + dVal2.getDate();
+                        var key2 = dateStr2 + '|' + site2;
+                        errCounts[key2] = (errCounts[key2]||0) + 1;
+                    }
                 }
             } catch(e) {}
-            for (var j = 0; j < 7 && allRows.length > 4; j++) {
+            for (var j = 0; j < numCols && allRows.length > 4; j++) {
                 var errRow = allRows[4]; if (!errRow) continue;
                 var errCells = errRow.querySelectorAll('td input');
+                if (errCells.length === 0) errCells = errRow.querySelectorAll('td');
                 if (j+1 < errCells.length) {
-                    var ds3 = dates[j].getFullYear()+'/'+(dates[j].getMonth()+1)+'/'+dates[j].getDate();
-                    var ec = 0;
-                    selSites.forEach(function(s){ ec += errCounts[ds3+'|'+s] || 0; });
-                    errCells[j+1].value = ec;
+                    if (isMonth) {
+                        var ecv = errWeekCounts[j] || 0;
+                        var target = errCells[j+1];
+                        if (target.tagName === 'INPUT') target.value = ecv;
+                        else target.textContent = ecv;
+                    } else {
+                        var ds3 = dates[j].getFullYear()+'/'+(dates[j].getMonth()+1)+'/'+dates[j].getDate();
+                        var ec = 0;
+                        selSites.forEach(function(s){ ec += errCounts[ds3+'|'+s] || 0; });
+                        errCells[j+1].value = ec;
+                    }
                 }
             }
             // 触发重算
-            // 卡2：抽检失误类型占比 — 从飞书mEiT35读取（K列=失误类别，H列=抽检类别，按质检码计数）
+            // 卡2：当前是月度但被周度调用则跳过
+            if (!isMonth && currentAnalysisType === 'month') return;
             try {
                 var c2Rows = await fetchFeishuSheet('mEiT35', token);
                 var c2Online = {}, c2Physical = {};
@@ -13231,10 +13392,26 @@ URL.revokeObjectURL(url);
                     var rawDate = cr[0]; var dateStr3 = rawDate;
                     if (typeof rawDate === 'number') { var d3 = new Date((rawDate - 25569) * 86400 * 1000); dateStr3 = d3.getFullYear() + '/' + (d3.getMonth()+1) + '/' + d3.getDate(); }
                     else { dateStr3 = String(rawDate).trim(); }
-                    // 只取本周一~周日的数据
+                    // 日期范围匹配
                     var inRange = false;
-                    for (var di = 0; di < dates.length; di++) { if (dateStr3 === dates[di].getFullYear()+'/'+(dates[di].getMonth()+1)+'/'+dates[di].getDate()) { inRange = true; break; } }
+                    if (isMonth) {
+                        var dC2 = typeof rawDate === 'number' ? new Date((rawDate - 25569) * 86400 * 1000) : new Date(String(rawDate).trim());
+                        if (!isNaN(dC2.getTime())) {
+                            for (var di = 0; di < dates.length; di++) {
+                                var wS = dates[di];
+                                var wE = new Date(wS); wE.setDate(wS.getDate() + 7);
+                                if (dC2 >= wS && dC2 < (wS._endDate || wE)) { inRange = true; break; }
+                            }
+                        }
+                    } else {
+                        for (var di = 0; di < dates.length; di++) {
+                            var ds3 = dates[di].getFullYear()+'/'+(dates[di].getMonth()+1)+'/'+dates[di].getDate();
+                            if (dateStr3 === ds3) { inRange = true; break; }
+                        }
+                    }
                     if (!inRange) continue;
+                    var siteC2 = String(cr[1]||'').trim();
+                    if (selSites.indexOf(siteC2) < 0) continue;
                     var cat = String(cr[10]||'').trim(); // K列=失误类别
                     var type = String(cr[7]||'').trim();   // H列=抽检类别
                     var qc = String(cr[3]||'').trim();     // D列=质检码
@@ -13265,6 +13442,13 @@ URL.revokeObjectURL(url);
                         h2+='<tr style=\"background:#fff7e5;font-weight:700\"><td style=\"padding:6px 8px;font-size:0.78rem;text-align:center;border:1px solid #e2e8f0;\">抽检失误占比</td>';
                         catList2.forEach(function(c){h2+='<td style=\"padding:6px 8px;font-size:0.78rem;text-align:center;border:1px solid #e2e8f0;\">-</td>';});h2+='</tr>';
                         c2Table.innerHTML = h2;
+                        window._c2Backup = h2;
+                        window._c2IsMonth = true;
+                        clearTimeout(window._c2Timer);
+                        window._c2Timer = setTimeout(function(){
+                            var ct = document.getElementById('samplingCard2Table');
+                            if (ct && window._c2Backup) { ct.innerHTML = window._c2Backup; if(window._calcModule2Pct) window._calcModule2Pct(); }
+                        }, 3000);
                     }
                 }
             } catch(e) {}
@@ -18476,7 +18660,8 @@ window._calcSum = function() {
     if (sm) {
         var rx = sum3 > 0 ? Math.round(sum3/dayCount) : 0;
         if (sm.dataset.auto === '1') {
-            sm.innerHTML = '（1）抽检天数：'+dayCount+'天<br>（2）抽检总量：'+sum3+'台【实物:'+sum2+'台 &ensp;线上:'+sum1+'台】<br>（3）失误订单：'+sum4+'台<br>（4）抽检人效：'+sum3+'/'+dayCount+'&asymp;'+rx+'/天';
+            var unit = (currentAnalysisType === 'month') ? '周' : '天';
+            sm.innerHTML = '（1）抽检'+unit+'数：'+dayCount+unit+'<br>（2）抽检总量：'+sum3+'台【实物:'+sum2+'台 &ensp;线上:'+sum1+'台】<br>（3）失误订单：'+sum4+'台<br>（4）抽检人效：'+sum3+'/'+dayCount+'&asymp;'+rx+'/'+unit;
         }
     }
     if (window._saveSamplingCache) window._saveSamplingCache();
