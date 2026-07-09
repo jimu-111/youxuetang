@@ -1,4 +1,4 @@
-name: 周一自动推送标记
+name: Monday Auto Push
   on:
     schedule:
       - cron: '0 2 * * 1'
@@ -8,17 +8,12 @@ name: 周一自动推送标记
     set-flag:
       runs-on: ubuntu-latest
       steps:
-        - name: 设置自动推送标记
+        - name: Set auto push flag
           run: |
-            WEEK=$(date -d 'next Monday - 7 days' +%Y-%m-%d 2>/dev/null || date -v-Mon +%Y-%m-%d 2>/dev/null || echo
-  "auto")
-            echo "本周: $WEEK"
             curl -s -X POST "${{ secrets.SUPABASE_URL }}/rest/v1/app_data" \
               -H "apikey: ${{ secrets.SUPABASE_KEY }}" \
               -H "Authorization: Bearer ${{ secrets.SUPABASE_KEY }}" \
               -H "Content-Type: application/json" \
               -H "Prefer: resolution=merge-duplicates" \
-              -d
-  "[{\"key\":\"_auto_push_flag\",\"value\":\"{\\\"needed\\\":true,\\\"week\\\":\\\"$WEEK\\\"}\",\"updated_at\":\"$(date
-  -u +%Y-%m-%dT%H:%M:%SZ)\"}]"
-            echo "标记已设置"
+              -d '[{"key":"_auto_push_flag","value":"{\"needed\":true,\"week\":\"'$(date
+  +%Y-%m-%d)'\"}","updated_at":"'$(date -u +%Y-%m-%dT%H:%M:%SZ)'"}]'
