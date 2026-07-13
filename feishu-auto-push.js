@@ -112,26 +112,210 @@ async function main() {
         } catch(e) {}
     }
 
+    // 同时记录每人的失误类别分布
     const rc = {};
-    rows.forEach(r => { rc[r.reviewer] = (rc[r.reviewer] || 0) + 1; });
+    const rCat = {}; // { name: { category: count } }
+    rows.forEach(r => {
+        rc[r.reviewer] = (rc[r.reviewer] || 0) + 1;
+        if (!rCat[r.reviewer]) rCat[r.reviewer] = {};
+        var cat = r.category || '其他';
+        rCat[r.reviewer][cat] = (rCat[r.reviewer][cat] || 0) + 1;
+    });
     console.log('上周失误: ' + rows.length + '条, ' + Object.keys(rc).length + '人');
 
+    // 读题库和考试历史，按失误类别比例出卷
+    const examHistory = (await supabaseGet('examHistoryData')) || {};
+    const qbData = (await supabaseGet('questionBankData')) || {};
+    const allQuestions = qbData.questions || [];
+
+    const examCodeChars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+    function genExamCode() {
+        var code = '';
+        for (var i = 0; i < 6; i++) code += examCodeChars[Math.floor(Math.random() * examCodeChars.length)];
+        return code;
+    }
+    // 类别名标准化（模拟前端的 mergeCategory 简化版）
+    function normCat(c) {
+        c = (c || '').trim();
+        if (!c) return '其他';
+        // 去掉数字后缀，统一相似类别
+        return c.replace(/[\d]+$/, '').replace(/[（(].*[)）]/g, '').trim() || c;
+    }
+
     const TH = { examMin: 6, learnMin: 11, trainMin: 16 };
+
+    for (const [name, count] of Object.entries(rc).sort((a,b) => b[1]-a[1])) {
+        if (count >= TH.examMin) {
+            // 检查本周是否已有考试
+            var hasExam = Object.values(examHistory).some(function(e) {
+                if (e.reviewerName !== name) return false;
+                var t = new Date(e.generatedAt || e.time || 0);
+                return t >= wk.start && t <= wk.end;
+            });
+            if (hasExam) continue;
+            if (allQuestions.length < 5) continue;
+
+            // 按失误类别比例选题
+            var cats = rCat[name] || {};
+            var totalMistakes = Object.values(cats).reduce(function(a,b){return a+b;},0);
+            // 合并标准化类别
+            var merged = {};
+            Object.entries(cats).forEach(function(e) {
+                var nc = normCat(e[0]);
+                merged[nc] = (merged[nc] || 0) + e[1];
+            });
+            // 按比例分配题数（最少1题，最多20题）
+            var qCount = Math.min(20, Math.max(10, Math.ceil(totalMistakes * 1.5)));
+            var selected = [];
+            var slots = qCount;
+            var catList = Object.entries(merged).sort(function(a,b){return b[1]-a[1];});
+            // 每个类别按比例分配
+            for (var ci = 0; ci < catList.length && slots > 0; ci++) {
+                var catName = catList[ci][0];
+                var catRatio = catList[ci][1] / totalMistakes;
+                var catSlots = Math.max(1, Math.min(slots, Math.ceil(qCount * catRatio)));
+                if (ci === catList.length - 1) catSlots = slots; // 最后一个类别拿剩余
+                // 从题库找匹配该类别的题
+                var catQuestions = allQuestions.filter(function(q) {
+                    var qc = normCat(q.category || q.type || '');
+                    return qc === catName || qc.includes(catName) || catName.includes(qc);
+                });
+                if (catQuestions.length === 0) catQuestions = allQuestions; // 兜底：随机
+                var shuffled = [...catQuestions].sort(function(){return Math.random()-0.5;});
+                for (var s = 0; s < catSlots && s < shuffled.length; s++) {
+                    if (selected.length >= qCount) break;
+                    selected.push(shuffled[s]);
+                }
+                slots = qCount - selected.length;
+            }
+            // 不够的随机补齐
+            if (selected.length < qCount) {
+                var remaining = [...allQuestions].sort(function(){return Math.random()-0.5;});
+                for (var r = 0; r < remaining.length && selected.length < qCount; r++) {
+                    if (!selected.some(function(q){return q === remaining[r];})) selected.push(remaining[r]);
+                }
+            }
+
+            var examCode = genExamCode();
+            var examRecord = {
+                id: 'auto_' + Date.now(),
+                examCode: examCode,
+                reviewerName: name,
+                questions: selected,
+                generatedAt: new Date().toISOString(),
+                source: '周一自动推送',
+                status: 'pending', attempts: 0, records: [],
+                timeLimit: 40, maxAttempts: 2, wrongAnswers: []
+            };
+            examHistory[examRecord.id] = examRecord;
+            console.log('  📝 自动出卷 → ' + name + ' [' + examCode + '] ' + selected.length + '题');
+        }
+    }
+    // 写入 Supabase
+    if (Object.keys(examHistory).length > 0) {
+        await fetch(SUPABASE_URL + '/rest/v1/app_data', {
+            method: 'POST',
+            headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY, 'Content-Type': 'application/json', 'Prefer': 'resolution=merge-duplicates' },
+            body: JSON.stringify([{ key: 'examHistoryData', value: JSON.stringify(examHistory), updated_at: new Date().toISOString() }])
+        }).catch(function() {});
+    }
+
+    // 自动生成学习计划（≥learnMin 的人）
+    const learnPlans = (await supabaseGet('learnPlanPushes')) || [];
+    for (const [name, count] of Object.entries(rc)) {
+        if (count >= TH.learnMin) {
+            var hasLearn = learnPlans.some(function(l) {
+                return l.reviewerName === name && new Date(l.time || 0) >= wk.start;
+            });
+            if (!hasLearn) {
+                var planCode = 'LP' + Date.now().toString(36).toUpperCase() + Math.random().toString(36).substring(2,4).toUpperCase();
+                learnPlans.push({ reviewerName: name, planCode: planCode, mistakeCount: count, cats: Object.keys(rCat[name]||{}).slice(0,5), time: new Date().toISOString() });
+                console.log('  🗺️ 学习 → ' + name + ' [' + planCode + ']');
+            }
+        }
+    }
+    if (learnPlans.length > 0) {
+        await fetch(SUPABASE_URL + '/rest/v1/app_data', {
+            method: 'POST',
+            headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY, 'Content-Type': 'application/json', 'Prefer': 'resolution=merge-duplicates' },
+            body: JSON.stringify([{ key: 'learnPlanPushes', value: JSON.stringify(learnPlans), updated_at: new Date().toISOString() }])
+        }).catch(function() {});
+    }
+
+    // 自动生成培训报告（≥trainMin 的人）
+    const training = (await supabaseGet('trainingPushRecords')) || [];
+    const generatedReports = (await supabaseGet('generatedReports')) || {};
+    for (const [name, count] of Object.entries(rc)) {
+        if (count >= TH.trainMin) {
+            var hasTrain = training.some(function(t) {
+                return t.reviewerName === name && new Date(t.time || 0) >= wk.start;
+            });
+            if (!hasTrain) {
+                var reportName = name + ' 培训资料(' + wk.key + ')';
+                var catList = Object.entries(rCat[name]||{}).sort(function(a,b){return b[1]-a[1];}).map(function(e){return e[0]+'('+e[1]+'次)';}).join('、');
+                var reportHtml = '<html><head><meta charset="UTF-8"><title>' + reportName + '</title></head><body style="font-family:Microsoft YaHei;padding:20px;">' +
+                    '<h2>📖 ' + name + ' 精准培训资料</h2><p>周期：' + wk.key + ' | 失误总计：' + count + ' 次</p>' +
+                    '<p>主要失误类别：' + catList + '</p>' +
+                    '<p>培训建议：针对上述类别查阅SOP文档，重点复习高频失误类型的判定标准。</p>' +
+                    '<p style="color:#5e6f8d;margin-top:30px;">智训通+数据分析中心 · 自动生成</p></body></html>';
+                training.push({ reviewerName: name, reportName: reportName, mistakeCount: count, cats: catList, time: new Date().toISOString() });
+                generatedReports[reportName] = reportHtml;
+                console.log('  📖 培训 → ' + name + ' [' + reportName + ']');
+            }
+        }
+    }
+    if (training.length > 0) {
+        await fetch(SUPABASE_URL + '/rest/v1/app_data', {
+            method: 'POST',
+            headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY, 'Content-Type': 'application/json', 'Prefer': 'resolution=merge-duplicates' },
+            body: JSON.stringify([{ key: 'trainingPushRecords', value: JSON.stringify(training), updated_at: new Date().toISOString() }])
+        }).catch(function() {});
+        await fetch(SUPABASE_URL + '/rest/v1/app_data', {
+            method: 'POST',
+            headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY, 'Content-Type': 'application/json', 'Prefer': 'resolution=merge-duplicates' },
+            body: JSON.stringify([{ key: 'generatedReports', value: JSON.stringify(generatedReports), updated_at: new Date().toISOString() }])
+        }).catch(function() {});
+    }
 
     for (const [name, count] of Object.entries(rc).sort((a,b) => b[1]-a[1])) {
         const email = emails[name];
         if (!email) continue;
         if (count >= TH.examMin) {
-            try { await sendCard(email, examCard(name, count), appToken); console.log('  📝 考试 → ' + name+'('+count+')'); sent++; }
+            // 找上周生成的该人考试码
+            var examCode = null;
+            var exams = Object.values(examHistory).filter(function(e) {
+                if (e.reviewerName !== name) return false;
+                var t = new Date(e.generatedAt || e.time || 0);
+                return t >= wk.start && t <= wk.end;
+            });
+            if (exams.length > 0) examCode = exams[exams.length - 1].examCode;
+
+            if (!examCode) { console.log('  ⏭ ' + name + ' 无考试码，跳过'); continue; }
+            var card = { config: { wide_screen_mode: true }, header: { title: { tag: 'plain_text', content: '📝 ' + name + ' 精准考试' }, template: 'orange' }, elements: [{ tag: 'div', text: { tag: 'lark_md', content: '**' + name + '** 上周失误 **' + count + ' 次**，已达出卷阈值\n考试码：**' + examCode + '**' } }, { tag: 'action', actions: [{ tag: 'button', text: { tag: 'plain_text', content: '📝 开始考试' }, type: 'primary', url: SITE_URL + '?exam=' + examCode }] }] };
+            try { await sendCard(email, card, appToken); console.log('  📝 考试 → ' + name+'('+count+') [' + examCode + ']'); sent++; }
             catch(e) { console.log('  ❌ ' + name + ': ' + e.message); fail++; }
         }
         if (count >= TH.learnMin) {
-            try { await sendCard(email, learnCard(name, count), appToken); console.log('  🗺️ 学习 → ' + name+'('+count+')'); sent++; }
-            catch(e) { console.log('  ❌ ' + name + ': ' + e.message); fail++; }
+            // 找本周生成的学习计划码
+            var lp = learnPlans.find(function(l) {
+                return l.reviewerName === name && new Date(l.time || 0) >= wk.start;
+            });
+            if (lp && lp.planCode) {
+                var lcard = { config: { wide_screen_mode: true }, header: { title: { tag: 'plain_text', content: '🗺️ ' + name + ' 学习地图' }, template: 'blue' }, elements: [{ tag: 'div', text: { tag: 'lark_md', content: '**' + name + '** 上周失误 **' + count + ' 次**，已达学习阈值\n涉及类别：' + (lp.cats||[]).slice(0,3).join('、') } }, { tag: 'action', actions: [{ tag: 'button', text: { tag: 'plain_text', content: '🗺️ 学习地图' }, type: 'primary', url: SITE_URL + '?learnPlan=' + lp.planCode }] }] };
+                try { await sendCard(email, lcard, appToken); console.log('  🗺️ 学习 → ' + name+'('+count+') [' + lp.planCode + ']'); sent++; }
+                catch(e) { console.log('  ❌ ' + name + ': ' + e.message); fail++; }
+            }
         }
         if (count >= TH.trainMin) {
-            try { await sendCard(email, trainCard(name, count), appToken); console.log('  📖 培训 → ' + name+'('+count+')'); sent++; }
-            catch(e) { console.log('  ❌ ' + name + ': ' + e.message); fail++; }
+            // 找本周生成的培训报告
+            var tr = training.find(function(t) {
+                return t.reviewerName === name && new Date(t.time || 0) >= wk.start;
+            });
+            if (tr && tr.reportName) {
+                var tcard = { config: { wide_screen_mode: true }, header: { title: { tag: 'plain_text', content: '📖 ' + name + ' 精准培训' }, template: 'purple' }, elements: [{ tag: 'div', text: { tag: 'lark_md', content: '**' + name + '** 上周失误 **' + count + ' 次**，已达培训阈值\n涉及类别：' + (tr.cats||'') } }, { tag: 'action', actions: [{ tag: 'button', text: { tag: 'plain_text', content: '📖 查看培训' }, type: 'primary', url: SITE_URL + '?report=' + encodeURIComponent(tr.reportName) }] }] };
+                try { await sendCard(email, tcard, appToken); console.log('  📖 培训 → ' + name+'('+count+') [' + tr.reportName + ']'); sent++; }
+                catch(e) { console.log('  ❌ ' + name + ': ' + e.message); fail++; }
+            }
         }
     }
 
