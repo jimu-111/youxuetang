@@ -41,6 +41,16 @@ function lastWeek() {
 }
 
 // ===== API 调用（使用 fetch，Node 18+ 原生） =====
+async function getAppToken() {
+    const r = await fetch('https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ app_id: FEISHU_APP_ID, app_secret: FEISHU_APP_SECRET })
+    });
+    const d = await r.json();
+    if (!d.tenant_access_token) throw new Error('AppToken: ' + JSON.stringify(d));
+    return d.tenant_access_token;
+}
+
 async function getToken() {
     // 优先从 Supabase 读取用户 OAuth token（有表格读权限）
     const stored = await supabaseGet('feishu_token');
@@ -137,12 +147,14 @@ async function main() {
     const doneKey = 'auto_push_done_' + wk.key;
     if (await supabaseGet(doneKey)) { console.log('已推送，跳过'); return; }
 
-    const token = await getToken();
+    // 用户 token（读表格）+ 应用 token（发消息）
+    const userToken = await getToken();
+    const appToken = await getAppToken();
     console.log('Token OK');
 
     let rows = [];
     for (const sh of SHEETS) {
-        const vals = await fetchSheet(sh.id, token);
+        const vals = await fetchSheet(sh.id, userToken);
         console.log('  ' + sh.name + ': ' + vals.length + '行');
         for (let i = 2; i < vals.length; i++) {
             const row = vals[i]; if (!row) continue;
@@ -172,15 +184,15 @@ async function main() {
         const email = emails[name];
         if (!email) continue;
         if (count >= th.examMin) {
-            try { await sendCard(email, buildCard('exam', { title: name+' 精准考试', reviewerName: name, count }), token); console.log('  📝 考试 → ' + name+'('+count+')'); sent++; }
+            try { await sendCard(email, buildCard('exam', { title: name+' 精准考试', reviewerName: name, count }), appToken); console.log('  📝 考试 → ' + name+'('+count+')'); sent++; }
             catch(e) { console.log('  ❌ ' + name + ': ' + e.message); fail++; }
         }
         if (count >= th.learnMin) {
-            try { await sendCard(email, buildCard('learn', { title: name+' 学习地图', reviewerName: name, count }), token); console.log('  🗺️ 学习 → ' + name+'('+count+')'); sent++; }
+            try { await sendCard(email, buildCard('learn', { title: name+' 学习地图', reviewerName: name, count }), appToken); console.log('  🗺️ 学习 → ' + name+'('+count+')'); sent++; }
             catch(e) { console.log('  ❌ ' + name + ': ' + e.message); fail++; }
         }
         if (count >= th.trainMin) {
-            try { await sendCard(email, buildCard('train', { title: name+' 精准培训', reviewerName: name, count }), token); console.log('  📖 培训 → ' + name+'('+count+')'); sent++; }
+            try { await sendCard(email, buildCard('train', { title: name+' 精准培训', reviewerName: name, count }), appToken); console.log('  📖 培训 → ' + name+'('+count+')'); sent++; }
             catch(e) { console.log('  ❌ ' + name + ': ' + e.message); fail++; }
         }
     }
