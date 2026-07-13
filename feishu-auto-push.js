@@ -41,6 +41,32 @@ function lastWeek() {
 
 // ===== API 调用（使用 fetch，Node 18+ 原生） =====
 async function getToken() {
+    // 优先从 Supabase 读取用户 OAuth token（有表格读权限）
+    const stored = await supabaseGet('feishu_token');
+    if (stored && stored.access_token && stored.expiresAt > Date.now()) {
+        console.log('Token: 使用缓存的用户token');
+        return stored.access_token;
+    }
+    // 尝试刷新
+    if (stored && stored.refresh_token) {
+        console.log('Token: 刷新用户token...');
+        try {
+            const r = await feishuProxy('https://open.feishu.cn/open-apis/authen/v1/refresh_access_token', 'POST', '', JSON.stringify({
+                grant_type: 'refresh_token', refresh_token: stored.refresh_token,
+                app_id: FEISHU_APP_ID, app_secret: FEISHU_APP_SECRET
+            }));
+            if (r.code === 0 && r.data && r.data.access_token) {
+                await supabaseUpsert('feishu_token', {
+                    access_token: r.data.access_token, refresh_token: r.data.refresh_token || stored.refresh_token,
+                    expiresAt: Date.now() + (r.data.expires_in || 7200) * 1000
+                });
+                console.log('Token: 刷新成功');
+                return r.data.access_token;
+            }
+        } catch(e) { console.log('Token刷新失败: ' + e.message); }
+    }
+    // 兜底：tenant_access_token
+    console.log('Token: 使用租户token（可能无表格权限）');
     const r = await fetch('https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ app_id: FEISHU_APP_ID, app_secret: FEISHU_APP_SECRET })
@@ -51,17 +77,14 @@ async function getToken() {
 }
 
 async function feishuProxy(targetUrl, method, authToken, body) {
-    const r = await fetch(PROXY_URL, {
-        method: 'POST',
-        headers: {
-            'Authorization': 'Bearer ' + SUPABASE_KEY,
-            'x-target-url': targetUrl,
-            'x-target-method': method || 'GET',
-            'x-target-auth': 'Bearer ' + authToken,
-            'Content-Type': 'application/json'
-        },
-        body: body || undefined
-    });
+    const h = {
+        'Authorization': 'Bearer ' + SUPABASE_KEY,
+        'x-target-url': targetUrl,
+        'x-target-method': method || 'GET'
+    };
+    if (authToken) h['x-target-auth'] = 'Bearer ' + authToken;
+    if (body) h['Content-Type'] = 'application/json';
+    const r = await fetch(PROXY_URL, { method: 'POST', headers: h, body: body || undefined });
     return r.json();
 }
 
