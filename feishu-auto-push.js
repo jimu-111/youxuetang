@@ -158,7 +158,9 @@ async function main() {
     rows.forEach(r => { rc[r.reviewer] = (rc[r.reviewer] || 0) + 1; });
 
     const th = { examMin: 6, learnMin: 11, trainMin: 16 };
-    const emails = (await supabaseGet('reviewerEmailMap')) || {};
+    // 从仓库 emails.json 读取邮箱
+    let emails = {};
+    try { emails = require('./emails.json'); } catch(e) { console.log('emails.json 读取失败'); }
     console.log('邮箱映射: ' + Object.keys(emails).length + '人');
 
     let sent = 0, fail = 0;
