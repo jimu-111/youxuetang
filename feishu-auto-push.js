@@ -3,6 +3,7 @@
  * 拉取上周数据 → 分析 → 按阈值出卷/学习/培训 → 飞书发送
  */
 
+const fs = require('fs');
 const FEISHU_APP_ID = 'cli_aab1fa4e87bbdbd3';
 const FEISHU_APP_SECRET = '1uLKmOkzQpoac6Ixw3Qhsb6KR1gCrcTn';
 const SPREADSHEET_TOKEN = 'EdI0sn3qkh7H6wtkhcpcxrTnnDf';
@@ -158,9 +159,12 @@ async function main() {
     rows.forEach(r => { rc[r.reviewer] = (rc[r.reviewer] || 0) + 1; });
 
     const th = { examMin: 6, learnMin: 11, trainMin: 16 };
-    // 从仓库 emails.json 读取邮箱
-    let emails = {};
-    try { emails = require('./emails.json'); } catch(e) { console.log('emails.json 读取失败'); }
+    // 从 Supabase 读取邮箱映射（管理后台同步的 personnelEmails）
+    let emails = (await supabaseGet('personnelEmails')) || {};
+    // 兜底：读本地 emails.json
+    if (Object.keys(emails).length === 0) {
+        try { emails = JSON.parse(fs.readFileSync('./emails.json', 'utf8')); console.log('使用本地 emails.json'); } catch(e) {}
+    }
     console.log('邮箱映射: ' + Object.keys(emails).length + '人');
 
     let sent = 0, fail = 0;
