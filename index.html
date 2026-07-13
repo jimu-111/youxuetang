@@ -599,6 +599,7 @@
     let currentSheetNames = null;
     let currentAnalysisType = 'week'; // 追踪当前分析维度
     let currentParseResult = null; // 当前工作表解析结果（全局共享）
+    let _feishuAutoTriggered = false; // 首次进入数据分析时自动拉取飞书（只触发一次）
     let currentFilterResult = null; // 当前时间范围筛选结果
     let currentDateRange = null; // 当前分析的时间范围
     const WEEK_TARGETS = [{week:1,minEff:40,maxError:10},{week:2,minEff:70,maxError:7},{week:3,minEff:90,maxError:6},{week:4,minEff:110,maxError:5},{week:5,minEff:130,maxError:5},{week:6,minEff:150,maxError:5}];
@@ -1982,8 +1983,11 @@
             let mistakeDisplay = 0;
             const mistakeVal = mistakeMap[name];
             if (mistakeVal !== undefined && mistakeVal !== null) mistakeDisplay = Number(mistakeVal);
-            // 抽检量/判责量/失误量全都没有有效数据（均为0或"-"）时，不显示该行
-            if ((!hasCj || cjVal === 0) && (!hasPz || pzVal === 0) && mistakeDisplay === 0) return;
+            // 抽检量/判责量/失误量全都没有有效数据（均为0或"-"）时
+            // 已离职 → 隐藏；在职人员 → 仍保留显示
+            const noData = (!hasCj || cjVal === 0) && (!hasPz || pzVal === 0) && mistakeDisplay === 0;
+            const isDeparted = getDepartedReviewers().hasOwnProperty(name);
+            if (noData && isDeparted) return;
             // 覆盖率 = 抽检量 / 判责量 × 100%（两个都有才计算）
             let coverageDisplay = '-';
             if (hasCj && hasPz && pzVal > 0) coverageDisplay = (cjVal / pzVal * 100).toFixed(2) + '%';
@@ -3082,6 +3086,198 @@
         if (typeof window._doAnalysis === 'function') window._doAnalysis(currentAnalysisType || 'week');
     }
 
+    // 初审准确率自动计算：(判责量 - 失误量) / 判责量 × 100%（全局可用）
+    function getReviewerAccRateAuto(name, pzMap, mkMap) {
+        const pz = Number(pzMap[name]); const mk = Number(mkMap[name]) || 0;
+        if (!pz || pz <= 0) return null;
+        return (pz - mk) / pz * 100;
+    }
+
+    // ===== 飞书自动获取抽检量（数据分析时自动触发） =====
+    const FEISHU_CHOUJIAN_SHEET_TOKEN = 'OwB7sBdCRhl2pwtgZP4c8F2Hn8e';
+    const FEISHU_CHOUJIAN_SHEET_ID = '8pTEgS';
+    const FEISHU_CHOUJIAN_COL_DATE = 0;   // A列：日期
+    const FEISHU_CHOUJIAN_COL_NAME = 6;   // G列：初审（名字）
+    // 飞书获取中标记（避免并发重复请求）
+    let _feishuFetching = false;
+
+    // 名字修正映射（与 renderModule3Manual 保持一致）
+    function fixFeishuChouJianName(name) {
+        name = String(name || '').trim();
+        if (!name) return null;
+        const exactFix = {'吴晖':'吴辉','樊昱舜':'樊景舜','樊慧舞':'樊景舜','李思林':'李忠林','姜钧琪':'麦钧淇','姜钧淇':'麦钧淇'};
+        if (exactFix[name]) return exactFix[name];
+        if (module3NameList.includes(name)) return name;
+        // 编辑距离 ≤1 模糊匹配
+        let bestName = null, bestDist = 999;
+        for (const valid of module3NameList) {
+            const m = name.length, n = valid.length;
+            const dp = Array.from({length: m+1}, (_, i) => [i]);
+            for (let j = 1; j <= n; j++) dp[0][j] = j;
+            for (let i = 1; i <= m; i++) for (let j = 1; j <= n; j++) {
+                dp[i][j] = Math.min(dp[i-1][j]+1, dp[i][j-1]+1, dp[i-1][j-1]+(name[i-1]===valid[j-1]?0:1));
+            }
+            if (dp[m][n] < bestDist) { bestDist = dp[m][n]; bestName = valid; }
+        }
+        return (bestDist <= 1 && bestName) ? bestName : name;
+    }
+
+    // 解析飞书表格中的日期值（兼容字符串、数字、Date对象）
+    function parseFeishuDate(val) {
+        if (!val) return null;
+        if (val instanceof Date) return val;
+        var str = String(val).trim();
+        // Excel序列号
+        var num = parseFloat(str);
+        if (!isNaN(num) && num > 40000 && num < 100000) return excelSerialToDate(num);
+        // 常见日期格式：2026/7/12, 2026-07-12, 2026.7.12
+        var m = str.match(/(\d{4})[\/\-\.](\d{1,2})[\/\-\.](\d{1,2})/);
+        if (m) return new Date(parseInt(m[1]), parseInt(m[2])-1, parseInt(m[3]));
+        return null;
+    }
+
+    // 自动从飞书表格获取抽检量：读取G列（初审）名字，按选定周期筛选后计数
+// 自动从飞书表格获取抽检量：根据选定周期动态匹配sheet，读取G列（初审）名字计数
+    async function autoFetchChouJianFromFeishu(periodKey, dateRange) {
+        if (_feishuFetching) return;
+        _feishuFetching = true;
+        try {
+            var token = getErrorDashboardToken();
+            if (!token) token = await feishuRefreshToken();
+            if (!token) token = await getCloudToken();
+            if (!token) token = await getFeishuToken();
+            if (!token) { console.log('[飞书抽检量] 无法获取飞书凭证，跳过'); return; }
+
+            // 1. 列出所有sheet
+            var sheetsUrl = 'https://open.feishu.cn/open-apis/sheets/v3/spreadsheets/' + FEISHU_CHOUJIAN_SHEET_TOKEN + '/sheets/query';
+            var sheetsResp = await feishuApiFetch(sheetsUrl, { headers: { 'Authorization': 'Bearer ' + token } });
+            var sheetsData = await sheetsResp.json();
+            var allSheets = (sheetsData.code === 0 && sheetsData.data && sheetsData.data.sheets) ? sheetsData.data.sheets : [];
+
+            // 2. 根据选定周期的年月，按命名规律动态匹配sheet
+            var targetSheetId = null;
+            if (dateRange && dateRange.startDate) {
+                // 用 endDate 判断归属月份（月度范围是上月27→本月26，数据归属本月）
+                var refDate = dateRange.endDate || dateRange.startDate;
+                var yr = refDate.getFullYear();
+                var mo = refDate.getMonth() + 1;
+                var yy = String(yr).slice(2);
+                var targetTitle = (mo >= 1 && mo <= 6) ? (yy + '年' + mo + '月') : (yr + '年下半年');
+                for (var si = 0; si < allSheets.length; si++) {
+                    if (allSheets[si].title === targetTitle) { targetSheetId = allSheets[si].sheet_id; break; }
+                }
+            }
+            if (!targetSheetId) {
+                targetSheetId = allSheets.length > 0 ? allSheets[allSheets.length - 1].sheet_id : '6SumCH';
+            }
+
+            // 3. 读取匹配的sheet
+            console.log('[飞书抽检量] 匹配sheet: ' + targetSheetId + ' (周期: ' + (dateRange ? dateRange.start : '无') + ')');
+            const values = await fetchFeishuSheetWithToken(FEISHU_CHOUJIAN_SHEET_TOKEN, targetSheetId, token);
+            if (!values || values.length < 2) { console.log('[飞书抽检量] 表格数据为空，跳过'); return; }
+
+            // 4. 根据表头动态查找列索引（不写死）
+            const header = values[0];
+            var colDate = -1, colName = -1;
+            for (var hi = 0; hi < header.length; hi++) {
+                var h = String(header[hi] || '').trim();
+                if (h === '日期' || h === '时间' || h.indexOf('日期') >= 0) colDate = hi;
+                if (h === '初审' || h.indexOf('初审') >= 0) colName = hi;
+            }
+            if (colName < 0) { console.log('[飞书抽检量] 未找到"初审"列，表头: ' + JSON.stringify(header)); return; }
+            if (colDate < 0) console.log('[飞书抽检量] 未找到日期列，将不过滤日期');
+            console.log('[飞书抽检量] 列索引: 日期=' + colDate + ' 初审=' + colName + ' 表头=' + JSON.stringify(header));
+            // 遍历数据行（跳过表头），按选定周期筛选初审名字并计数
+            const map = {};
+            let totalRows = 0, filteredRows = 0;
+            for (let i = 1; i < values.length; i++) {
+                const row = values[i];
+                if (!row) continue;
+                totalRows++;
+                if (dateRange && dateRange.startDate && dateRange.endDate && colDate >= 0) {
+                    const rowDate = parseFeishuDate(row[colDate]);
+                    if (!rowDate) continue;
+                    const d = new Date(rowDate.getFullYear(), rowDate.getMonth(), rowDate.getDate());
+                    const s = new Date(dateRange.startDate.getFullYear(), dateRange.startDate.getMonth(), dateRange.startDate.getDate());
+                    const e = new Date(dateRange.endDate.getFullYear(), dateRange.endDate.getMonth(), dateRange.endDate.getDate());
+                    if (d < s || d > e) continue;
+                }
+                filteredRows++;
+                const rawName = String(row[colName] || '').trim();
+                if (!rawName) continue;
+                const fixedName = fixFeishuChouJianName(rawName);
+                map[fixedName] = (map[fixedName] || 0) + 1;
+            }
+            console.log('[飞书抽检量] 总行数:' + totalRows + ' 周期内:' + filteredRows + ' 识别到:' + Object.keys(map).length + '人');
+            if (Object.keys(map).length === 0) { console.log('[飞书抽检量] 周期内未解析到有效姓名，跳过'); return; }
+            const pk = periodKey || getModule3CurrentPeriodKey();
+            const periodData = getModule3PeriodData(pk);
+            if (!periodData.chouJianMap) periodData.chouJianMap = {};
+            Object.assign(periodData.chouJianMap, map);
+            saveModule3PeriodData(pk, periodData);
+            console.log('[飞书抽检量] 已自动获取 ' + Object.keys(map).length + ' 人抽检量数据，写入周期 ' + pk);
+        } catch (err) {
+            console.log('[飞书抽检量] 获取失败: ' + err.message);
+        } finally {
+            _feishuFetching = false;
+        }
+    }
+    // ===== 飞书自动获取抽检量结束 =====
+
+    // ===== 从 Supabase 拉取判责量（按分析周期逐日匹配）=====
+    async function fetchPanZeFromSupabase(periodKey, dateRange) {
+        try {
+            if (!dateRange || !dateRange.startDate || !dateRange.endDate) {
+                console.log('[判责量Supabase] 无日期范围，跳过'); return;
+            }
+            // 按分析周期的每一天查询 Supabase
+            var mergedMap = {};
+            var foundDays = 0;
+            var cur = new Date(dateRange.startDate);
+            var end = new Date(dateRange.endDate);
+            while (cur <= end) {
+                var dateStr = cur.getFullYear() + '-' + String(cur.getMonth() + 1).padStart(2, '0') + '-' + String(cur.getDate()).padStart(2, '0');
+                var key = 'feishu_panze_' + dateStr;
+                try {
+                    var resp = await fetch(SUPABASE_URL + '/rest/v1/app_data?key=eq.' + encodeURIComponent(key) + '&select=value&limit=1', {
+                        headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY }
+                    });
+                    var data = await resp.json();
+                    if (data && data.length > 0 && data[0].value) {
+                        var found = JSON.parse(data[0].value);
+                        if (found.map) {
+                            // 累加每日判责量（同一人可能多天出现）
+                            for (var _k in found.map) {
+                                mergedMap[_k] = (mergedMap[_k] || 0) + Number(found.map[_k]);
+                            }
+                            foundDays++;
+                        }
+                    }
+                } catch(e) {}
+                cur.setDate(cur.getDate() + 1);
+            }
+            if (foundDays === 0 || Object.keys(mergedMap).length === 0) {
+                console.log('[判责量Supabase] 周期内未找到判责量数据 (' + dateRange.start + ' ~ ' + dateRange.end + ')');
+                return;
+            }
+            console.log('[判责量Supabase] 找到 ' + foundDays + ' 天数据，共 ' + Object.keys(mergedMap).length + ' 人');
+
+            // 写入当前周期
+            var pk = periodKey || getModule3CurrentPeriodKey();
+            var periodData = getModule3PeriodData(pk);
+            // 先清空再写入（避免多次分析累加）
+            periodData.panZeMap = {};
+            for (var _k in mergedMap) {
+                periodData.panZeMap[_k] = Number(mergedMap[_k]);
+            }
+            saveModule3PeriodData(pk, periodData);
+            console.log('[判责量Supabase] ✅ 已写入周期 ' + pk);
+        } catch(e) {
+            console.log('[判责量Supabase] 获取失败: ' + e.message);
+        }
+    }
+    // ===== Supabase 判责量结束 =====
+
     function refreshModule3Card() {
         const cardEl = document.getElementById('samplingCard3');
         if (cardEl) {
@@ -4163,7 +4359,20 @@
         const lastPeriodLabel = isMonth ? '上月' : '上周';
 
         // ---- 1. 摘要卡片 ----
-        const accVals = Object.values(accRateThisPeriod || {}).map(Number).filter(v => !isNaN(v));
+        // 自动计算优先：判责量 - 失误量 / 判责量
+        const _pd = getModule3PeriodData(thisPeriodKey);
+        const _pzMap = _pd.panZeMap || {};
+        const _mkMapRaw = JSON.parse(localStorage.getItem('samplingModule3MistakeMap') || '{}');
+        const _mergedAcc = {};
+        Object.keys(_pzMap).forEach(n => {
+            const pz = Number(_pzMap[n]); const mk = Number(_mkMapRaw[n]) || 0;
+            if (pz && pz > 0) _mergedAcc[n] = (pz - mk) / pz * 100;
+        });
+        // 手动数据补充（无自动计算的人）
+        Object.entries(accRateThisPeriod || {}).forEach(([n, v]) => {
+            if (!_mergedAcc[n]) _mergedAcc[n] = Number(v);
+        });
+        const accVals = Object.values(_mergedAcc).map(Number).filter(v => !isNaN(v));
         const accAvg = accVals.length > 0 ? (accVals.reduce((a,b)=>a+b,0) / accVals.length) : null;
         const lastAccVals = Object.values(accRateLastPeriod || {}).map(Number).filter(v => !isNaN(v));
         const lastAccAvg = lastAccVals.length > 0 ? (lastAccVals.reduce((a,b)=>a+b,0) / lastAccVals.length) : null;
@@ -4216,31 +4425,39 @@
             let trendHtml = diff > 0 ? `<span class="trend-up">↑${diff}</span>` : (diff < 0 ? `<span class="trend-down">↓${Math.abs(diff)}</span>` : `<span class="trend-same">→0</span>`);
             let weekCells = '';
             for (let i = 0; i < weekCounts.length; i++) weekCells += `<td>${weekCounts[i]}</td>`;
-            // 准确率
-            let accCell = '<td style="color:#94a3b8;font-style:italic;">待录入</td>';
+            // 准确率：自动计算优先
+            let accCellContent = null;
             const curVal = accRateThisPeriod?.[reviewer];
             const lastVal = accRateLastPeriod?.[reviewer];
-            if (curVal !== undefined && curVal !== null) {
-                const curNum = Number(curVal);
+            // 优先自动计算
+            const autoVal2 = getReviewerAccRateAuto(reviewer, _pzMap, _mkMapRaw);
+            if (autoVal2 !== null) {
+                accCellContent = { val: autoVal2, isAuto: true };
+            } else if (curVal !== undefined && curVal !== null) {
+                accCellContent = { val: Number(curVal), isAuto: false };
+            }
+            let accCell;
+            if (accCellContent) {
+                const curNum = accCellContent.val;
                 let bg = '';
                 if (curNum >= 100) bg = 'background:#c8e6c9;';
                 else if (curNum <= 99.5) bg = 'background:#ffcdd2;';
                 else { const t = (curNum - 99.5) / 0.5; const r = Math.round(255 + (200-255)*t); const g = Math.round(183 + (230-183)*t); const b = Math.round(77 + (201-77)*t); bg = `background:rgb(${r},${g},${b});`; }
-                let trend = '';
-                if (lastVal !== undefined && lastVal !== null) {
-                    const d = curNum - Number(lastVal);
-                    if (d > 0) trend = ` <span style="font-size:0.75rem;color:#27ae60;">↑${d.toFixed(2)}%</span>`;
-                    else if (d < 0) trend = ` <span style="font-size:0.75rem;color:#c0392b;">↓${Math.abs(d).toFixed(2)}%</span>`;
-                    else trend = ` <span style="font-size:0.75rem;color:#2980b9;">→0.00%</span>`;
+                const autoTag = accCellContent.isAuto ? ' <span style="font-size:0.65rem;color:#6b7280;">[自动]</span>' : '';
+                if (accCellContent.isLast) {
+                    accCell = `<td style="color:#94a3b8;">(${curNum.toFixed(2)}%)</td>`;
+                } else {
+                    accCell = `<td style="${bg}">${curNum.toFixed(2)}%${autoTag}</td>`;
                 }
-                accCell = `<td style="${bg}">${curNum.toFixed(2)}%${trend}</td>`;
-            } else if (lastVal !== undefined && lastVal !== null) {
-                accCell = `<td style="color:#94a3b8;">(${Number(lastVal).toFixed(2)}%)</td>`;
+            } else {
+                accCell = '<td style="color:#94a3b8;font-style:italic;">待录入</td>';
             }
-            reviewerRows += `<tr><td style="text-align:left;">👤 ${escapeHtml(fmtRvGlobal(reviewer))}</td><td>${trendHtml}</td>${accCell}${weekCells}</tr>`;
+            const panZeVal = _pzMap[reviewer] || 0;
+            reviewerRows += `<tr><td style="text-align:left;">👤 ${escapeHtml(fmtRvGlobal(reviewer))}</td><td>${trendHtml}</td>${accCell}<td style="font-weight:500;">${panZeVal || '-'}</td>${weekCells}</tr>`;
         });
 
-        const reviewerTable = `<table><thead><tr><th>初审</th><th>趋势</th><th>初审准确率</th>${weekHeaders}</tr></thead><tbody><tr style="background:#f0f2f6;font-weight:bold;"><td>总计</td><td>${totalTrendHtml}</td><td>${totalAccHtml}</td>${totalRowCells}</tr>${reviewerRows}</tbody></table>`;
+        const totalPanZe = Object.values(_pzMap).reduce((a,b)=>a+Number(b),0);
+        const reviewerTable = `<table><thead><tr><th>初审</th><th>趋势</th><th>初审准确率</th><th>判责量</th>${weekHeaders}</tr></thead><tbody><tr style="background:#f0f2f6;font-weight:bold;"><td>总计</td><td>${totalTrendHtml}</td><td>${totalAccHtml}</td><td style="font-weight:bold;">${totalPanZe || '-'}</td>${totalRowCells}</tr>${reviewerRows}</tbody></table>`;
 
         // ---- 3. 失误来源分布（纯表格版） ----
         let srcStats = {};
@@ -4324,8 +4541,9 @@
                 else if (person.rank === 3) { rankIcon = '🟡'; rankBg = '#fffef0'; }
                 else if (person.rank === 4) { rankIcon = '🔵'; rankBg = '#f5f9ff'; }
                 else { rankIcon = '🟢'; rankBg = '#f5fff5'; }
-                // 初审准确率
-                const reviewerAcc = accRateThisPeriod?.[person.name] !== undefined ? Number(accRateThisPeriod[person.name]) : null;
+                // 初审准确率：手动优先，无则自动计算
+                var reviewerAcc = getReviewerAccRateAuto(person.name, pzMap, mkMap);
+                if (reviewerAcc === null) reviewerAcc = accRateThisPeriod?.[person.name] !== undefined ? Number(accRateThisPeriod[person.name]) : null;
                 const reviewerAccLast = accRateLastPeriod?.[person.name] !== undefined ? Number(accRateLastPeriod[person.name]) : null;
                 let accRateHtml = '<span style="color:#94a3b8;font-style:italic;">待录入</span>';
                 if (reviewerAcc !== null) {
@@ -4519,12 +4737,22 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
         const reviewerPeriodStats0 = isMonthType
             ? getReviewerMonthlyStats(allRows, dateColumn, reviewerColumn, periodRanges)
             : getReviewerWeeklyStats(allRows, dateColumn, reviewerColumn, periodRanges);
+        // 合并同人不同名：肖建平 → 肖健平
+        const _nameMerge = {'肖建平':'肖健平'};
+        const _mergedStats = {};
+        Object.keys(reviewerPeriodStats0).forEach(function(name) {
+            const target = _nameMerge[name] || name;
+            if (!_mergedStats[target]) _mergedStats[target] = {};
+            Object.keys(reviewerPeriodStats0[name]).forEach(function(pk) {
+                _mergedStats[target][pk] = (_mergedStats[target][pk] || 0) + (reviewerPeriodStats0[name][pk] || 0);
+            });
+        });
         // 过滤已离职且本期无数据的人员
         const departedRev3 = getDepartedReviewers();
         const reviewerPeriodStats = {};
-        Object.keys(reviewerPeriodStats0).forEach(function(name) {
-            if (departedRev3[name] && !(reviewerPeriodStats0[name] && (reviewerPeriodStats0[name][periodRanges[0].periodKey]||0) > 0)) return;
-            reviewerPeriodStats[name] = reviewerPeriodStats0[name];
+        Object.keys(_mergedStats).forEach(function(name) {
+            if (departedRev3[name] && !(_mergedStats[name] && (_mergedStats[name][periodRanges[0].periodKey]||0) > 0)) return;
+            reviewerPeriodStats[name] = _mergedStats[name];
         });
         window._analysisReviewerPeriodStats = reviewerPeriodStats;
         const thisPeriodKey = periodRanges[0].periodKey;
@@ -4621,6 +4849,25 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
         const accRateThisPeriod = accRateAll[thisPeriodKey] || {};
         const accRateLastPeriod = (periodRanges.length > 1 && accRateAll[periodRanges[1].periodKey]) ? accRateAll[periodRanges[1].periodKey] : {};
 
+        // 读取判责量（用于准确率自动计算和判责量列）
+        const _pd2 = getModule3PeriodData(periodRanges[0].periodKey);
+        const _pzMap2 = _pd2.panZeMap || {};
+        const _mkMap2 = JSON.parse(localStorage.getItem('samplingModule3MistakeMap') || '{}');
+        function _autoAcc(name) {
+            const pz = Number(_pzMap2[name]); const mk = Number(_mkMap2[name]) || 0;
+            if (!pz || pz <= 0) return null;
+            return (pz - mk) / pz * 100;
+        }
+        // 判责量按站点筛选：选单站点时只计入该站点的量，全站点时全部计入
+        function _panZeBySite(name) {
+            const sel = window._selectedSites || [];
+            if (sel.length === 0 || sel.length >= 3) return _pzMap2[name] || 0;
+            const siteMap = window._reviewerSiteMap || {};
+            const site = siteMap[name] || '';
+            if (sel.some(s => site === s)) return _pzMap2[name] || 0;
+            return 0;
+        }
+
         let reviewerRows = '';
         let chartId = 0;
         sortedReviewers.forEach(reviewer => {
@@ -4634,9 +4881,9 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
                 const colorStyle = i === 0 ? `color:${getRelativeColor(weekCounts[i], minThisWeek, maxThisWeek, false)};font-weight:bold;` : '';
                 weekCells += `<td style="${colorStyle}padding:2px 4px;">${weekCounts[i]}</div>`;
             }
-            // 准确率单元格
+            // 准确率单元格：自动计算优先
             let accCell = '<td style="padding:2px 4px;color:#94a3b8;font-style:italic;">待录入</td>';
-            const curVal = accRateThisPeriod[reviewer];
+            const curVal = _autoAcc(reviewer) !== null ? _autoAcc(reviewer) : accRateThisPeriod[reviewer];
             const lastVal = accRateLastPeriod[reviewer];
             if (curVal !== undefined && curVal !== null) {
                 const curNum = Number(curVal);
@@ -4665,7 +4912,8 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
                 accCell = `<td style="padding:2px 4px;color:#94a3b8;">(${Number(lastVal).toFixed(2)}%)</td>`;
             }
             const rvDisplay = fmtRvGlobal(reviewer);
-            reviewerRows += `<tr><td style="text-align:center;padding:2px 4px;"><span class="clickable-name" data-reviewer-name="${escapeHtml(reviewer)}">${escapeHtml(rvDisplay)}</span></td><td style="padding:2px 4px;"><div class="trend-cell"><div class="trend-canvas-wrapper" data-width="100"><canvas id="${sparklineId}" width="100" height="20"></canvas><div class="resize-handle"></div></div><span class="trend-text" style="font-size:0.65rem; margin-left:3px;">${trendHtml}</span></div></td>${accCell}${weekCells}</tr>`;
+            const panZeVal = _panZeBySite(reviewer);
+            reviewerRows += `<tr><td style="text-align:center;padding:2px 4px;"><span class="clickable-name" data-reviewer-name="${escapeHtml(reviewer)}">${escapeHtml(rvDisplay)}</span></td><td style="padding:2px 4px;"><div class="trend-cell"><div class="trend-canvas-wrapper" data-width="100"><canvas id="${sparklineId}" width="100" height="20"></canvas><div class="resize-handle"></div></div><span class="trend-text" style="font-size:0.65rem; margin-left:3px;">${trendHtml}</span></div></td>${accCell}<td style="padding:2px 4px;font-weight:500;text-align:center;">${panZeVal || '-'}</td>${weekCells}</tr>`;
             setTimeout(() => {
                 drawSparkline(sparklineId, weekCounts, 100);
                 initTrendCanvasResize();
@@ -4938,13 +5186,13 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
                     <div style="text-align:left;"><strong style="display:inline-block;width:9em;white-space:nowrap;">📈 上期失误对比：</strong><span class="${diffClass}">${diffText}</span></div>
                     <div style="text-align:left;"><strong style="display:inline-block;width:9em;white-space:nowrap;">📉 失误人数浮动：</strong>上涨 <strong class="trend-up">${increaseCount}</strong> 人，下降 <strong class="trend-down">${decreaseCount}</strong> 人，持平 <strong class="trend-same">${sameCount}</strong> 人</div>
                     <div style="text-align:left;"><strong style="display:inline-block;width:9em;white-space:nowrap;">⚠️ 本周失误前${reviewerTopN}：</strong><span style="white-space:nowrap;">${topReviewers.map((r, i) => `<strong style="cursor:pointer;border-bottom:1px dashed #2a5298;" onclick="showReviewerSourceModal('${r.replace(/'/g, "\\'")}', window._analysisRows, window._analysisDateCol, window._analysisReviewerCol, window._analysisSourceCol, window._analysisWeekRange, window._analysisPeriodRanges)">${i+1}. ${r}</strong>`).join('、')}</span></div>
-                    <div style="text-align:left;"><strong style="display:inline-block;width:9em;white-space:nowrap;">🎯 本期平均准确率：</strong>${(() => { const vals = Object.values(accRateThisPeriod).map(Number).filter(v => !isNaN(v)); const avg = vals.length > 0 ? vals.reduce((a,b)=>a+b,0)/vals.length : null; const lastVals = Object.values(accRateLastPeriod).map(Number).filter(v => !isNaN(v)); const lastAvg = lastVals.length > 0 ? lastVals.reduce((a,b)=>a+b,0)/lastVals.length : null; if (avg === null) return '<span style="color:#94a3b8;font-style:italic;">待录入</span>'; let trend = ''; if (lastAvg !== null) { const diff = avg - lastAvg; if (diff > 0) trend = ' <span style="color:#27ae60;font-weight:600;">↑' + diff.toFixed(2) + '%</span>'; else if (diff < 0) trend = ' <span style="color:#c0392b;font-weight:600;">↓' + Math.abs(diff).toFixed(2) + '%</span>'; else trend = ' <span style="color:#2980b9;font-weight:600;">→0.00%</span>'; } return '<strong>' + avg.toFixed(2) + '%</strong>' + trend; })()}</div>
+                    <div style="text-align:left;"><strong style="display:inline-block;width:9em;white-space:nowrap;">🎯 本期平均准确率：</strong>${(() => { const allNames = new Set([...Object.keys(accRateThisPeriod||{}), ...Object.keys(_pzMap2||{})]); const vals = []; allNames.forEach(n => { const auto = _autoAcc(n); vals.push(auto !== null ? auto : Number(accRateThisPeriod[n])); }); const validVals = vals.filter(v => !isNaN(v)); const avg = validVals.length > 0 ? validVals.reduce((a,b)=>a+b,0)/validVals.length : null; const lastVals = Object.values(accRateLastPeriod).map(Number).filter(v => !isNaN(v)); const lastAvg = lastVals.length > 0 ? lastVals.reduce((a,b)=>a+b,0)/lastVals.length : null; if (avg === null) return '<span style="color:#94a3b8;font-style:italic;">待录入</span>'; let trend = ''; if (lastAvg !== null) { const diff = avg - lastAvg; if (diff > 0) trend = ' <span style="color:#27ae60;font-weight:600;">↑' + diff.toFixed(2) + '%</span>'; else if (diff < 0) trend = ' <span style="color:#c0392b;font-weight:600;">↓' + Math.abs(diff).toFixed(2) + '%</span>'; else trend = ' <span style="color:#2980b9;font-weight:600;">→0.00%</span>'; } return '<strong>' + avg.toFixed(2) + '%</strong>' + trend; })()}</div>
                 </div>
                 <div style="font-size: 0.7rem; color: #94a3b8; text-align:center; margin-bottom: 8px;">💡 点击上方文字可手动编辑 | 💡 表头右侧可拖拽调整列宽</div>
                 <table class="compact-table resizable-table" id="reviewerCompareTable">
-                    <thead><tr><th>初审</th><th>趋势（曲线图+对比）</th><th>初审准确率 ${currentAnalysisType !== 'custom' ? '<button onclick="showAccRateModal()" style="background:#eef2ff;border:1px solid #cbd5e1;padding:2px 10px;border-radius:10px;cursor:pointer;font-size:0.7rem;margin-left:4px;">📸 识别</button>' : ''}</th>${weekHeaders}</tr></thead>
+                    <thead><tr><th>初审</th><th>趋势（曲线图+对比）</th><th>初审准确率 ${currentAnalysisType !== 'custom' ? '<button onclick="showAccRateModal()" style="background:#eef2ff;border:1px solid #cbd5e1;padding:2px 10px;border-radius:10px;cursor:pointer;font-size:0.7rem;margin-left:4px;">📸 识别</button>' : ''}</th><th>判责量</th>${weekHeaders}</tr></thead>
                     <tbody>
-                        <tr style="background:#f0f2f6;"><td style="font-weight:bold;text-align:center;">总计</td><td><div class="trend-cell"><canvas id="${totalSparklineId}" width="100" height="20"></canvas><span class="trend-text" style="font-size:0.65rem; margin-left:3px;">${totalTrendHtml}</span></div></td><td style="font-weight:bold;padding:2px 4px;"><div style="position:relative;text-align:center;">${(() => { const vals = Object.values(accRateThisPeriod).map(Number).filter(v => !isNaN(v)); const avg = vals.length > 0 ? vals.reduce((a,b)=>a+b,0)/vals.length : null; const lastVals = Object.values(accRateLastPeriod).map(Number).filter(v => !isNaN(v)); const lastAvg = lastVals.length > 0 ? lastVals.reduce((a,b)=>a+b,0)/lastVals.length : null; let trend = ''; if (avg !== null && lastAvg !== null) { const diff = avg - lastAvg; if (diff > 0) trend = '<span style="position:absolute;right:0;top:50%;transform:translateY(-50%);font-size:0.65rem;color:#27ae60;font-weight:600;">↑' + diff.toFixed(2) + '%</span>'; else if (diff < 0) trend = '<span style="position:absolute;right:0;top:50%;transform:translateY(-50%);font-size:0.65rem;color:#c0392b;font-weight:600;">↓' + Math.abs(diff).toFixed(2) + '%</span>'; else trend = '<span style="position:absolute;right:0;top:50%;transform:translateY(-50%);font-size:0.65rem;color:#2980b9;font-weight:600;">→0.00%</span>'; } return (avg !== null ? avg.toFixed(2) + '%' : '-') + trend; })()}</div></td>${totalRowCells}</tr>
+                        <tr style="background:#f0f2f6;"><td style="font-weight:bold;text-align:center;">总计</td><td><div class="trend-cell"><canvas id="${totalSparklineId}" width="100" height="20"></canvas><span class="trend-text" style="font-size:0.65rem; margin-left:3px;">${totalTrendHtml}</span></div></td><td style="font-weight:bold;padding:2px 4px;"><div style="position:relative;text-align:center;">${(() => { const vals = Object.values(accRateThisPeriod).map(Number).filter(v => !isNaN(v)); const avg = vals.length > 0 ? vals.reduce((a,b)=>a+b,0)/vals.length : null; const lastVals = Object.values(accRateLastPeriod).map(Number).filter(v => !isNaN(v)); const lastAvg = lastVals.length > 0 ? lastVals.reduce((a,b)=>a+b,0)/lastVals.length : null; let trend = ''; if (avg !== null && lastAvg !== null) { const diff = avg - lastAvg; if (diff > 0) trend = '<span style="position:absolute;right:0;top:50%;transform:translateY(-50%);font-size:0.65rem;color:#27ae60;font-weight:600;">↑' + diff.toFixed(2) + '%</span>'; else if (diff < 0) trend = '<span style="position:absolute;right:0;top:50%;transform:translateY(-50%);font-size:0.65rem;color:#c0392b;font-weight:600;">↓' + Math.abs(diff).toFixed(2) + '%</span>'; else trend = '<span style="position:absolute;right:0;top:50%;transform:translateY(-50%);font-size:0.65rem;color:#2980b9;font-weight:600;">→0.00%</span>'; } return (avg !== null ? avg.toFixed(2) + '%' : '-') + trend; })()}</div></td><td style="font-weight:bold;text-align:center;">${(() => { const total = sortedReviewers.reduce((a,rv)=>a+Number(_panZeBySite(rv)),0); console.log('[判责总计] sel='+JSON.stringify(window._selectedSites)+' total='+total+' reviewers='+sortedReviewers.length); return total || '-'; })()}</td>${totalRowCells}</tr>
                         ${reviewerRows || '<tr><td colspan="10" style="text-align:center;">暂无数据</td></tr>'}
                     </tbody>
                 </table>
@@ -6261,7 +6509,7 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
             document.getElementById('uploadStatus').textContent = '☁️ 数据来源：飞书表格（' + errorDashboardData.length + ' 条记录）';
             document.querySelectorAll('.analysis-type-btn[data-type]').forEach(function(btn){ btn.classList.toggle('active', btn.dataset.type === 'week'); });
             errorCurrentPeriod = 'week';
-            var now3=new Date();var dw3=now3.getDay();dw3=dw3===0?7:dw3;var thisMon=new Date(now3);thisMon.setDate(now3.getDate()-dw3+1);thisMon.setHours(0,0,0,0);var thisSun=new Date(thisMon);thisSun.setDate(thisMon.getDate()+6);thisSun.setHours(23,59,59,999);var wr={start:thisMon.getFullYear()+'-'+String(thisMon.getMonth()+1).padStart(2,'0')+'-'+String(thisMon.getDate()).padStart(2,'0'),end:thisSun.getFullYear()+'-'+String(thisSun.getMonth()+1).padStart(2,'0')+'-'+String(thisSun.getDate()).padStart(2,'0'),startDate:thisMon,endDate:thisSun,startDateNum:thisMon.getFullYear()*10000+(thisMon.getMonth()+1)*100+thisMon.getDate(),endDateNum:thisSun.getFullYear()*10000+(thisSun.getMonth()+1)*100+thisSun.getDate(),periodName:getWeekLabel(thisMon)};window.doAnalysis('week',wr);localStorage.removeItem('samplingCardCache');refreshSamplingFromFeishu();
+            var now3=new Date();var dw3=now3.getDay();dw3=dw3===0?7:dw3;var thisMon=new Date(now3);thisMon.setDate(now3.getDate()-dw3+1);thisMon.setHours(0,0,0,0);var thisSun=new Date(thisMon);thisSun.setDate(thisMon.getDate()+6);thisSun.setHours(23,59,59,999);var wr={start:thisMon.getFullYear()+'-'+String(thisMon.getMonth()+1).padStart(2,'0')+'-'+String(thisMon.getDate()).padStart(2,'0'),end:thisSun.getFullYear()+'-'+String(thisSun.getMonth()+1).padStart(2,'0')+'-'+String(thisSun.getDate()).padStart(2,'0'),startDate:thisMon,endDate:thisSun,startDateNum:thisMon.getFullYear()*10000+(thisMon.getMonth()+1)*100+thisMon.getDate(),endDateNum:thisSun.getFullYear()*10000+(thisSun.getMonth()+1)*100+thisSun.getDate(),periodName:getWeekLabel(thisMon)};await window.doAnalysis('week',wr);localStorage.removeItem('samplingCardCache');refreshSamplingFromFeishu();
             if (area) { area.style.opacity = '1'; area.querySelector('p').textContent = '☁️ 从飞书获取数据（' + errorDashboardData.length + ' 条）'; }
         } catch(e) { alert('❌ 获取失败：' + e.message); if(area){area.style.opacity='1';area.querySelector('p').textContent='使用看板同一份飞书表格';} }
     }
@@ -6307,6 +6555,16 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
                     <button class="analysis-type-btn" data-type="month">📆 月度分析</button>
                     <button class="analysis-type-btn" data-type="year">📈 年度分析</button>
                     <button class="analysis-type-btn" data-type="custom">🔍 自定义日期</button>
+                </div>
+                <!-- 数据加载进度条 -->
+                <div id="analysisProgress" style="display:none; margin:12px auto 0; width:50%; min-width:300px; background:#f8fafc; border-radius:12px; padding:10px 16px;">
+                    <div style="display:flex;justify-content:space-between;margin-bottom:4px;">
+                        <span id="progressLabel" style="font-size:0.75rem;color:#5e6f8d;">⏳ 准备中...</span>
+                        <span id="progressPct" style="font-size:0.75rem;color:#1f3a6b;font-weight:600;">0%</span>
+                    </div>
+                    <div style="height:6px;background:#e2e8f0;border-radius:3px;overflow:hidden;">
+                        <div id="progressFill" style="height:100%;width:0%;background:linear-gradient(90deg,#2a5298,#4fc3f7);border-radius:3px;transition:width 0.3s;"></div>
+                    </div>
                 </div>
                 <!-- 周期选择区 -->
                 <div id="periodArea">
@@ -6407,10 +6665,27 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
         };
         
         // doAnalysis函数 - 执行分析的通用方法
-        function doAnalysis(type, customRange) {
+        let _analysisVersion = 0;
+        async function doAnalysis(type, customRange) {
             if (!currentParseResult) return;
+            let myVersion = ++_analysisVersion;
+            // 显示进度条
+            const _progress = function(pct, label) {
+                var bar = document.getElementById('analysisProgress');
+                var fill = document.getElementById('progressFill');
+                var lbl = document.getElementById('progressLabel');
+                var pctEl = document.getElementById('progressPct');
+                if (bar) bar.style.display = 'block';
+                if (fill) fill.style.width = pct + '%';
+                if (lbl) lbl.textContent = label;
+                if (pctEl) pctEl.textContent = pct + '%';
+            };
+            _progress(5, '开始分析...');
             try {
             window._selectedSites = selectedSites;
+            // 记住当前周期，供后续切换站点时复用
+            window._currentPeriodType = type;
+            window._currentPeriodRange = customRange;
             currentAnalysisType = type;
             
             const parseResult = currentParseResult;
@@ -6427,7 +6702,7 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
 
             let dateRange, reportTitle;
             if (type === 'week') {
-                dateRange = customRange || getLastWeekRange();
+                dateRange = customRange || getThisWeekRange();
                 reportTitle = siteLabel + ' · ' + dateRange.periodName;
             } else if (type === 'month') {
                 dateRange = customRange || getLastMonthRange();
@@ -6493,6 +6768,7 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
                     return;
                 }
                 statusDiv.innerHTML = `<span style="color:#2e7d32;">✅ 已筛选数据（${dateRange.start} 至 ${dateRange.end}，含首尾），共 ${filterResult.filteredCount}/${filterResult.totalCount} 条记录</span>`;
+                _progress(25, '数据筛选完成');
             } else {
                 statusDiv.innerHTML = `<span style="color:#f39c12;">⚠️ 未检测到日期列，将分析全部数据（共 ${filterResult.totalCount} 条）</span>`;
             }
@@ -6542,6 +6818,15 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
             }
             localStorage.setItem('samplingModule3MistakeMap', JSON.stringify(mistakeMap));
 
+            // 自动从飞书表格获取抽检量（G列初审名字按选定周期筛选后计数）
+            console.log('[DEBUG] doAnalysis called, type=' + type + ' selectedSites=' + JSON.stringify(selectedSites) + ' window._selectedSites=' + JSON.stringify(window._selectedSites));
+            _progress(30, '筛选数据完成，获取抽检量...');
+            const _currentPk = (periodRanges && periodRanges.length > 0) ? periodRanges[0].periodKey : getModule3CurrentPeriodKey();
+            await autoFetchChouJianFromFeishu(_currentPk, dateRange);
+            _progress(55, '获取判责量...');
+            await fetchPanZeFromSupabase(_currentPk, dateRange);
+            _progress(75, '分析数据中...');
+
             const analysis = analyzeDataForAnalysis(rowsToAnalyze, parseResult.mapping);
             // 存储全局数据供明细弹窗使用
             window._reportAllRows = allRowsForPeriods;
@@ -6549,8 +6834,14 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
             window._reportReviewerCol = parseResult.mapping.reviewer || null;
             window._reportDetailCol = parseResult.mapping.detail || null;
             resultBox.style.display = 'block';
+            // 版本检查：如果已有更新的调用，跳过渲染
+            if (myVersion !== _analysisVersion) {
+                _progress(100, '✅ 分析完成（已被新请求取代）');
+                return;
+            }
             // 将reportTitle和periodRanges传递给renderAnalysisResult
             try {
+                _progress(85, '渲染结果中...');
                 const siteCol = currentParseResult?.mapping?.site || null;
                 const catCol = currentParseResult?.mapping?.category || null;
                 const qcCol = currentParseResult?.mapping?.qcCode || null;
@@ -6561,7 +6852,10 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
                 document.getElementById('analysisContent').innerHTML = '<div class="error-message">❌ 渲染失败：' + e.message + '<br><pre style="font-size:0.7rem;">' + e.stack + '</pre></div>';
                 console.error(e);
             }
+            _progress(100, '✅ 分析完成');
             } catch(e) {
+                var bar2 = document.getElementById('analysisProgress');
+                if (bar2) bar2.style.display = 'none';
                 const resultBox2 = document.getElementById('analysisResultBox');
                 if (resultBox2) resultBox2.style.display = 'block';
                 const ac = document.getElementById('analysisContent');
@@ -6727,10 +7021,18 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
             overlay.querySelector('#siteModalConfirm').onclick = function() {
                 if (selectedSites.length === 0) { alert('请至少选择一个站点'); return; }
                 overlay.remove();
-                // 显示周期选择区
                 const periodArea = document.getElementById('periodArea');
                 if (periodArea) periodArea.style.display = 'block';
-                showPeriodPicker(pendingAnalysisType);
+                // 复用上次周期的类型和日期范围，避免跳回本周
+                const lastType = window._currentPeriodType || pendingAnalysisType;
+                const lastRange = window._currentPeriodRange;
+                if (lastRange && lastType === (pendingAnalysisType || 'week')) {
+                    doAnalysis(pendingAnalysisType || 'week', lastRange).then(function() {
+                        refreshSamplingFromFeishu();
+                    });
+                } else {
+                    showPeriodPicker(pendingAnalysisType);
+                }
             };
 
             // 点击遮罩关闭
@@ -6775,7 +7077,7 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
         }
 
         // 周选择按钮事件
-        document.addEventListener('click', (e) => {
+        document.addEventListener('click', async (e) => {
             if (e.target.classList.contains('week-pick-btn')) {
                 document.querySelectorAll('.week-pick-btn').forEach(b => b.classList.remove('active'));
                 e.target.classList.add('active');
@@ -6792,14 +7094,14 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
                     startDateNum: toDateNum(startDate), endDateNum: toDateNum(endDate),
                     periodName: getWeekLabel(startDate)
                 };
-                doAnalysis('week', weekRange);
+                await doAnalysis('week', weekRange);
                 localStorage.removeItem('samplingCardCache');
                 refreshSamplingFromFeishu();
             }
         });
 
         // 月份选择按钮事件
-        document.addEventListener('click', (e) => {
+        document.addEventListener('click', async (e) => {
             if (e.target.classList.contains('month-pick-btn')) {
                 document.querySelectorAll('.month-pick-btn').forEach(b => b.classList.remove('active'));
                 e.target.classList.add('active');
@@ -6816,14 +7118,14 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
                     startDate: startDate, endDate: endDate,
                     monthName: `${year}年${month}月`, periodName: `${year}年${month}月`
                 };
-                doAnalysis('month', monthRange);
+                await doAnalysis('month', monthRange);
                 localStorage.removeItem('samplingCardCache');
                 refreshSamplingFromFeishu();
             }
         });
 
         // 年份选择按钮事件
-        document.addEventListener('click', (e) => {
+        document.addEventListener('click', async (e) => {
             if (e.target.classList.contains('year-pick-btn')) {
                 document.querySelectorAll('.year-pick-btn').forEach(b => b.classList.remove('active'));
                 e.target.classList.add('active');
@@ -6836,14 +7138,14 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
                     startDate: startDate, endDate: endDate,
                     yearName: `${yr}年`, periodName: `${yr}年`
                 };
-                doAnalysis('year', yearRange);
+                await doAnalysis('year', yearRange);
                 localStorage.removeItem('samplingCardCache');
                 refreshSamplingFromFeishu();
             }
         });
 
         // 自定义日期确认按钮
-        document.addEventListener('click', (e) => {
+        document.addEventListener('click', async (e) => {
             if (e.target.id === 'confirmCustomDateBtn') {
                 const startDateStr = document.getElementById('customStartDate').value;
                 const endDateStr = document.getElementById('customEndDate').value;
@@ -6858,7 +7160,7 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
                     startDate: startDate, endDate: endDate,
                     startDateNum: toDateNum(startDate), endDateNum: toDateNum(endDate)
                 };
-                doAnalysis('custom', customRange);
+                await doAnalysis('custom', customRange);
             }
         });
 
@@ -6899,7 +7201,7 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
         }
 
     }
-    
+
     function renderReportGen() {
         const reportNames = Object.keys(generatedReports).filter(function(n){ return n.indexOf('培训资料') !== 0; });
         let html = `<div class="report-box"><div class="report-title">📄 已生成的周报</div>`;
@@ -10840,8 +11142,10 @@ URL.revokeObjectURL(url);
 
     // 全局格式化初审名字：附加站点（如 徐行（成都））
     function fmtRvGlobal(name) {
+        const nameFix = {'肖建平':'肖健平'};
+        const displayName = nameFix[name] || name;
         const map = window._reviewerSiteMap || {};
-        return map[name] ? name + '（' + map[name] + '）' : (name || '');
+        return map[displayName] ? displayName + '（' + map[displayName] + '）' : displayName;
     }
 
     function renderErrorAnalysis() {
