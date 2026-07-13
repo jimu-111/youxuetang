@@ -165,7 +165,7 @@ async function main() {
                 merged[nc] = (merged[nc] || 0) + e[1];
             });
             // 按比例分配题数（最少1题，最多20题）
-            var qCount = Math.min(20, Math.max(10, Math.ceil(totalMistakes * 1.5)));
+            var qCount = 20; // 固定20题
             var selected = [];
             var slots = qCount;
             var catList = Object.entries(merged).sort(function(a,b){return b[1]-a[1];});
@@ -276,12 +276,13 @@ async function main() {
             body: JSON.stringify([{ key: 'generatedReports', value: JSON.stringify(generatedReports), updated_at: new Date().toISOString() }])
         }).catch(function() {});
     }
+    console.log('[DEBUG] examHistory 共 ' + Object.keys(examHistory).length + ' 条，最近3条: ' + JSON.stringify(Object.values(examHistory).slice(-3).map(function(e){return e.reviewerName+'/'+e.examCode;})));
+
 
     for (const [name, count] of Object.entries(rc).sort((a,b) => b[1]-a[1])) {
         const email = emails[name];
         if (!email) continue;
         if (count >= TH.examMin) {
-            // 找上周生成的该人考试码
             var examCode = null;
             var exams = Object.values(examHistory).filter(function(e) {
                 if (e.reviewerName !== name) return false;
