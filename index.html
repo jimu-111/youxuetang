@@ -16553,24 +16553,6 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
         html += reportBtn;
 
         document.getElementById('mainContent').innerHTML = html;
-        // 自动出卷/学习/培训（URL参数autoExam/autoLearn/autoTrain触发）
-        var _autoGenRetry = 0;
-        function _tryAutoGen() {
-            var q = window._autoGenQueue;
-            if (!q) return;
-            // 等数据就绪，最多等 5 秒
-            if (errorDashboardData.length === 0 && _autoGenRetry < 5) {
-                _autoGenRetry++;
-                setTimeout(_tryAutoGen, 1000);
-                return;
-            }
-            window._autoGenQueue = null;
-            if (q.exam) { try { generatePrecisionExam(decodeURIComponent(q.exam)); } catch(e) {} }
-            if (q.learn) { try { switchNav('learningMapView'); } catch(e) {} }
-            if (q.train) { try { generatePrecisionTraining(decodeURIComponent(q.train)); } catch(e) {} }
-            window._autoGenAllowGuest = false;
-        }
-        setTimeout(_tryAutoGen, 1500);
         // 生成横幅二维码
         setTimeout(function() {
             var qr = document.getElementById('bannerQrcode');
@@ -18530,8 +18512,29 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
             if (mc3) { mc3.style.padding = '0'; mc3.style.marginLeft = '0'; }
             sessionStorage.removeItem('adminMode');
             document.body.classList.add('guest-mode');
-            switchNav('errorDashboard');
             window._autoGenQueue = { exam: initAutoExam, learn: initAutoLearn, train: initAutoTrain };
+            // 后台加载数据，完成后自动触发
+            errorDashboardData = [];
+            refreshErrorDashboardData(true, false);
+            document.getElementById('mainContent').innerHTML = '<div style=\"text-align:center;padding:80px;\"><div style=\"font-size:2rem;\">⏳</div><div style=\"color:#5e6f8d;margin-top:12px;\">正在生成...</div></div>';
+            // 轮询等待数据就绪后自动触发
+            var _retry = 0;
+            var _check = setInterval(function() {
+                _retry++;
+                if (errorDashboardData.length > 0 || _retry > 15) {
+                    clearInterval(_check);
+                    var q = window._autoGenQueue;
+                    window._autoGenQueue = null;
+                    if (!q || errorDashboardData.length === 0) return;
+                    // 设置筛选为上周
+                    var lw = getLastWeekRange();
+                    errorDashboardFilter = { period: 'week', site: 'all', category: 'all', reviewer: 'all', customStart: formatDate(lw.startDate), customEnd: formatDate(lw.endDate) };
+                    if (q.exam) { try { generatePrecisionExam(decodeURIComponent(q.exam)); } catch(e) {} }
+                    if (q.learn) { try { switchNav('learningMapView'); } catch(e) {} }
+                    if (q.train) { try { generatePrecisionTraining(decodeURIComponent(q.train)); } catch(e) {} }
+                    window._autoGenAllowGuest = false;
+                }
+            }, 1000);
         }
 
         // 检查是否有学习地图分享链接（需在渲染前处理）
