@@ -1,0 +1,20 @@
+name: 周一自动推送
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 2 * * 1"
+
+jobs:
+  push:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: 分析上周数据并推送
+        run: node feishu-auto-push.js
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
