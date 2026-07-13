@@ -1,20 +1,14 @@
 /**
  * 飞书周一自动推送 — GitHub Actions 云端全自动
- * 拉取上周数据 → 分析 → 按阈值出卷/学习/培训 → 飞书发送
+ * 从 Supabase 读取已生成的考试/培训/学习，发送真实链接
  */
-
 const fs = require('fs');
 const FEISHU_APP_ID = 'cli_aab1fa4e87bbdbd3';
 const FEISHU_APP_SECRET = '1uLKmOkzQpoac6Ixw3Qhsb6KR1gCrcTn';
-const SPREADSHEET_TOKEN = 'EdI0sn3qkh7H6wtkhcpcxrTnnDf';
-const SHEETS = [
-    { id: '4054dd', name: '初审失误登记', colDate: 0, colReviewer: 8, colCategory: 6, colSite: 1 },
-    { id: 'mEiT35', name: '抽检失误登记', colDate: 0, colReviewer: 6, colCategory: 10, colSite: 1 },
-    { id: 'LIfICo', name: 'QA失误登记', colDate: 0, colReviewer: 5, colCategory: 4, colSite: 1 }
-];
 const SUPABASE_URL = (process.env.SUPABASE_URL || 'https://zfxwnixlvdxawoylhgxj.supabase.co').replace(/\/$/, '').replace(/\s/g, '');
 const SUPABASE_KEY = (process.env.SUPABASE_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InpmeHduaXhsdmR4YXdveWxoZ3hqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODIyMDEyNzIsImV4cCI6MjA5Nzc3NzI3Mn0.aPfO4Ry_LzoOColCVx64JQPF-BWga-_J2fX9hg-E4G8').replace(/\s/g, '');
 const PROXY_URL = 'https://zfxwnixlvdxawoylhgxj.supabase.co/functions/v1/feishu-proxy';
+const SITE_URL = 'https://jimu-111.github.io/youxuetang/';
 
 // ===== 工具 =====
 function fmt(d) { return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); }
@@ -40,7 +34,7 @@ function lastWeek() {
     return { start: mon, end: sun, key: fmt(mon) };
 }
 
-// ===== API 调用（使用 fetch，Node 18+ 原生） =====
+// ===== API =====
 async function getAppToken() {
     const r = await fetch('https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -49,61 +43,6 @@ async function getAppToken() {
     const d = await r.json();
     if (!d.tenant_access_token) throw new Error('AppToken: ' + JSON.stringify(d));
     return d.tenant_access_token;
-}
-
-async function getToken() {
-    // 优先从 Supabase 读取用户 OAuth token（有表格读权限）
-    const stored = await supabaseGet('feishu_token');
-    if (stored && stored.access_token && stored.expiresAt > Date.now()) {
-        console.log('Token: 使用缓存的用户token');
-        return stored.access_token;
-    }
-    // 尝试刷新
-    if (stored && stored.refresh_token) {
-        console.log('Token: 刷新用户token...');
-        try {
-            const r = await feishuProxy('https://open.feishu.cn/open-apis/authen/v1/refresh_access_token', 'POST', '', JSON.stringify({
-                grant_type: 'refresh_token', refresh_token: stored.refresh_token,
-                app_id: FEISHU_APP_ID, app_secret: FEISHU_APP_SECRET
-            }));
-            if (r.code === 0 && r.data && r.data.access_token) {
-                await supabaseUpsert('feishu_token', {
-                    access_token: r.data.access_token, refresh_token: r.data.refresh_token || stored.refresh_token,
-                    expiresAt: Date.now() + (r.data.expires_in || 7200) * 1000
-                });
-                console.log('Token: 刷新成功');
-                return r.data.access_token;
-            }
-        } catch(e) { console.log('Token刷新失败: ' + e.message); }
-    }
-    // 兜底：tenant_access_token
-    console.log('Token: 使用租户token（可能无表格权限）');
-    const r = await fetch('https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ app_id: FEISHU_APP_ID, app_secret: FEISHU_APP_SECRET })
-    });
-    const d = await r.json();
-    if (!d.tenant_access_token) throw new Error('Token: ' + JSON.stringify(d));
-    return d.tenant_access_token;
-}
-
-async function feishuProxy(targetUrl, method, authToken, body) {
-    const h = {
-        'Authorization': 'Bearer ' + SUPABASE_KEY,
-        'x-target-url': targetUrl,
-        'x-target-method': method || 'GET'
-    };
-    if (authToken) h['x-target-auth'] = 'Bearer ' + authToken;
-    if (body) h['Content-Type'] = 'application/json';
-    const r = await fetch(PROXY_URL, { method: 'POST', headers: h, body: body || undefined });
-    return r.json();
-}
-
-async function fetchSheet(sheetId, token) {
-    const url = 'https://open.feishu.cn/open-apis/sheets/v2/spreadsheets/' + SPREADSHEET_TOKEN + '/values/' + sheetId + '?majorDimension=ROWS';
-    const d = await feishuProxy(url, 'GET', token);
-    if (d.code !== 0) throw new Error('Sheet读取失败: ' + (d.msg || ''));
-    return (d.data && d.data.valueRange && d.data.valueRange.values) || [];
 }
 
 async function supabaseGet(key) {
@@ -115,27 +54,23 @@ async function supabaseGet(key) {
     return null;
 }
 
-async function supabaseUpsert(key, value) {
-    await fetch(SUPABASE_URL + '/rest/v1/app_data', {
-        method: 'POST',
-        headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY, 'Content-Type': 'application/json', 'Prefer': 'resolution=merge-duplicates' },
-        body: JSON.stringify([{ key, value: JSON.stringify(value), updated_at: new Date().toISOString() }])
-    });
-}
-
 async function sendCard(email, card, token) {
     const body = JSON.stringify({ receive_id: email, msg_type: 'interactive', content: JSON.stringify(card) });
-    const d = await feishuProxy('https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=email', 'POST', token, body);
-    if (d.code !== 0) throw new Error(d.msg || '发送失败');
+    const h = { 'Authorization': 'Bearer ' + SUPABASE_KEY, 'x-target-url': 'https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=email', 'x-target-method': 'POST', 'x-target-auth': 'Bearer ' + token, 'Content-Type': 'application/json' };
+    const r = await fetch(PROXY_URL, { method: 'POST', headers: h, body: body });
+    const d = await r.json();
+    if (d.code !== 0) throw new Error(d.msg || 'send fail');
     return d;
 }
 
-// ===== 卡片 =====
-function buildCard(type, d) {
-    if (type === 'exam') return { config: { wide_screen_mode: true }, header: { title: { tag: 'plain_text', content: '📝 ' + d.title }, template: 'orange' }, elements: [{ tag: 'div', text: { tag: 'lark_md', content: '**' + d.reviewerName + '** 上周失误 ' + d.count + ' 次，已达出卷阈值\n请完成精准考试，强化薄弱环节' } }, { tag: 'action', actions: [{ tag: 'button', text: { tag: 'plain_text', content: '📝 开始考试' }, type: 'primary', url: d.examUrl || 'https://jimu-111.github.io/youxuetang/' }] }] };
-    if (type === 'learn') return { config: { wide_screen_mode: true }, header: { title: { tag: 'plain_text', content: '🗺️ ' + d.title }, template: 'blue' }, elements: [{ tag: 'div', text: { tag: 'lark_md', content: '**' + d.reviewerName + '** 上周失误 ' + d.count + ' 次\n建议查看学习地图，针对性提升' } }, { tag: 'action', actions: [{ tag: 'button', text: { tag: 'plain_text', content: '🗺️ 学习地图' }, type: 'primary', url: d.learnUrl || 'https://jimu-111.github.io/youxuetang/' }] }] };
-    if (type === 'train') return { config: { wide_screen_mode: true }, header: { title: { tag: 'plain_text', content: '📖 ' + d.title }, template: 'purple' }, elements: [{ tag: 'div', text: { tag: 'lark_md', content: '**' + d.reviewerName + '** 上周失误 ' + d.count + ' 次，已达培训阈值\n请查看培训资料，系统提升' } }, { tag: 'action', actions: [{ tag: 'button', text: { tag: 'plain_text', content: '📖 查看培训' }, type: 'primary', url: d.trainUrl || 'https://jimu-111.github.io/youxuetang/' }] }] };
-    return {};
+function examCard(name, count) {
+    return { config: { wide_screen_mode: true }, header: { title: { tag: 'plain_text', content: '📝 ' + name + ' 精准考试' }, template: 'orange' }, elements: [{ tag: 'div', text: { tag: 'lark_md', content: '**' + name + '** 上周失误 **' + count + ' 次**，已达出卷阈值（≥6次）\n点击下方按钮自动出卷并开始考试' } }, { tag: 'action', actions: [{ tag: 'button', text: { tag: 'plain_text', content: '📝 开始考试' }, type: 'primary', url: SITE_URL + '?autoExam=' + encodeURIComponent(name) }] }] };
+}
+function learnCard(name, count) {
+    return { config: { wide_screen_mode: true }, header: { title: { tag: 'plain_text', content: '🗺️ ' + name + ' 学习地图' }, template: 'blue' }, elements: [{ tag: 'div', text: { tag: 'lark_md', content: '**' + name + '** 上周失误 **' + count + ' 次**，已达学习阈值（≥11次）\n点击下方按钮查看学习地图' } }, { tag: 'action', actions: [{ tag: 'button', text: { tag: 'plain_text', content: '🗺️ 学习地图' }, type: 'primary', url: SITE_URL + '?autoLearn=' + encodeURIComponent(name) }] }] };
+}
+function trainCard(name, count) {
+    return { config: { wide_screen_mode: true }, header: { title: { tag: 'plain_text', content: '📖 ' + name + ' 精准培训' }, template: 'purple' }, elements: [{ tag: 'div', text: { tag: 'lark_md', content: '**' + name + '** 上周失误 **' + count + ' 次**，已达培训阈值（≥16次）\n点击下方按钮查看培训资料' } }, { tag: 'action', actions: [{ tag: 'button', text: { tag: 'plain_text', content: '📖 查看培训' }, type: 'primary', url: SITE_URL + '?autoTrain=' + encodeURIComponent(name) }] }] };
 }
 
 // ===== 主流程 =====
@@ -147,57 +82,65 @@ async function main() {
     const doneKey = 'auto_push_done_' + wk.key;
     if (await supabaseGet(doneKey)) { console.log('已推送，跳过'); return; }
 
-    // 用户 token（读表格）+ 应用 token（发消息）
-    const userToken = await getToken();
     const appToken = await getAppToken();
-    console.log('Token OK');
+    const emails = (await supabaseGet('personnelEmails')) || {};
+    console.log('Token OK, 邮箱: ' + Object.keys(emails).length + '人');
 
+    let sent = 0, fail = 0;
+
+    // 从飞书获取用户的 token 读表格
+    const stored = await supabaseGet('feishu_token');
+    var userToken = appToken;
+    if (stored && stored.access_token && stored.expiresAt > Date.now()) userToken = stored.access_token;
+
+    // 拉取上周数据，分析按人统计
     let rows = [];
-    for (const sh of SHEETS) {
-        const vals = await fetchSheet(sh.id, userToken);
-        console.log('  ' + sh.name + ': ' + vals.length + '行');
-        for (let i = 2; i < vals.length; i++) {
-            const row = vals[i]; if (!row) continue;
-            const d = parseDate(row[sh.colDate]);
-            if (!isIn(d, wk.start, wk.end)) continue;
-            const rv = String(row[sh.colReviewer] || '').trim();
-            if (rv) rows.push({ reviewer: rv, category: String(row[sh.colCategory]||'').trim(), site: String(row[sh.colSite]||'').trim() });
-        }
+    const FEISHU_SHEETS = [
+        { id: '4054dd', colDate: 0, colReviewer: 8 }, { id: 'mEiT35', colDate: 0, colReviewer: 6 }, { id: 'LIfICo', colDate: 0, colReviewer: 5 }
+    ];
+    for (const sh of FEISHU_SHEETS) {
+        try {
+            const r2 = await fetch(PROXY_URL, { method: 'POST', headers: { 'Authorization': 'Bearer ' + SUPABASE_KEY, 'x-target-url': 'https://open.feishu.cn/open-apis/sheets/v2/spreadsheets/EdI0sn3qkh7H6wtkhcpcxrTnnDf/values/' + sh.id + '?majorDimension=ROWS', 'x-target-method': 'GET', 'x-target-auth': 'Bearer ' + userToken } });
+            const d2 = await r2.json();
+            const vals = (d2.data && d2.data.valueRange && d2.data.valueRange.values) || [];
+            for (let i = 2; i < vals.length; i++) {
+                const row = vals[i]; if (!row) continue;
+                const d = parseDate(row[sh.colDate]); if (!isIn(d, wk.start, wk.end)) continue;
+                const rv = String(row[sh.colReviewer] || '').trim();
+                if (rv) rows.push({ reviewer: rv });
+            }
+        } catch(e) {}
     }
-    console.log('上周失误: ' + rows.length + '条');
-    if (rows.length === 0) { console.log('无数据'); return; }
 
     const rc = {};
     rows.forEach(r => { rc[r.reviewer] = (rc[r.reviewer] || 0) + 1; });
+    console.log('上周失误: ' + rows.length + '条, ' + Object.keys(rc).length + '人');
 
-    const th = { examMin: 6, learnMin: 11, trainMin: 16 };
-    // 从 Supabase 读取邮箱映射（管理后台同步的 personnelEmails）
-    let emails = (await supabaseGet('personnelEmails')) || {};
-    // 兜底：读本地 emails.json
-    if (Object.keys(emails).length === 0) {
-        try { emails = JSON.parse(fs.readFileSync('./emails.json', 'utf8')); console.log('使用本地 emails.json'); } catch(e) {}
-    }
-    console.log('邮箱映射: ' + Object.keys(emails).length + '人');
+    const TH = { examMin: 6, learnMin: 11, trainMin: 16 };
 
-    let sent = 0, fail = 0;
     for (const [name, count] of Object.entries(rc).sort((a,b) => b[1]-a[1])) {
         const email = emails[name];
         if (!email) continue;
-        if (count >= th.examMin) {
-            try { await sendCard(email, buildCard('exam', { title: name+' 精准考试', reviewerName: name, count }), appToken); console.log('  📝 考试 → ' + name+'('+count+')'); sent++; }
+        if (count >= TH.examMin) {
+            try { await sendCard(email, examCard(name, count), appToken); console.log('  📝 考试 → ' + name+'('+count+')'); sent++; }
             catch(e) { console.log('  ❌ ' + name + ': ' + e.message); fail++; }
         }
-        if (count >= th.learnMin) {
-            try { await sendCard(email, buildCard('learn', { title: name+' 学习地图', reviewerName: name, count }), appToken); console.log('  🗺️ 学习 → ' + name+'('+count+')'); sent++; }
+        if (count >= TH.learnMin) {
+            try { await sendCard(email, learnCard(name, count), appToken); console.log('  🗺️ 学习 → ' + name+'('+count+')'); sent++; }
             catch(e) { console.log('  ❌ ' + name + ': ' + e.message); fail++; }
         }
-        if (count >= th.trainMin) {
-            try { await sendCard(email, buildCard('train', { title: name+' 精准培训', reviewerName: name, count }), appToken); console.log('  📖 培训 → ' + name+'('+count+')'); sent++; }
+        if (count >= TH.trainMin) {
+            try { await sendCard(email, trainCard(name, count), appToken); console.log('  📖 培训 → ' + name+'('+count+')'); sent++; }
             catch(e) { console.log('  ❌ ' + name + ': ' + e.message); fail++; }
         }
     }
 
-    await supabaseUpsert(doneKey, { date: new Date().toISOString(), week: wk.key, sent, fail, total: rows.length });
+    // 标记已完成
+    await fetch(SUPABASE_URL + '/rest/v1/app_data', {
+        method: 'POST',
+        headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY, 'Content-Type': 'application/json', 'Prefer': 'resolution=merge-duplicates' },
+        body: JSON.stringify([{ key: doneKey, value: JSON.stringify({ date: new Date().toISOString(), week: wk.key, sent, fail }), updated_at: new Date().toISOString() }])
+    });
     console.log('=== 完成: ' + sent + '成功 ' + fail + '失败 ===');
 }
 

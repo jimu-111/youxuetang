@@ -16553,6 +16553,16 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
         html += reportBtn;
 
         document.getElementById('mainContent').innerHTML = html;
+        // 自动出卷/学习/培训（URL参数autoExam/autoLearn/autoTrain触发）
+        setTimeout(function() {
+            var q = window._autoGenQueue;
+            if (!q) return;
+            window._autoGenQueue = null;
+            if (q.exam) { try { generatePrecisionExam(decodeURIComponent(q.exam)); } catch(e) {} }
+            if (q.learn) { try { switchNav('learningMapView'); } catch(e) {} }
+            if (q.train) { try { generatePrecisionTraining(decodeURIComponent(q.train)); } catch(e) {} }
+            window._autoGenAllowGuest = false;
+        }, 1500);
         // 生成横幅二维码
         setTimeout(function() {
             var qr = document.getElementById('bannerQrcode');
@@ -17472,15 +17482,36 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
     const LEARNPLAN_PUSH_KEY = 'learnPlanPushRecords';
 
     function getTrainingPushes() { try { return JSON.parse(localStorage.getItem(TRAINING_PUSH_KEY)||'[]'); } catch(e) { return []; } }
-    function saveTrainingPushes(d) { localStorage.setItem(TRAINING_PUSH_KEY, JSON.stringify(d)); }
+    function saveTrainingPushes(d) {
+        var val = JSON.stringify(d);
+        localStorage.setItem(TRAINING_PUSH_KEY, val);
+        try {
+            fetch(SUPABASE_URL + '/rest/v1/app_data', {
+                method: 'POST',
+                headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY, 'Content-Type': 'application/json', 'Prefer': 'resolution=merge-duplicates' },
+                body: JSON.stringify({ key: TRAINING_PUSH_KEY, value: val, updated_at: new Date().toISOString() })
+            }).catch(function() {});
+        } catch(e) {}
+    }
     function getLearnPlanPushes() { try { return JSON.parse(localStorage.getItem(LEARNPLAN_PUSH_KEY)||'[]'); } catch(e) { return []; } }
-    function saveLearnPlanPushes(d) { localStorage.setItem(LEARNPLAN_PUSH_KEY, JSON.stringify(d)); }
+    function saveLearnPlanPushes(d) {
+        var val = JSON.stringify(d);
+        localStorage.setItem(LEARNPLAN_PUSH_KEY, val);
+        try {
+            fetch(SUPABASE_URL + '/rest/v1/app_data', {
+                method: 'POST',
+                headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY, 'Content-Type': 'application/json', 'Prefer': 'resolution=merge-duplicates' },
+                body: JSON.stringify({ key: LEARNPLAN_PUSH_KEY, value: val, updated_at: new Date().toISOString() })
+            }).catch(function() {});
+        } catch(e) {}
+    }
     // 检查本期是否已推送
     function isPushedThisPeriod(identifier, type) {
         var curWeek = getCurrentWeekKey();
+        // 快速检查：如果本周自动推送已完成，所有项目标记为已推送
+        if (sessionStorage.getItem('auto_push_week_' + curWeek) === 'done') return true;
         var records = getFeishuPushRecords();
         var targetKey = type + '_' + identifier;
-        console.log('isPushedThisPeriod 查找 pushKey=' + targetKey + ' 本周=' + curWeek + ' 记录数=' + records.length);
         return records.some(function(r){
             var wk = getWeekKey(r.time);
             var rtype = (r.meta && r.meta.type) || r.type || '';
@@ -17556,6 +17587,13 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
     // 页面加载时检测是否需要自动推送
     function initAutoPush() {
         if (!isAdminMode()) return;
+        var curWeek = getCurrentWeekKey();
+        // 检查 Supabase 本周是否已自动推送
+        fetch(SUPABASE_URL + '/rest/v1/app_data?key=eq.auto_push_done_' + curWeek + '&select=value&limit=1', {
+            headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY }
+        }).then(function(r){ return r.json(); }).then(function(rows){
+            if (rows && rows.length > 0) sessionStorage.setItem('auto_push_week_' + curWeek, 'done');
+        }).catch(function(){});
         var now = new Date();
         var day = now.getDay(), hour = now.getHours();
         var curWeek = getCurrentWeekKey();
@@ -17627,9 +17665,45 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
         var sidebar = document.querySelector('.sidebar');
         if (sidebar && sidebar.style.display === 'none') sidebar.style.display = '';
         const urlParams = new URLSearchParams(window.location.search);
+        // 自动打开培训报告（新窗口）
+        const autoReport = urlParams.get('report');
+        if (autoReport && !window._reportAutoOpened) {
+            window._reportAutoOpened = true;
+            var rptName = decodeURIComponent(autoReport);
+            var rptHtml = generatedReports[rptName];
+            if (rptHtml) {
+                var blob = new Blob([rptHtml], { type: 'text/html' });
+                window.open(URL.createObjectURL(blob), '_blank');
+            }
+        }
+        // 自动跳转学习地图
+        const autoLearn = urlParams.get('learnPlan');
+        if (autoLearn && !window._learnAutoOpened) {
+            window._learnAutoOpened = true;
+            window._pendingLearnCode = autoLearn;
+            setTimeout(function() {
+                var navBtn = document.querySelector('.nav-btn[data-nav="learningMapView"]');
+                if (navBtn) navBtn.click();
+            }, 500);
+        }
+        // 自动出卷/学习/培训（URL参数触发）
+        const autoGenExam = urlParams.get('autoExam');
+        const autoGenLearn = urlParams.get('autoLearn');
+        const autoGenTrain = urlParams.get('autoTrain');
+        const container = document.getElementById('mainContent');
+        if ((autoGenExam || autoGenLearn || autoGenTrain) && !window._autoGenerated) {
+            window._autoGenerated = true;
+            // 自动出卷/学习/培训，游客模式也允许
+            window._autoGenAllowGuest = true;
+            var sidebar2 = document.querySelector('.sidebar');
+            if (sidebar2) sidebar2.style.display = '';
+            if (container) container.style.padding = '20px 28px';
+            switchNav('errorDashboard');
+            window._autoGenQueue = { exam: autoGenExam, learn: autoGenLearn, train: autoGenTrain };
+        }
+
         const autoExam = urlParams.get('exam');
         const shouldAutoStart = autoExam && !window._examAutoStarted;
-        const container = document.getElementById('mainContent');
         if (shouldAutoStart) {
             const history = getExamHistory();
             const exam = Object.values(history).find(e => e.examCode === autoExam);
