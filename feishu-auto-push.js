@@ -202,7 +202,7 @@ async function main() {
                 examCode: examCode,
                 reviewerName: name,
                 questions: selected,
-                generatedAt: new Date().toISOString(),
+                generatedAt: wk.end.toISOString(), // 标记为上周日
                 source: '周一自动推送',
                 status: 'pending', attempts: 0, records: [],
                 timeLimit: 40, maxAttempts: 2, wrongAnswers: []
@@ -276,7 +276,6 @@ async function main() {
             body: JSON.stringify([{ key: 'generatedReports', value: JSON.stringify(generatedReports), updated_at: new Date().toISOString() }])
         }).catch(function() {});
     }
-    console.log('[DEBUG] examHistory 共 ' + Object.keys(examHistory).length + ' 条，最近3条: ' + JSON.stringify(Object.values(examHistory).slice(-3).map(function(e){return e.reviewerName+'/'+e.examCode;})));
 
 
     for (const [name, count] of Object.entries(rc).sort((a,b) => b[1]-a[1])) {
