@@ -1348,6 +1348,21 @@
                     <div class="stat-card-value" id="auditCount">--</div>
                     <div class="stat-card-label">审计日志</div>
                 </div>
+                <!-- 判责量同步监控 -->
+                <div class="stat-card" id="panzeCard" style="cursor:pointer;" onclick="toggleAdminDetail('panzeDetail')">
+                    <div class="stat-card-header">
+                        <div class="stat-card-icon" style="background:#fef3c7;">📊</div>
+                        <span class="stat-card-trend up" id="panzeBadge">--</span>
+                    </div>
+                    <div class="stat-card-value" id="panzeCount">--</div>
+                    <div class="stat-card-label">判责量同步</div>
+                </div>
+            </div>
+            <!-- 判责量详情 -->
+            <div id="panzeDetail" class="report-box" style="display:none;margin-top:16px;">
+                <div class="report-title" style="display:flex;justify-content:space-between;align-items:center;">📊 判责量同步记录 <div style="display:flex;gap:8px;align-items:center;"><input id="panzeSearch" type="text" placeholder="🔍 搜索日期或人名..." oninput="window.renderPanzePage(1)" style="padding:6px 12px;border:1px solid #cbd5e1;border-radius:8px;font-size:0.8rem;width:200px;"><span style="font-size:0.7rem;color:#94a3b8;cursor:pointer;" onclick="toggleAdminDetail('panzeDetail')">收起 ▲</span></div></div>
+                <div id="panzeDetailTable"></div>
+                <div id="panzePagination" class="pagination"></div>
             </div>
             <!-- 人员变动详情 -->
             <div id="hrDetail" class="report-box" style="display:none;margin-top:16px;">
@@ -1411,15 +1426,84 @@
             var el = document.getElementById(id);
             if (!el) return;
             // 先收起其他详情
-            ['hrDetail','emailDetail'].forEach(function(d){
+            ['hrDetail','emailDetail','auditDetail','panzeDetail'].forEach(function(d){
                 if (d !== id) { var other = document.getElementById(d); if (other) other.style.display = 'none'; }
             });
             el.style.display = el.style.display === 'none' ? 'block' : 'none';
             if (id === 'emailDetail' && el.style.display === 'block') refreshEmailTable();
             if (id === 'hrDetail' && el.style.display === 'block') refreshHRCombinedList();
             if (id === 'auditDetail' && el.style.display === 'block') refreshAuditLog();
+            if (id === 'panzeDetail' && el.style.display === 'block') refreshPanzeStatus();
         };
         // 更新卡片数字
+        var _panzeAllData = [];
+        function refreshPanzeStatus() {
+            var countEl = document.getElementById('panzeCount');
+            var badgeEl = document.getElementById('panzeBadge');
+            fetch(SUPABASE_URL + '/rest/v1/app_data?key=like.feishu_panze_2026*&select=key,value&order=key.desc', {
+                headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY }
+            }).then(function(r){return r.json();}).then(function(rows){
+                _panzeAllData = [];
+                rows.forEach(function(r){
+                    try {
+                        var d = JSON.parse(r.value);
+                        var dateStr = r.key.replace('feishu_panze_', '');
+                        if (dateStr === 'latest') return;
+                        var map = d.map || {};
+                        var cnt = Object.keys(map).length;
+                        var total = Object.values(map).reduce(function(a,b){return a+Number(b);},0);
+                        _panzeAllData.push({ date: dateStr, count: cnt, total: total, map: map });
+                    } catch(e) {}
+                });
+                _panzeAllData.sort(function(a,b){ return b.date.localeCompare(a.date); });
+                if (countEl && _panzeAllData.length > 0) {
+                    countEl.textContent = _panzeAllData[0].date;
+                    if (badgeEl) badgeEl.textContent = _panzeAllData[0].count + '人/' + _panzeAllData[0].total + '次';
+                }
+                renderPanzePage(1);
+            }).catch(function(){});
+        }
+        function renderPanzePage(page) {
+            var tableEl = document.getElementById('panzeDetailTable');
+            var pagEl = document.getElementById('panzePagination');
+            var searchVal = (document.getElementById('panzeSearch')||{}).value || '';
+            var filtered = _panzeAllData.filter(function(d){ return !searchVal || d.date.indexOf(searchVal) >= 0 || Object.keys(d.map).some(function(n){ return n.indexOf(searchVal) >= 0; }); });
+            var pageSize = 10;
+            var totalPages = Math.ceil(filtered.length / pageSize) || 1;
+            if (page > totalPages) page = totalPages;
+            var start = (page - 1) * pageSize;
+            var pageData = filtered.slice(start, start + pageSize);
+            if (!tableEl) return;
+            if (pageData.length === 0) { tableEl.innerHTML = '<div style="text-align:center;color:#94a3b8;padding:20px;">无匹配记录</div>'; pagEl.innerHTML = ''; return; }
+            var html = '<table style="width:100%;border-collapse:collapse;"><thead><tr><th style="padding:8px;text-align:center;width:33%;">日期</th><th style="padding:8px;text-align:center;width:33%;">人数</th><th style="padding:8px;text-align:center;width:33%;">判责量</th></tr></thead><tbody>';
+            pageData.forEach(function(d){
+                html += '<tr class="panze-row" data-date="' + d.date + '" style="cursor:pointer;border-bottom:1px solid #eef2f6;" onclick="window.showPanzeDetailPopup(\'' + d.date + '\')"><td style="padding:8px;text-align:center;color:#2a5298;text-decoration:underline;">' + d.date + '</td><td style="padding:8px;text-align:center;font-weight:600;">' + d.count + '人</td><td style="padding:8px;text-align:center;">' + d.total + '</td></tr>';
+            });
+            html += '</tbody></table>';
+            tableEl.innerHTML = html;
+            var pagHtml = '<span style="font-size:0.8rem;color:#5e6f8d;">共' + filtered.length + '条</span> ';
+            for (var p = 1; p <= totalPages; p++) {
+                pagHtml += '<button onclick="window.renderPanzePage(' + p + ')" style="' + (p === page ? 'background:#2a5298;color:white;' : '') + '">' + p + '</button>';
+            }
+            pagEl.innerHTML = pagHtml;
+        }
+        window.renderPanzePage = renderPanzePage;
+        window.showPanzeDetailPopup = showPanzeDetailPopup;
+        function showPanzeDetailPopup(date) {
+            var item = _panzeAllData.find(function(d){ return d.date === date; });
+            if (!item) return;
+            var searchVal = (document.getElementById('panzeSearch')||{}).value || '';
+            var entries = Object.entries(item.map).sort(function(a,b){ return b[1] - a[1]; });
+            var html = '<div class="modal-overlay" id="panzePopup" onclick="if(event.target===this)this.remove()"><div class="modal-container" style="max-width:500px;"><div class="modal-header"><span>📊 ' + date + ' 判责量详情</span><button class="modal-close-btn" onclick="document.getElementById(\'panzePopup\').remove()">✕</button></div><div class="modal-body" style="max-height:60vh;overflow-y:auto;"><table style="width:100%;border-collapse:collapse;"><tr style="background:#f8fafc;font-weight:600;"><th style="padding:6px 10px;text-align:center;">名字</th><th style="padding:6px 10px;text-align:center;">判责量</th></tr>';
+            entries.forEach(function(e){
+                var highlight = searchVal && e[0].indexOf(searchVal) >= 0;
+                html += '<tr style="border-bottom:1px solid #eef2f6;' + (highlight ? 'background:#fff3cd;font-weight:700;' : '') + '"><td style="padding:6px 10px;text-align:center;">' + escapeHtml(e[0]) + '</td><td style="padding:6px 10px;text-align:center;font-weight:600;">' + e[1] + '</td></tr>';
+            });
+            html += '</table></div></div></div>';
+            var old = document.getElementById('panzePopup'); if (old) old.remove();
+            document.body.insertAdjacentHTML('beforeend', html);
+        }
+
         function updateAdminCards() {
             var hr = document.getElementById('hrCount'), hrBadge = document.getElementById('hrBadge');
             if (hr) {
@@ -1439,6 +1523,7 @@
                 ac.textContent = n2 || '0';
                 if (ab) ab.textContent = n2 + '条';
             }
+            refreshPanzeStatus();
         }
         function refreshAuditLog() {
             var el = document.getElementById('auditLogList'); if (!el) return;
