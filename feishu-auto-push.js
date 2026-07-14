@@ -290,7 +290,11 @@ async function main() {
             });
             if (exams.length > 0) examCode = exams[exams.length - 1].examCode;
 
-            if (!examCode) { console.log('  ⏭ ' + name + ' 无考试码，跳过'); continue; }
+            if (!examCode) {
+                var allExams = Object.values(examHistory).filter(function(e){return e.reviewerName===name;});
+                console.log('  ⏭ ' + name + ' 无考试码，跳过 (该人记录数:' + allExams.length + ' 日期:' + allExams.map(function(e){return (e.generatedAt||e.time||'').substring(0,10);}).join(',') + ')');
+                continue;
+            }
             var card = { config: { wide_screen_mode: true }, header: { title: { tag: 'plain_text', content: '📝 ' + name + ' 精准考试' }, template: 'orange' }, elements: [{ tag: 'div', text: { tag: 'lark_md', content: '**' + name + '** 上周失误 **' + count + ' 次**，已达出卷阈值\n考试码：**' + examCode + '**' } }, { tag: 'action', actions: [{ tag: 'button', text: { tag: 'plain_text', content: '📝 开始考试' }, type: 'primary', url: SITE_URL + '?exam=' + examCode }] }] };
             try { await sendCard(email, card, appToken); console.log('  📝 考试 → ' + name+'('+count+') [' + examCode + ']'); sent++; }
             catch(e) { console.log('  ❌ ' + name + ': ' + e.message); fail++; }
