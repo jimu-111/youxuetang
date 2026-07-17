@@ -263,6 +263,7 @@
         .pagination button:hover { background: #eef2ff; }
         @keyframes fadeInUp { from { opacity: 0; transform: translateY(20px);} to { opacity: 1; transform: translateY(0);} }
         @keyframes cardPopIn { from { opacity: 0; transform: scale(0.85) translateY(10px); } to { opacity: 1; transform: scale(1) translateY(0); } }
+        @keyframes lpSpin { from { transform:rotate(0deg); } to { transform:rotate(360deg); } }
         /* 自定义卡片弹窗 */
         .custom-dialog-overlay { position: fixed; top:0; left:0; width:100%; height:100%; background: rgba(0,0,0,0.4); display: flex; align-items: center; justify-content: center; z-index: 9999; animation: fadeIn 0.15s ease; }
         .custom-dialog-card { background: white; border-radius: 20px; padding: 28px 24px 20px; max-width: 420px; width: 90%; box-shadow: 0 20px 50px rgba(0,0,0,0.25); text-align: center; animation: cardPopIn 0.25s ease; }
@@ -1360,7 +1361,7 @@
             </div>
             <!-- 判责量详情 -->
             <div id="panzeDetail" class="report-box" style="display:none;margin-top:16px;">
-                <div class="report-title" style="display:flex;justify-content:space-between;align-items:center;">📊 判责量同步记录 <div style="display:flex;gap:8px;align-items:center;"><input id="panzeSearch" type="text" placeholder="🔍 搜索日期或人名..." oninput="window.renderPanzePage(1)" style="padding:6px 12px;border:1px solid #cbd5e1;border-radius:8px;font-size:0.8rem;width:200px;"><span style="font-size:0.7rem;color:#94a3b8;cursor:pointer;" onclick="toggleAdminDetail('panzeDetail')">收起 ▲</span></div></div>
+                <div class="report-title" style="display:flex;justify-content:space-between;align-items:center;">📊 判责量同步记录 <div style="display:flex;gap:8px;align-items:center;"><button id="panzeSyncBtn" onclick="manualPanzeUpload()" style="background:#fef3c7;border:1px solid #f59e0b;padding:5px 12px;border-radius:20px;cursor:pointer;font-size:0.78rem;font-weight:600;color:#b45309;white-space:nowrap;">📥 一键同步</button><input id="panzeSearch" type="text" placeholder="🔍 搜索日期或人名..." oninput="window.renderPanzePage(1)" style="padding:6px 12px;border:1px solid #cbd5e1;border-radius:8px;font-size:0.8rem;width:200px;"><span style="font-size:0.7rem;color:#94a3b8;cursor:pointer;" onclick="toggleAdminDetail('panzeDetail')">收起 ▲</span></div></div>
                 <div id="panzeDetailTable"></div>
                 <div id="panzePagination" class="pagination"></div>
             </div>
@@ -1459,10 +1460,81 @@
                 if (countEl && _panzeAllData.length > 0) {
                     countEl.textContent = _panzeAllData[0].date;
                     if (badgeEl) badgeEl.textContent = _panzeAllData[0].count + '人/' + _panzeAllData[0].total + '次';
+                    // 判断数据是否最新（距今天不超过3天显示绿色，否则橙色警告）
+                    var latestDate = new Date(_panzeAllData[0].date);
+                    var now = new Date();
+                    var daysDiff = Math.floor((now - latestDate) / 86400000);
+                    var cardEl = document.getElementById('panzeCard');
+                    if (cardEl) {
+                        if (daysDiff <= 1) {
+                            cardEl.style.borderLeft = '4px solid #27ae60';
+                        } else if (daysDiff <= 3) {
+                            cardEl.style.borderLeft = '4px solid #f39c12';
+                        } else {
+                            cardEl.style.borderLeft = '4px solid #c0392b';
+                        }
+                    }
+                    if (badgeEl) {
+                        if (daysDiff <= 1) badgeEl.style.background = '#e6f7e6';
+                        else if (daysDiff <= 3) badgeEl.style.background = '#fff3e0';
+                        else badgeEl.style.background = '#ffedea';
+                    }
                 }
                 renderPanzePage(1);
             }).catch(function(){});
         }
+        // 一键同步判责量：调用本地服务 → 显示同步中 → 自动刷新
+        window.manualPanzeUpload = function() {
+            var btn = document.getElementById('panzeSyncBtn');
+            if (!btn) return;
+            if (btn.dataset.running === '1') return;
+            btn.dataset.running = '1';
+            var origText = btn.innerHTML;
+            btn.innerHTML = '⏳ 同步中...';
+            btn.style.background = '#e2e8f0';
+            btn.style.borderColor = '#94a3b8';
+            btn.style.color = '#5e6f8d';
+            btn.style.cursor = 'wait';
+
+            fetch('http://localhost:3456/sync', { method: 'POST' })
+                .then(function(r) { return r.json(); })
+                .then(function(result) {
+                    if (result.ok) {
+                        showToast('✅ ' + result.date + ' 判责量已同步（' + result.count + '人，' + result.total + '次）', 'success');
+                        refreshPanzeStatus();
+                        btn.innerHTML = '✅ 同步完成';
+                        btn.style.background = '#d1fae5';
+                        btn.style.borderColor = '#6ee7b7';
+                        btn.style.color = '#166534';
+                    } else {
+                        showToast('❌ 同步失败：' + (result.error || '未知错误'), 'error');
+                        btn.innerHTML = '❌ 同步失败';
+                        btn.style.background = '#fef2f2';
+                        btn.style.borderColor = '#fca5a5';
+                        btn.style.color = '#c0392b';
+                    }
+                })
+                .catch(function(err) {
+                    showToast('❌ 同步服务未启动，请先双击桌面「启动同步服务.bat」', 'error');
+                    btn.innerHTML = '❌ 服务未启动';
+                    btn.style.background = '#fef2f2';
+                    btn.style.borderColor = '#fca5a5';
+                    btn.style.color = '#c0392b';
+                })
+                .finally(function() {
+                    btn.dataset.running = '0';
+                    setTimeout(function() {
+                        if (btn.dataset.running !== '1') {
+                            btn.innerHTML = '📥 一键同步';
+                            btn.style.background = '#fef3c7';
+                            btn.style.borderColor = '#f59e0b';
+                            btn.style.color = '#b45309';
+                            btn.style.cursor = 'pointer';
+                        }
+                    }, 3000);
+                });
+        };
+
         function renderPanzePage(page) {
             var tableEl = document.getElementById('panzeDetailTable');
             var pagEl = document.getElementById('panzePagination');
@@ -4444,10 +4516,10 @@
         const lastPeriodLabel = isMonth ? '上月' : '上周';
 
         // ---- 1. 摘要卡片 ----
-        // 自动计算优先：判责量 - 失误量 / 判责量
+        // 自动计算优先：判责量 - 总失误量 / 判责量（使用全部来源的失误量）
         const _pd = getModule3PeriodData(thisPeriodKey);
         const _pzMap = _pd.panZeMap || {};
-        const _mkMapRaw = JSON.parse(localStorage.getItem('samplingModule3MistakeMap') || '{}');
+        const _mkMapRaw = JSON.parse(localStorage.getItem('reviewerTotalMistakeMap') || '{}');
         const _mergedAcc = {};
         Object.keys(_pzMap).forEach(n => {
             const pz = Number(_pzMap[n]); const mk = Number(_mkMapRaw[n]) || 0;
@@ -4937,7 +5009,7 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
         // 读取判责量（用于准确率自动计算和判责量列）
         const _pd2 = getModule3PeriodData(periodRanges[0].periodKey);
         const _pzMap2 = _pd2.panZeMap || {};
-        const _mkMap2 = JSON.parse(localStorage.getItem('samplingModule3MistakeMap') || '{}');
+        const _mkMap2 = JSON.parse(localStorage.getItem('reviewerTotalMistakeMap') || '{}');
         function _autoAcc(name) {
             const pz = Number(_pzMap2[name]); const mk = Number(_mkMap2[name]) || 0;
             if (!pz || pz <= 0) return null;
@@ -6890,18 +6962,25 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
 
             // 计算模块3失误量：从筛选后的行中，来源=抽检的行，统计初审名字出现次数
             const mistakeMap = {};
+            // 计算总失误量（所有来源）：用于初审准确率自动计算
+            const totalMistakeMap = {};
             const revCol = parseResult.mapping.reviewer;
             const srcCol = parseResult.mapping.source;
             if (revCol && srcCol) {
                 rowsToAnalyze.forEach(row => {
                     const source = String(row[srcCol] || '').trim();
-                    if (!source.includes('抽检')) return;
                     const reviewer = String(row[revCol] || '').trim();
                     if (!reviewer) return;
-                    mistakeMap[reviewer] = (mistakeMap[reviewer] || 0) + 1;
+                    // 总失误量：所有来源都计入
+                    totalMistakeMap[reviewer] = (totalMistakeMap[reviewer] || 0) + 1;
+                    // 模块3失误量：仅抽检来源
+                    if (source.includes('抽检')) {
+                        mistakeMap[reviewer] = (mistakeMap[reviewer] || 0) + 1;
+                    }
                 });
             }
             localStorage.setItem('samplingModule3MistakeMap', JSON.stringify(mistakeMap));
+            localStorage.setItem('reviewerTotalMistakeMap', JSON.stringify(totalMistakeMap));
 
             // 自动从飞书表格获取抽检量（G列初审名字按选定周期筛选后计数）
             console.log('[DEBUG] doAnalysis called, type=' + type + ' selectedSites=' + JSON.stringify(selectedSites) + ' window._selectedSites=' + JSON.stringify(window._selectedSites));
@@ -10450,7 +10529,7 @@ URL.revokeObjectURL(url);
                     <div id="qdetail-${qid}" style="display:none;margin-top:10px;padding-top:10px;border-top:1px dashed #eef2f6;">
                         <div style="font-size:0.75rem;color:#1e2a3a;margin-bottom:6px;"><strong>📌 完整答案：</strong>${escapeHtml(ansFull)}</div>
                         ${explFull ? '<div style="font-size:0.75rem;color:#5e6f8d;background:#f8fafc;padding:10px;border-radius:8px;"><strong>💡 解析：</strong>' + escapeHtml(explFull) + '</div>' : ''}
-                        ${q.screenshot ? '<div style="margin-top:6px;"><img src="' + q.screenshot + '" style="max-width:200px;max-height:150px;border-radius:8px;"></div>' : ''}
+                        ${q.screenshot ? '<div style="margin-top:6px;">' + photoTag(q.screenshot, 200, 150) + '</div>' : ''}
                         <div style="font-size:0.65rem;color:#94a3b8;margin-top:6px;">分类：${escapeHtml(q.category || '未分类')} | 难度：${escapeHtml(q.difficulty || '中等')} | 创建：${(q.createdAt||'').substring(0,10)}</div>
                     </div>
                 </div>`;
@@ -13308,6 +13387,8 @@ URL.revokeObjectURL(url);
 
     async function renderLearningMapView() {
         var container = document.getElementById('mainContent');
+        // 有缓存直接渲染，避免闪屏
+        if (learningMapData.length > 0) { buildLMCache(); renderLMMainPage(); return; }
         container.innerHTML = '<div style="text-align:center;padding:40px;color:#5e6f8d;">⏳ 加载学习地图数据...</div>';
         await fetchLearningMapData(false);
         if (!buildLMCache()) {
@@ -13377,7 +13458,160 @@ URL.revokeObjectURL(url);
             '</div>' +
             recBanner +
             '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:18px;">' + cardsHtml + '</div>' +
+            // 人员学习进度模块
+            '<div id="learningProgressSection" class="report-box" style="margin-top:24px;">' +
+                '<div class="report-title" style="display:flex;justify-content:space-between;align-items:center;">📊 人员学习进度 <span style="font-size:0.7rem;color:#94a3b8;" id="lpRefreshLabel"></span></div>' +
+                '<div style="display:flex;gap:8px;align-items:center;margin-bottom:12px;flex-wrap:wrap;">' +
+                    '<button class="site-filter-btn active" data-lp-site="all" onclick="window._lpSite=this.dataset.lpSite;renderLearningProgressTable();document.querySelectorAll(\'.site-filter-btn[data-lp-site]\').forEach(b=>b.classList.toggle(\'active\',b.dataset.lpSite===window._lpSite));">全站</button>' +
+                    '<button class="site-filter-btn" data-lp-site="成都" onclick="window._lpSite=this.dataset.lpSite;renderLearningProgressTable();document.querySelectorAll(\'.site-filter-btn[data-lp-site]\').forEach(b=>b.classList.toggle(\'active\',b.dataset.lpSite===window._lpSite));">成都</button>' +
+                    '<button class="site-filter-btn" data-lp-site="青岛" onclick="window._lpSite=this.dataset.lpSite;renderLearningProgressTable();document.querySelectorAll(\'.site-filter-btn[data-lp-site]\').forEach(b=>b.classList.toggle(\'active\',b.dataset.lpSite===window._lpSite));">青岛</button>' +
+                    '<button class="site-filter-btn" data-lp-site="深圳" onclick="window._lpSite=this.dataset.lpSite;renderLearningProgressTable();document.querySelectorAll(\'.site-filter-btn[data-lp-site]\').forEach(b=>b.classList.toggle(\'active\',b.dataset.lpSite===window._lpSite));">深圳</button>' +
+                    '<select id="lpCatFilter" onchange="renderLearningProgressTable()" style="padding:4px 8px;border:1px solid #cbd5e1;border-radius:8px;font-size:0.75rem;">' +
+                        '<option value="all">全部品类</option>' +
+                        '<option value="手机">手机</option><option value="平板">平板</option><option value="笔记本">笔记本</option><option value="手表">手表</option><option value="耳机">耳机</option><option value="相机">相机</option><option value="手写笔">手写笔</option><option value="游戏机">游戏机</option>' +
+                    '</select>' +
+                    '<input id="lpSearch" type="text" placeholder="🔍 搜索姓名..." oninput="renderLearningProgressTable()" style="flex:1;min-width:120px;max-width:200px;padding:4px 10px;border:1px solid #cbd5e1;border-radius:8px;font-size:0.75rem;">' +
+                    '<button onclick="_lpData=[];fetchLearningProgress()" style="background:#f1f5f9;border:1px solid #e2e8f0;border-radius:8px;padding:4px 12px;cursor:pointer;font-size:0.75rem;">🔄 刷新</button>' +
+                '</div>' +
+                '<div id="lpTableContainer" style="max-height:500px;overflow-y:auto;"></div>' +
+            '</div>' +
         '</div>';
+        // 延迟加载学习进度，不阻塞主页面渲染
+        setTimeout(function() {
+            if (_lpData.length === 0) fetchLearningProgress();
+            else renderLearningProgressTable();
+        }, 300);
+    }
+
+    // 学习进度数据
+    var _lpData = [];
+    var _lpLastRefresh = null;
+    window._lpSite = 'all';
+    var _lpFetching = false;
+    async function fetchLearningProgress() {
+        if (_lpFetching) return;
+        _lpFetching = true;
+        var el = document.getElementById('lpTableContainer');
+        if (el && _lpData.length === 0) el.innerHTML = '<div style="text-align:center;padding:24px;"><div style="width:30px;height:30px;border:3px solid #e2e8f0;border-top-color:#2a5298;border-radius:50%;animation:lpSpin 0.8s linear infinite;margin:0 auto 8px;"></div><div style="color:#94a3b8;font-size:0.78rem;">加载中...</div></div>';
+        try {
+            var token = getErrorDashboardToken();
+            if (!token) token = await feishuRefreshToken();
+            if (!token) token = await getCloudToken();
+            if (!token) token = await getFeishuToken();
+            if (!token) { if (el) el.innerHTML = '<div style="color:#c0392b;text-align:center;padding:20px;">❌ 未获取到飞书凭证</div>'; return; }
+            // 列出所有 sheet
+            var sheetsUrl = 'https://open.feishu.cn/open-apis/sheets/v3/spreadsheets/Q3lFwrHQAien4RkhK4AcNOGmnxg/sheets/query';
+            var sheetsResp = await feishuApiFetch(sheetsUrl, { headers: { 'Authorization': 'Bearer ' + token } });
+            var sheetsData = await sheetsResp.json();
+            var allSheets = (sheetsData.code === 0 && sheetsData.data && sheetsData.data.sheets) ? sheetsData.data.sheets : [];
+            if (allSheets.length === 0) { if (el) el.innerHTML = '<div style="color:#c0392b;text-align:center;padding:20px;">❌ 未获取到工作表列表</div>'; return; }
+            // 按标题匹配站点（含"成都"/"深圳"/"青岛"的sheet）
+            _lpData = [];
+            for (var si = 0; si < allSheets.length; si++) {
+                var sheetTitle = allSheets[si].title || '';
+                var siteName = '';
+                if (sheetTitle.indexOf('成都') >= 0) siteName = '成都';
+                else if (sheetTitle.indexOf('深圳') >= 0) siteName = '深圳';
+                else if (sheetTitle.indexOf('青岛') >= 0) siteName = '青岛';
+                if (!siteName) continue; // 跳过非站点sheet
+                var sheetId = allSheets[si].sheet_id;
+                // 用 valueRenderOption=FormattedValue 获取公式计算结果而非公式文本
+                var url = 'https://open.feishu.cn/open-apis/sheets/v2/spreadsheets/Q3lFwrHQAien4RkhK4AcNOGmnxg/values/' + sheetId + '?majorDimension=ROWS&valueRenderOption=FormattedValue';
+                var valsResp = await feishuApiFetch(url, { headers: { 'Authorization': 'Bearer ' + token } });
+                var valsData = await valsResp.json();
+                var vals = (valsData.code === 0 && valsData.data && valsData.data.valueRange && valsData.data.valueRange.values) || [];
+                if (!vals || vals.length < 2) continue;
+                var header = vals[0];
+                var colName = -1, colProgress = -1;
+                var catCols = {}; // {品类: 列索引}
+                var catNames = ['手机','平板','笔记本','手表','耳机','相机','手写笔','游戏机'];
+                for (var hi = 0; hi < header.length; hi++) {
+                    var h = String(header[hi] || '').trim();
+                    if (!h && hi === 0) colName = 0; // 第一列空视为姓名
+                    if (h === '姓名' || h === '名字' || h.indexOf('姓名')>=0 || h.indexOf('名字')>=0) colName = hi;
+                    if (h === '完成进度' || h === '进度' || h.indexOf('进度')>=0) colProgress = hi;
+                    for (var ci = 0; ci < catNames.length; ci++) {
+                        if (h === catNames[ci] || h.indexOf(catNames[ci]) >= 0) catCols[catNames[ci]] = hi;
+                    }
+                }
+                if (colName < 0) colName = 0; // 兜底：第一列是姓名
+                console.log('[学习进度] ' + siteName + ': 名字列=' + colName + ' 进度列=' + colProgress + ' 品类=' + Object.keys(catCols).join(','));
+                for (var ri = 1; ri < vals.length; ri++) {
+                    var row = vals[ri];
+                    if (!row || !row[colName]) continue;
+                    var rawName = String(row[colName] || '').trim();
+                    // 过滤汇总行（含"进度"、"完成"等关键字或百分比符号）
+                    if (!rawName || rawName.indexOf('进度') >= 0 || rawName.indexOf('完成') >= 0 || rawName.indexOf('%') >= 0 || rawName.indexOf('合计') >= 0) continue;
+                    var entry = { name: rawName, site: siteName, cats: {}, progress: '' };
+                    for (var c in catCols) {
+                        entry.cats[c] = String(row[catCols[c]] || '').trim();
+                    }
+                    if (colProgress >= 0) entry.progress = String(row[colProgress] || '').trim();
+                    // 去重：同名同站只保留第一条
+                    var dup = _lpData.find(function(e){ return e.name === entry.name && e.site === entry.site; });
+                    if (!dup) _lpData.push(entry);
+                }
+            }
+            _lpLastRefresh = new Date();
+            var lbl2 = document.getElementById('lpRefreshLabel');
+            if (lbl2) lbl2.textContent = '更新于 ' + _lpLastRefresh.toLocaleTimeString('zh-CN');
+            renderLearningProgressTable();
+        } catch(e) {
+            if (el) el.innerHTML = '<div style="color:#c0392b;text-align:center;padding:20px;">❌ 加载失败: ' + escapeHtml(e.message) + '</div>';
+        }
+        _lpFetching = false;
+    }
+
+    function renderLearningProgressTable() {
+        var el = document.getElementById('lpTableContainer');
+        if (!el) return;
+        if (_lpData.length === 0) { el.innerHTML = '<div style="text-align:center;color:#94a3b8;padding:20px;">暂无数据，点击刷新尝试获取</div>'; return; }
+        var site = window._lpSite || 'all';
+        var catFilter = (document.getElementById('lpCatFilter')||{}).value || 'all';
+        var search = ((document.getElementById('lpSearch')||{}).value || '').toLowerCase();
+        var filtered = _lpData.filter(function(d) {
+            if (site !== 'all' && d.site !== site) return false;
+            if (search && d.name.toLowerCase().indexOf(search) < 0) return false;
+            return true;
+        });
+        if (filtered.length === 0) { el.innerHTML = '<div style="text-align:center;color:#94a3b8;padding:20px;">无匹配记录</div>'; return; }
+        var catNames = ['手机','平板','笔记本','手表','耳机','相机','手写笔','游戏机'];
+        if (catFilter !== 'all') catNames = [catFilter];
+        var siteColors = {'成都':'#f0fdf4','青岛':'#eff6ff','深圳':'#fefce8'};
+        var html = '<table style="width:100%;border-collapse:collapse;font-size:0.78rem;table-layout:fixed;"><colgroup>';
+        html += '<col style="width:8%"><col style="width:5%">';
+        catNames.forEach(function(){ html += '<col style="width:7%">'; });
+        html += '<col style="width:8%"></colgroup>';
+        html += '<thead><tr style="background:#f8fafc;">';
+        html += '<th style="padding:6px 8px;text-align:center;position:sticky;top:0;background:#f8fafc;">姓名</th><th style="padding:6px 8px;text-align:center;position:sticky;top:0;background:#f8fafc;">站点</th>';
+        catNames.forEach(function(c) { html += '<th style="padding:4px 6px;text-align:center;position:sticky;top:0;background:#f8fafc;">' + c + '</th>'; });
+        html += '<th style="padding:6px 8px;text-align:center;position:sticky;top:0;background:#f8fafc;">完成进度</th></tr></thead><tbody>';
+        filtered.forEach(function(d) {
+            var bg = siteColors[d.site] || '#fff';
+            html += '<tr style="border-bottom:1px solid #eef2f6;background:' + bg + ';">';
+            html += '<td style="padding:6px 8px;text-align:center;font-weight:600;">' + escapeHtml(d.name) + '</td>';
+            html += '<td style="padding:6px 8px;text-align:center;font-size:0.7rem;color:#5e6f8d;">' + d.site + '</td>';
+            catNames.forEach(function(c) {
+                var val = d.cats[c] || '';
+                var icon = val ? '✅' : '⬜';
+                html += '<td style="padding:4px 2px;text-align:center;">' + icon + '</td>';
+            });
+            var pct = parseFloat(d.progress);
+            html += '<td style="padding:6px 8px;text-align:center;font-weight:600;">' + (!isNaN(pct) ? pct.toFixed(2) + '%' : (d.progress || '-')) + '</td>';
+            html += '</tr>';
+        });
+        // 进度汇总行
+        var totalPeople = filtered.length;
+        html += '<tr style="background:#f0f4f8;font-weight:600;"><td style="padding:6px 8px;text-align:center;">进度汇总</td><td style="padding:6px 8px;text-align:center;">' + totalPeople + '人</td>';
+        catNames.forEach(function(c) {
+            var done = filtered.filter(function(d) { return d.cats[c] && d.cats[c] !== ''; }).length;
+            var rate = totalPeople > 0 ? (done / totalPeople * 100) : 0;
+            html += '<td style="padding:4px 2px;text-align:center;font-size:0.68rem;">' + done + '/' + totalPeople + '<br><span style="color:' + (rate >= 80 ? '#27ae60' : rate >= 50 ? '#e67e22' : '#c0392b') + '">' + rate.toFixed(1) + '%</span></td>';
+        });
+        var avgProgress = filtered.reduce(function(a,d){ var v = parseFloat(d.progress); return a + (isNaN(v)?0:v); },0);
+        html += '<td style="padding:6px 8px;text-align:center;font-weight:600;">' + (totalPeople > 0 ? (avgProgress / totalPeople).toFixed(2) + '%' : '-') + '</td></tr>';
+        html += '</tbody></table>';
+        el.innerHTML = html;
     }
 
     // 知识领域分类：根据课程路径自动归类
@@ -13863,7 +14097,7 @@ URL.revokeObjectURL(url);
     let errorDashboardSheetStatus = {};
     let errorDashboardPage = 1;
     const ERROR_DASHBOARD_PAGE_SIZE = 20;
-    let errorDashboardFilter = { period: 'week', site: 'all', category: 'all', reviewer: 'all', customStart: '', customEnd: '' };
+    let errorDashboardFilter = { period: 'day', site: 'all', category: 'all', reviewer: 'all', customStart: '', customEnd: '' };
     let errorDashboardAllFailed = false; // 全部Sheet加载失败标记（通常意味着授权过期）
 
     // 飞书API请求 — 通过Supabase Edge Function代理（原始body转发）
@@ -18147,7 +18381,7 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
             }
             return `<div class="exam-question-item" id="qitem_${idx}">
                 <div style="font-weight:600;margin-bottom:4px;">${idx+1}. ${escapeHtml(q.question)}</div>
-                ${q.screenshot ? '<img src="' + q.screenshot + '" style="max-width:200px;max-height:150px;border-radius:8px;margin:4px 0;">' : ''}
+                ${q.screenshot ? photoTag(q.screenshot, 200, 150) : ''}
                 <div style="font-size:0.7rem;color:#94a3b8;">类型：${q.type==='choice'?'选择题':(q.type==='judge'?'判断题':'问答题')} | 分类：${escapeHtml(q.category||'未分类')} | 难度：${escapeHtml(q.difficulty||'中等')}</div>
                 ${answerArea}
             </div>`;
@@ -18495,12 +18729,23 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
                     }
                     // 学习计划数据不被云端旧数据覆盖
                     if (row.key === 'learningPlanData') {
-                        var existing = _realLS.getItem('learningPlanData');
-                        if (existing) {
+                        var existingLP = _realLS.getItem('learningPlanData');
+                        if (existingLP) {
                             try {
-                                var cur = JSON.parse(existing);
-                                var cloud = JSON.parse(row.value);
-                                if (Object.keys(cur).length >= Object.keys(cloud).length) return;
+                                var curLP = JSON.parse(existingLP);
+                                var cloudLP = JSON.parse(row.value);
+                                if (Object.keys(curLP).length >= Object.keys(cloudLP).length) return;
+                            } catch(e) {}
+                        }
+                    }
+                    // 学员数据保护：本地学员数>=云端时不覆盖（防止云端旧数据冲掉新加的学员）
+                    if (row.key === 'trainee_full_admin_backup') {
+                        var localStu = _realLS.getItem('trainee_full_admin_backup');
+                        if (localStu) {
+                            try {
+                                var localArr = JSON.parse(localStu);
+                                var cloudArr = JSON.parse(row.value);
+                                if (localArr.length >= cloudArr.length) return;
                             } catch(e) {}
                         }
                     }
@@ -18732,6 +18977,14 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
                 if (oldN in mm) { mm[newN] = mm[oldN]; delete mm[oldN]; mmChanged = true; }
             }
             if (mmChanged) localStorage.setItem('samplingModule3MistakeMap', JSON.stringify(mm));
+            // 同样清理总失误量映射
+            const tm = JSON.parse(localStorage.getItem('reviewerTotalMistakeMap') || '{}');
+            let tmChanged = false;
+            if ('雍彬彬' in tm) { delete tm['雍彬彬']; tmChanged = true; }
+            for (const [oldN, newN] of Object.entries(nameFix)) {
+                if (oldN in tm) { tm[newN] = tm[oldN]; delete tm[oldN]; tmChanged = true; }
+            }
+            if (tmChanged) localStorage.setItem('reviewerTotalMistakeMap', JSON.stringify(tm));
             // 标记迁移完成，后续加载跳过此段
             localStorage.setItem('_migrated_v2', '1');
         } catch(e) {}
