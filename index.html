@@ -779,11 +779,13 @@
                 const scoreValue = i < scores.length ? scores[i] : '';
                 const isPassed = i < scores.length ? scores[i] >= 90 : false;
                 const fileData = files && files[i];
-                tableHtml+=`<tr><td style="text-align:center;">第${i+1}次</div><td>${stageId===2?'全检考试':'模拟判责'}解决了<td>≥90%</div>
+                tableHtml+=`<tr><td style="text-align:center;">第${i+1}次</div><td>${stageId===2?'全检考试':'模拟判责'}<td>≥90%</div>
                         <td>${isReadOnly?(scoreValue?scoreValue+'%':'未考试'):`<input type="number" class="attempt-score" data-attempt="${i}" value="${scoreValue}" step="1" min="0" max="100" placeholder="0" style="width:70px;"> %`}</div>
                     <td class="pass-cell">${isPassed?'<span class="pass-badge">通过</span>':(scoreValue?'<span class="fail-badge">未通过</span>':'<span class="null-badge">未考试</span>')}</div>
-                        <td>${isReadOnly?(fileData?`<span class="file-link" onclick="window.downloadStoredFile(${student.id},${stageId},${i})">📎 ${fileData.name}</span>`:'无附件'):
-                        `<div class="file-upload-row"><input type="file" class="file-upload-input" data-attempt="${i}" accept=".pdf,.jpg,.png,.docx" style="display:none"><button class="upload-small" data-attempt="${i}">📤 上传</button><span class="file-name-display" data-attempt="${i}" style="font-size:0.65rem;">${fileData?fileData.name:''}</span>${fileData?`<span class="file-link" data-attempt="${i}" onclick="window.downloadStoredFile(${student.id},${stageId},${i})">📥 下载</span><span class="delete-file" data-attempt="${i}" onclick="window.deleteAttachment(${student.id},${stageId},${i})">🗑️ 删除</span>`:''}</div>`}</div>
+                        <td>${isReadOnly?(fileData?`<span class="file-link" onclick="${fileData.type==='link'?`window.open('${fileData.url}','_blank')`: `window.downloadStoredFile(${student.id},${stageId},${i})`}">${fileData.type==='link'?'🔗':'📎'} ${fileData.name}</span>`:'无附件'):
+                        `<div class="file-upload-row"><input type="file" class="file-upload-input" data-attempt="${i}" accept=".pdf,.jpg,.png,.docx" style="display:none"><button class="upload-small" data-attempt="${i}">📤 上传</button><span class="file-name-display" data-attempt="${i}" style="font-size:0.65rem;">${fileData?fileData.name:''}</span>${fileData?(fileData.type==='link'?`<span class="file-link" onclick="window.open('${fileData.url}','_blank')">🔗 打开</span>`:`<span class="file-link" onclick="window.downloadStoredFile(${student.id},${stageId},${i})">📥 下载</span>`)+`<span class="delete-file" onclick="window.deleteAttachment(${student.id},${stageId},${i})">🗑️ 删除</span>`:''}
+                            <input type="text" class="link-input" data-attempt="${i}" placeholder="粘贴网页链接..." style="width:180px;padding:3px 8px;border:1px solid #cbd5e1;border-radius:10px;font-size:0.7rem;">
+                            <button class="save-link-btn" data-attempt="${i}" style="background:#e8f5e9;border:1px solid #66bb6a;padding:3px 10px;border-radius:16px;cursor:pointer;font-size:0.65rem;white-space:nowrap;">🔗 保存链接</button></div>`}</div>
                   </tr>`;
             }
         } else if(stageId===4){
@@ -826,8 +828,10 @@
         
         if(!isReadOnly && (stageId===2||stageId===3)){
             const uploadBtns = modalElement.querySelectorAll('.upload-small');
-            uploadBtns.forEach(btn=>{ const attemptIdx = parseInt(btn.dataset.attempt); const fileInput = modalElement.querySelector(`.file-upload-input[data-attempt="${attemptIdx}"]`); if(fileInput){ fileInput.onchange = function(e){ if(e.target.files.length>0){ const file = e.target.files[0]; const reader = new FileReader(); reader.onload = function(ev){ const fileObj = {name:file.name, data:ev.target.result}; if(stageId===2) student.stageProgress.fullCheckFiles[attemptIdx] = fileObj; else student.stageProgress.mockFiles[attemptIdx] = fileObj; saveToLocal(); modalElement.remove(); showStageDetailModal(student, stageId, isReadOnly); alert(`文件 "${file.name}" 上传成功！`); }; reader.readAsDataURL(file); } }; btn.onclick = function(){ fileInput.click(); }; } });
-        }
+            uploadBtns.forEach(btn=>{ const attemptIdx = parseInt(btn.dataset.attempt); const fileInput = modalElement.querySelector(`.file-upload-input[data-attempt="${attemptIdx}"]`); if(fileInput){ fileInput.onchange = function(e){ if(e.target.files.length>0){ const file = e.target.files[0]; const reader = new FileReader(); reader.onload = function(ev){ const fileObj = {name:file.name, data:ev.target.result, type:'file'}; if(stageId===2) student.stageProgress.fullCheckFiles[attemptIdx] = fileObj; else student.stageProgress.mockFiles[attemptIdx] = fileObj; saveToLocal(); modalElement.remove(); showStageDetailModal(student, stageId, isReadOnly); }; reader.readAsDataURL(file); } }; btn.onclick = function(){ fileInput.click(); }; } });
+            // 保存链接
+            const linkBtns = modalElement.querySelectorAll('.save-link-btn');
+            linkBtns.forEach(btn=>{ const attemptIdx = parseInt(btn.dataset.attempt); btn.onclick = function(){ const inp = modalElement.querySelector(`.link-input[data-attempt="${attemptIdx}"]`); if(inp){ const url = inp.value.trim(); if(!url){alert('请输入网页链接');return;} if(!url.startsWith('http://')&&!url.startsWith('https://')){alert('链接必须以 http:// 或 https:// 开头');return;} const fileObj = {name:url.length>30?url.substring(0,30)+'…':url, url:url, type:'link'}; if(stageId===2) student.stageProgress.fullCheckFiles[attemptIdx] = fileObj; else student.stageProgress.mockFiles[attemptIdx] = fileObj; saveToLocal(); modalElement.remove(); showStageDetailModal(student, stageId, isReadOnly); } }; });        }
         window.downloadStoredFile = function(sid,sidStage,attempt){ const stu = students.find(s=>s.id===sid); if(stu){ const fileData = sidStage===2 ? stu.stageProgress.fullCheckFiles[attempt] : stu.stageProgress.mockFiles[attempt]; if(fileData && fileData.data) downloadFile(fileData.data, fileData.name); else alert("没有已上传的文件"); } };
         window.deleteAttachment = function(sid,sidStage,attempt){ verifyAdminPassword(()=>{ const stu = students.find(s=>s.id===sid); if(stu){ if(sidStage===2) stu.stageProgress.fullCheckFiles[attempt] = null; else stu.stageProgress.mockFiles[attempt] = null; saveToLocal(); modalElement.remove(); showStageDetailModal(stu, sidStage, isReadOnly); alert("附件已删除"); } }); };
         
@@ -1904,7 +1908,10 @@
     }
 
     const DATA_VERSION = 2;
-    function saveToLocal(){ localStorage.setItem("trainee_full_admin_backup",JSON.stringify(students.map(s=>({...s,stageProgress:s.stageProgress,returnReason:s.returnReason,graduatedDate:s.graduatedDate})))); localStorage.setItem("trainee_data_version",DATA_VERSION); }
+    function saveToLocal(){
+        localStorage.setItem("trainee_full_admin_backup",JSON.stringify(students.map(s=>({...s,stageProgress:s.stageProgress,returnReason:s.returnReason,graduatedDate:s.graduatedDate}))));
+        localStorage.setItem("trainee_data_version",DATA_VERSION);
+    }
     function loadData(){ 
         const saved=localStorage.getItem("trainee_full_admin_backup"); 
         const savedVersion=localStorage.getItem("trainee_data_version"); 
@@ -5213,7 +5220,7 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
         
         // === 新人情况模块 ===
         // 从学员列表自动获取正式判责阶段的新人
-        const NEWCOMER_NAMES = students.filter(function(s){return s.stage === 4 && !s.graduatedToArchive;}).map(function(s){return s.name;});
+        const NEWCOMER_NAMES = students.filter(function(s){return !s.graduatedToArchive;}).map(function(s){return s.name;});
         let newcomerSectionHtml = '';
         const ncData = getNewcomerAnalysisData();
         const ncPeriodData = ncData[thisPeriodKey] || {};
@@ -9475,9 +9482,10 @@ URL.revokeObjectURL(url);
     function renderDashboard() {
         const container = document.getElementById('mainContent');
         
-        // 确保从localStorage重新加载最新数据
-        const saved = localStorage.getItem("trainee_full_admin_backup");
-        if (saved) {
+        // 确保从localStorage重新加载最新数据（但只在首次加载时）
+        if (students.length === 0) {
+            const saved = localStorage.getItem("trainee_full_admin_backup");
+            if (saved) {
             try {
                 const parsed = JSON.parse(saved);
                 if (parsed.length > 0) {
@@ -9492,6 +9500,7 @@ URL.revokeObjectURL(url);
                     });
                 }
             } catch (e) { console.warn('仪表盘数据加载失败', e); }
+            }
         }
         
         // 统计各阶段数据
@@ -18749,6 +18758,8 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
                             } catch(e) {}
                         }
                     }
+                    // 跳过旧格式的整条学员备份（已拆分为 student_* 独立存储）
+                    if (row.key === 'trainee_full_admin_backup' || row.key === 'trainee_data_version') return;
                     if (row.key && row.value !== null) _realLS.setItem(row.key, row.value);
                 });
             }
@@ -19485,7 +19496,25 @@ updateAdminUI();
             stu.joinDate = joinDate;
             stu.stage = stage;
             if (uploadedAvatar) stu.avatar = uploadedAvatar;
-            saveStudents();
+            saveToLocal();
+            // 直连推送云端
+            (function(){
+                var url = 'https://zfxwnixlvdxawoylhgxj.supabase.co';
+                var key = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InpmeHduaXhsdmR4YXdveWxoZ3hqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODIyMDEyNzIsImV4cCI6MjA5Nzc3NzI3Mn0.aPfO4Ry_LzoOColCVx64JQPF-BWga-_J2fX9hg-E4G8';
+                var data = localStorage.getItem('trainee_full_admin_backup');
+                if(data) fetch(url + '/rest/v1/app_data', {
+                    method:'POST',
+                    headers:{ 'apikey':key,'Authorization':'Bearer '+key,'Content-Type':'application/json','Prefer':'resolution=merge-duplicates' },
+                    body:JSON.stringify([{ key:'trainee_full_admin_backup', value:data, updated_at:new Date().toISOString() }])
+                }).then(function(r){
+                    var s = document.getElementById('syncStatus');
+                    if(s) s.textContent = r.ok ? '☁️ 已同步' : '☁️ 同步失败';
+                    if(s) s.style.color = r.ok ? '#27ae60' : '#c0392b';
+                }).catch(function(){
+                    var s = document.getElementById('syncStatus');
+                    if(s){ s.textContent='☁️ 同步失败'; s.style.color='#c0392b'; }
+                });
+            })();
             editOverlay.remove();
             if (parentOverlay) parentOverlay.remove();
             showFrontendAdminModal();
