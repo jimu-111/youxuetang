@@ -892,6 +892,23 @@
                     }
                     tryAdvanceStudent(student);
                     if(student.graduatedToArchive&&student.stage!==4)student.graduatedToArchive=true;
+                    saveToLocal();
+                    // 立即同步到云端
+                    try {
+                        var _d = localStorage.getItem('trainee_full_admin_backup');
+                        if(_d) fetch('https://zfxwnixlvdxawoylhgxj.supabase.co/rest/v1/app_data', {
+                            method:'POST',
+                            headers:{ 'apikey':'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InpmeHduaXhsdmR4YXdveWxoZ3hqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODIyMDEyNzIsImV4cCI6MjA5Nzc3NzI3Mn0.aPfO4Ry_LzoOColCVx64JQPF-BWga-_J2fX9hg-E4G8','Authorization':'Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InpmeHduaXhsdmR4YXdveWxoZ3hqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODIyMDEyNzIsImV4cCI6MjA5Nzc3NzI3Mn0.aPfO4Ry_LzoOColCVx64JQPF-BWga-_J2fX9hg-E4G8','Content-Type':'application/json','Prefer':'resolution=merge-duplicates' },
+                            body:JSON.stringify([{ key:'trainee_full_admin_backup', value:_d, updated_at:new Date().toISOString() }])
+                        }).then(function(r){
+                            var s=document.getElementById('syncStatus');
+                            if(s) s.textContent=r.ok?'☁️ 已同步':'☁️ 同步失败';
+                            if(s) s.style.color=r.ok?'#27ae60':'#c0392b';
+                        }).catch(function(){
+                            var s=document.getElementById('syncStatus');
+                            if(s){ s.textContent='☁️ 同步失败'; s.style.color='#c0392b'; }
+                        });
+                    } catch(e){}
                     renderFrontend();
                     modalElement.remove();
                 });
@@ -10225,6 +10242,7 @@ URL.revokeObjectURL(url);
                 <div class="qb-toolbar" style="margin-bottom:0;">
                     <button class="qb-btn-add admin-only" id="openAddQBBtn">➕ 添加题目</button>
                     <button class="qb-btn-upload admin-only" id="uploadQBBtn">📤 上传题库</button>
+                    <button class="qb-btn-feishu admin-only" id="importQBFeishuBtn" style="background:#e67e22;color:white;border-color:#d4741a;padding:6px 14px;border-radius:20px;cursor:pointer;font-size:0.8rem;font-weight:600;">📥 从飞书导入</button>
                     <button class="qb-btn-download admin-only" id="downloadQBBtn">📥 下载题库</button>
                     <button class="qb-btn-download admin-only" id="clearQBBtn" style="color:#c0392b;border-color:#e8c7c7 !important;">🗑️ 清空题库</button>
                     <input type="file" id="qbFileInput" accept=".xlsx,.xls,.csv,.txt,.json" style="display:none">
@@ -10261,6 +10279,7 @@ URL.revokeObjectURL(url);
             document.getElementById('qbFileInput').onchange = handleQBFileUpload;
             document.getElementById('downloadQBBtn').onclick = downloadQuestionBank;
             document.getElementById('clearQBBtn').onclick = clearQuestionBank;
+            document.getElementById('importQBFeishuBtn').onclick = importQBFromFeishu;
         }, 50);
     }
 
@@ -10358,6 +10377,171 @@ URL.revokeObjectURL(url);
     }
 
     function getAllQBQuestions() { return getQuestionBank().questions || []; }
+
+    // 从飞书表格导入题库（弹窗预览+确认）
+    async function importQBFromFeishu() {
+        if (!isAdminMode()) { showToast('❌ 请先登录管理员', 'warning'); return; }
+        var token = getErrorDashboardToken();
+        if (!token) token = await feishuRefreshToken();
+        if (!token) token = await getCloudToken();
+        // 兜底：直接从 localStorage 读 feishu_token（即使过期也试试）
+        if (!token) { try { var ft = JSON.parse(localStorage.getItem('feishu_token') || 'null'); if (ft && ft.access_token) token = ft.access_token; } catch(e) {} }
+        if (!token) token = await getFeishuToken();
+        if (!token) { showToast('❌ 请先在失误分析看板(外部数据)授权飞书', 'error'); return; }
+        showToast('☁️ 正在连接飞书...', 'info');
+        var sheetsResp = await feishuApiFetch('https://open.feishu.cn/open-apis/sheets/v3/spreadsheets/YQEpsYHh2httTftYv0VcFPWBnJg/sheets/query', {
+            headers: { 'Authorization': 'Bearer ' + token }
+        });
+        var sheetsData = await sheetsResp.json();
+        console.log('飞书sheets:', JSON.stringify(sheetsData).substring(0,500));
+        if (!sheetsData.data || !sheetsData.data.sheets || sheetsData.data.sheets.length === 0) {
+            showToast('❌ 无法读取表格，请确认已授权飞书', 'error'); return;
+        }
+        var sheetId = sheetsData.data.sheets[0].sheetId;
+        // 直接用 app token 读数据
+        var appToken = null;
+        try {
+            var atr = await feishuApiFetch('https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal', {
+                method:'POST', headers:{'Content-Type':'application/json'},
+                body:JSON.stringify({app_id:'cli_aab1fa4e87bbdbd3', app_secret:'1uLKmOkzQpoac6Ixw3Qhsb6KR1gCrcTn'})
+            });
+            var atd = await atr.json();
+            if(atd.tenant_access_token) appToken = atd.tenant_access_token;
+        } catch(e) { console.log('app token获取失败', e); }
+        var readToken = appToken || token;
+        var resp = await feishuApiFetch('https://open.feishu.cn/open-apis/sheets/v2/spreadsheets/YQEpsYHh2httTftYv0VcFPWBnJg/values/' + sheetId + '?majorDimension=ROWS', {
+            headers: { 'Authorization': 'Bearer ' + readToken }
+        });
+        var data = await resp.json();
+        if ((data.code === 90215 || data.code === 1310213) && token !== appToken) {
+            resp = await feishuApiFetch('https://open.feishu.cn/open-apis/sheets/v2/spreadsheets/YQEpsYHh2httTftYv0VcFPWBnJg/values/' + sheetId + '?majorDimension=ROWS', {
+                headers: { 'Authorization': 'Bearer ' + token }
+            });
+            data = await resp.json();
+        }
+        console.log('飞书返回:', JSON.stringify(data).substring(0,500));
+        var rows = (data.data && data.data.valueRange && data.data.valueRange.values) || [];
+        if (rows.length <= 1) { showToast('❌ 表格无数据', 'warning'); return; }
+        var headerRow = rows[0];
+        var col = {};
+        var knownHeaders = ['题目ID','品类','失误类别','题型','题目','答案','答案解析','题目图','答案解析图','图片','解析图','解析图片','A','B','C','D','E','F'];
+        for (var ci = 0; ci < headerRow.length; ci++) { var hdr = (headerRow[ci] || '').toString().trim(); if (hdr) col[hdr] = ci; }
+        function gc(row, name) { var idx = col[name]; return (idx !== undefined && row[idx] !== undefined) ? row[idx] : undefined; }
+        var optCols = [];
+        for (var ci = 0; ci < headerRow.length; ci++) {
+            var hdr = (headerRow[ci] || '').toString().trim();
+            if (/^[A-Z]$/.test(hdr)) optCols.push(hdr);
+        }
+        var emptyCols = [];
+        for (var ci = 0; ci < headerRow.length; ci++) {
+            if (!(headerRow[ci] || '').toString().trim() && !knownHeaders.some(function(k){ return col[k]===ci; })) emptyCols.push(ci);
+        }
+        var optImgCols = [];
+        if (rows.length > 1) {
+            for (var ei = 0; ei < emptyCols.length; ei++) {
+                var eci = emptyCols[ei];
+                var hasText = false, hasImg = false;
+                for (var ri = 1; ri < Math.min(rows.length, 10); ri++) {
+                    var cv = rows[ri][eci];
+                    if (cv !== undefined && cv !== null) {
+                        if (typeof cv === 'object' && (cv.fileToken || Array.isArray(cv))) hasImg = true;
+                        else if (String(cv).trim()) hasText = true;
+                    }
+                }
+                if (hasImg) optImgCols.push(eci);
+                else if (hasText) optCols.push(String(headerRow.length + optCols.length + optImgCols.length));
+            }
+        }
+        var hasQ = col['题目'] !== undefined, hasCat = col['失误类别'] !== undefined, hasProduct = col['品类'] !== undefined;
+        var hasAnswer = col['答案'] !== undefined, hasPic = col['题目图'] !== undefined, hasExplPic = col['答案解析图'] !== undefined;
+        var previewRows = rows.slice(1, Math.min(6, rows.length));
+        var previewHtml = previewRows.map(function(r,i){
+            return '<tr><td style="padding:6px;border:1px solid #e2e8f0;font-size:0.78rem;">'+(i+1)+'</td>'+
+                '<td style="padding:6px;border:1px solid #e2e8f0;font-size:0.78rem;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">'+escapeHtml(String(gc(r,'题目')||r[0]||'').substring(0,40))+'</td>'+
+                '<td style="padding:6px;border:1px solid #e2e8f0;font-size:0.78rem;">'+escapeHtml(gc(r,'失误类别')||'')+'</td>'+
+                '<td style="padding:6px;border:1px solid #e2e8f0;font-size:0.78rem;">'+escapeHtml(gc(r,'品类')||'')+'</td></tr>';
+        }).join('');
+        var overlay = document.createElement('div');
+        overlay.className = 'modal-overlay'; overlay.style.zIndex = '3000';
+        overlay.innerHTML = '<div class="modal-container" style="max-width:700px;"><div class="modal-header">📥 从飞书导入题库<button class="modal-close-btn" id="qbfClose">✕</button></div>'+
+            '<div class="modal-body" style="padding:20px;max-height:70vh;overflow-y:auto;">'+
+            '<div style="background:#f0f9ff;border:1px solid #bae6fd;border-radius:12px;padding:14px;margin-bottom:16px;">'+
+            '<div style="font-weight:600;margin-bottom:8px;">📋 列映射</div>'+
+            '<div style="display:grid;grid-template-columns:1fr 1fr;gap:4px 20px;font-size:0.82rem;">'+
+            (hasQ?'<span>✅ 题目</span>':'<span style="color:#c0392b;">❌ 题目（未找到）</span>')+
+            (hasCat?'<span>✅ 失误类别 → 分类</span>':'<span style="color:#94a3b8;">⚠️ 失误类别</span>')+
+            (hasProduct?'<span>✅ 品类 → productCategory</span>':'<span style="color:#94a3b8;">⚠️ 品类</span>')+
+            (hasAnswer?'<span>✅ 答案</span>':'<span style="color:#94a3b8;">⚠️ 答案</span>')+
+            (hasPic?'<span>✅ 题目图</span>':'')+
+            (hasExplPic?'<span>✅ 答案解析图</span>':'')+
+            (optCols.length>0?'<span>✅ 选项列 '+optCols.join(',')+'</span>':'')+
+            (optImgCols.length>0?'<span>✅ 选项图 '+optImgCols.length+' 列</span>':'')+
+            '</div></div>'+
+            '<div style="margin-bottom:12px;font-weight:600;">👁️ 预览（前 '+previewRows.length+' 行 / 共 '+(rows.length-1)+' 行）</div>'+
+            '<div style="overflow-x:auto;margin-bottom:16px;"><table style="width:100%;border-collapse:collapse;"><thead><tr style="background:#f1f5f9;">'+
+            '<th style="padding:6px;border:1px solid #e2e8f0;font-size:0.78rem;">#</th>'+
+            '<th style="padding:6px;border:1px solid #e2e8f0;font-size:0.78rem;">题目</th>'+
+            '<th style="padding:6px;border:1px solid #e2e8f0;font-size:0.78rem;">失误类别</th>'+
+            '<th style="padding:6px;border:1px solid #e2e8f0;font-size:0.78rem;">品类</th></tr></thead><tbody>'+previewHtml+'</tbody></table></div>'+
+            '<div style="display:flex;gap:10px;justify-content:flex-end;border-top:1px solid #eef2f6;padding-top:14px;">'+
+            '<button id="qbfCancel" style="padding:8px 20px;border-radius:20px;border:1px solid #cbd5e1;background:#fff;cursor:pointer;">取消</button>'+
+            '<button id="qbfConfirm" style="padding:8px 20px;border-radius:20px;background:#e67e22;color:white;border:none;cursor:pointer;font-weight:600;">✅ 确认导入 '+(rows.length-1)+' 题</button></div></div></div>';
+        document.body.appendChild(overlay);
+        overlay.querySelector('#qbfClose').onclick = function(){ overlay.remove(); };
+        overlay.querySelector('#qbfCancel').onclick = function(){ overlay.remove(); };
+        overlay.addEventListener('click', function(e){ if(e.target===overlay) overlay.remove(); });
+        overlay.querySelector('#qbfConfirm').onclick = async function(){
+            var btn = overlay.querySelector('#qbfConfirm'); btn.disabled = true; btn.textContent = '⏳ 导入中...';
+            try {
+                function getImgs(v){if(!v)return[];if(Array.isArray(v))return v.map(function(a){return a.fileToken||'';}).filter(Boolean);if(v.fileToken)return[v.fileToken];return[];}
+                var qb = getQuestionBank(), imported = 0, duplicated = 0;
+                for(var r = 1; r < rows.length; r++){
+                    var row = rows[r]; if(!row) continue;
+                    var qText = gc(row,'题目')||gc(row,'问题')||gc(row,'题干')||(row[0]||'').toString().trim();
+                    if(!qText) continue;
+                    var category = gc(row,'失误类别')||'默认分类';
+                    var productCategory = gc(row,'品类')||'';
+                    if(category&&!qb.categories[category]){var mo=Math.max(0,...Object.values(qb.categories).map(function(c){return c.order||0;}));qb.categories[category]={name:category,createdAt:new Date().toISOString(),order:mo+1};}
+                    if(qb.questions.some(function(q){return q.category===category&&q.question.trim().toLowerCase()===qText.toLowerCase();})){duplicated++;continue;}
+                    var screenshot = null;
+                    var imgTks = getImgs(gc(row,'题目图'))||getImgs(gc(row,'图片'));
+                    if(imgTks.length>0&&typeof fetchImageAsBase64==='function'){try{screenshot=await fetchImageAsBase64('https://open.feishu.cn/open-apis/im/v1/images/'+imgTks[0]);}catch(e){}}
+                    var explanation = gc(row,'答案解析')||'';
+                    var explTks = getImgs(gc(row,'答案解析图'))||getImgs(gc(row,'解析图'));
+                    if(explTks.length>0&&typeof fetchImageAsBase64==='function'){
+                        for(var ei=0;ei<explTks.length;ei++){try{var ei2=await fetchImageAsBase64('https://open.feishu.cn/open-apis/im/v1/images/'+explTks[ei]);if(ei2)explanation+='\n\n<img src=\"'+ei2+'\" style=\"max-width:100%;border-radius:8px;margin-top:8px;\">';}catch(e){}}
+                    }
+                    var options = [];
+                    for(var oi=0;oi<optCols.length;oi++){var ov=row[col[optCols[oi]]];if(ov!==undefined&&ov!==null&&String(ov).trim())options.push(String(ov).trim());}
+                    // 选项对应的图片（从 optImgCols 中逐个提取）
+                    var optionImages = [];
+                    if (optImgCols.length > 0 && typeof fetchImageAsBase64 === 'function') {
+                        for (var oii = 0; oii < Math.min(optImgCols.length, options.length); oii++) {
+                            var imgTks2 = getImgs(row[optImgCols[oii]]);
+                            if (imgTks2.length > 0) {
+                                try {
+                                    var oi2 = await fetchImageAsBase64('https://open.feishu.cn/open-apis/im/v1/images/' + imgTks2[0]);
+                                    if (oi2) optionImages.push(oi2);
+                                } catch(e) { optionImages.push(null); }
+                            } else { optionImages.push(null); }
+                        }
+                    }
+                    var typeMap={'单选':'choice','多选':'choice','判断':'judge','问答':'qa','QA':'qa'};
+                    var type=typeMap[gc(row,'题型')||'']||(options.length>0?'choice':'qa');
+                    qb.questions.push({
+                        id: Date.now().toString(36)+Math.random().toString(36).substr(2,5)+r,
+                        category, type, difficulty:'中等', question:qText,
+                        answer:gc(row,'答案')||'', options, explanation,
+                        productCategory, screenshot, optionImages: optionImages.length > 0 ? optionImages : undefined,
+                        createdAt:new Date().toISOString()
+                    });
+                    imported++;
+                }
+                saveQuestionBank(qb); renderQuestionBank(); overlay.remove();
+                showToast('✅ 从飞书导入 '+imported+' 题'+(duplicated>0?'（'+duplicated+' 题重复已跳过）':''),'success');
+            } catch(e){console.log('导入失败',e); showToast('❌ 导入失败：'+e.message,'error'); btn.disabled=false; btn.textContent='✅ 确认导入';}
+        };
+    }
 
     async function clearCatQuestions(catName) {
         const qb = getQuestionBank();
@@ -10527,7 +10711,11 @@ URL.revokeObjectURL(url);
                                 <span style="font-size:0.65rem;color:#cbd5e1;margin-left:4px;">▸ 点击展开详情</span>
                             </div>
                             <div style="font-weight:600;font-size:0.85rem;color:#1e2a3a;margin-bottom:4px;">${escapeHtml(q.question)}</div>
-                            ${q.options && q.options.length > 0 ? '<div style="font-size:0.72rem;color:#64748b;margin-bottom:2px;">选项：' + q.options.map((o,i) => String.fromCharCode(65+i) + '. ' + escapeHtml(o)).join(' ｜ ') + '</div>' : ''}
+                            ${q.options && q.options.length > 0 ? '<div style="font-size:0.72rem;color:#64748b;margin-bottom:2px;">选项：' + q.options.map(function(o,i){
+                                var l = String.fromCharCode(65+i);
+                                var im = (q.optionImages && q.optionImages[i]) ? '<img src="'+q.optionImages[i]+'" style="max-height:60px;max-width:60px;border-radius:6px;margin-left:4px;vertical-align:middle;border:1px solid #e2e8f0;">' : '';
+                                return '<span>'+l+'. '+escapeHtml(o)+im+'</span>';
+                            }).join(' ｜ ') + '</div>' : ''}
                             <div style="font-size:0.72rem;color:#2a5298;">📌 答案：${escapeHtml(ansPreview)}</div>
                         </div>
                         <div style="display:flex;gap:4px;flex-shrink:0;">
@@ -10539,7 +10727,7 @@ URL.revokeObjectURL(url);
                         <div style="font-size:0.75rem;color:#1e2a3a;margin-bottom:6px;"><strong>📌 完整答案：</strong>${escapeHtml(ansFull)}</div>
                         ${explFull ? '<div style="font-size:0.75rem;color:#5e6f8d;background:#f8fafc;padding:10px;border-radius:8px;"><strong>💡 解析：</strong>' + escapeHtml(explFull) + '</div>' : ''}
                         ${q.screenshot ? '<div style="margin-top:6px;">' + photoTag(q.screenshot, 200, 150) + '</div>' : ''}
-                        <div style="font-size:0.65rem;color:#94a3b8;margin-top:6px;">分类：${escapeHtml(q.category || '未分类')} | 难度：${escapeHtml(q.difficulty || '中等')} | 创建：${(q.createdAt||'').substring(0,10)}</div>
+                        <div style="font-size:0.65rem;color:#94a3b8;margin-top:6px;">${q.productCategory?'🏷️ '+escapeHtml(q.productCategory)+' | ':''}分类：${escapeHtml(q.category || '未分类')} | 难度：${escapeHtml(q.difficulty || '中等')} | 创建：${(q.createdAt||'').substring(0,10)}</div>
                     </div>
                 </div>`;
             }).join('');
@@ -10932,7 +11120,7 @@ URL.revokeObjectURL(url);
                 const data = JSON.parse(text);
                 if (data.questions && Array.isArray(data.questions)) {
                     data.questions.forEach(q => {
-                        newQuestions.push({
+                        var nq = {
                             id: q.id || (Date.now().toString(36) + Math.random().toString(36).substr(2, 5)),
                             category: q.category || '默认分类',
                             type: q.type || 'qa',
@@ -10942,7 +11130,9 @@ URL.revokeObjectURL(url);
                             options: q.options || [],
                             explanation: q.explanation || '',
                             createdAt: q.createdAt || new Date().toISOString()
-                        });
+                        };
+                        if (q.productCategory) nq.productCategory = q.productCategory;
+                        newQuestions.push(nq);
                     });
                 }
                 if (data.categories) importedCategories = data.categories;
@@ -11010,24 +11200,45 @@ URL.revokeObjectURL(url);
                 const data = await file.arrayBuffer();
                 const wb = XLSX.read(data, { type: 'array' });
                 const rows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1 });
-                let qc = 0, ac = 1, cc = 2;
+                let qc = 0, ac = 1, cc = 2, pc = -1, tc = -1, ec = -1;
                 if (rows[0]) {
                     const hdrs = rows[0].map(h => String(h||'').toLowerCase());
-                    const qi = hdrs.findIndex(h => h.includes('题目')||h.includes('问题')||h.includes('question'));
+                    const qi = hdrs.findIndex(h => (h==='题目'||h==='问题'||h==='question') && !h.includes('id'));
+                    if (qi < 0) { const qi2 = hdrs.findIndex(h => (h.includes('题目')||h.includes('问题')||h.includes('question')) && !h.includes('id')); if (qi2>=0) qc=qi2; }
+                    else qc = qi;
                     const ai = hdrs.findIndex(h => h.includes('答案')||h.includes('answer'));
-                    const ci = hdrs.findIndex(h => h.includes('分类')||h.includes('category')||h.includes('模块'));
+                    const ci = hdrs.findIndex(h => h.includes('失误类别')||h.includes('分类')||h.includes('category')||h.includes('模块'));
+                    const pi = hdrs.findIndex(h => h.includes('品类'));
+                    const ti = hdrs.findIndex(h => h.includes('题型')||h.includes('type'));
+                    const ei = hdrs.findIndex(h => h.includes('答案解析')||h.includes('解析')||h.includes('explanation'));
                     if (qi>=0) qc=qi; if (ai>=0) ac=ai; if (ci>=0) cc=ci;
+                    if (pi>=0) pc=pi; if (ti>=0) tc=ti; if (ei>=0) ec=ei;
+                }
+                var optCols = [];
+                if (rows[0]) {
+                    for (var oci = 0; oci < rows[0].length; oci++) {
+                        var oh = String(rows[0][oci]||'').trim();
+                        if (/^[A-Z]$/.test(oh) && oci !== qc && oci !== ac && oci !== cc && oci !== pc && oci !== tc && oci !== ec) optCols.push(oci);
+                    }
                 }
                 for (let i = (rows[0]&&rows[0][qc]&&String(rows[0][qc]).includes('题目')?1:0); i<rows.length; i++) {
                     const row = rows[i]; if (!row||!row[qc]) continue;
-                    newQuestions.push({
+                    var opts = [];
+                    for (var oi = 0; oi < optCols.length; oi++) { var ov = row[optCols[oi]]; if (ov !== undefined && ov !== null && String(ov).trim()) opts.push(String(ov).trim()); }
+                    var typeMap = { '单选':'choice', '多选':'choice', '判断':'judge', '问答':'qa', 'choice':'choice', 'qa':'qa', 'judge':'judge' };
+                    var qObj = {
                         id: Date.now().toString(36)+i,
                         category: (cc>=0&&row[cc])?String(row[cc]).trim():'默认分类',
-                        type:'qa', difficulty:'中等',
-                        question:String(row[qc]).trim(),
-                        answer:row[ac]?String(row[ac]).trim():'',
-                        options:[], createdAt: new Date().toISOString()
-                    });
+                        type: (tc>=0&&row[tc])?(typeMap[String(row[tc]).trim()]||'qa'):'qa',
+                        difficulty: '中等',
+                        question: String(row[qc]).trim(),
+                        answer: row[ac]?String(row[ac]).trim():'',
+                        options: opts,
+                        explanation: (ec>=0&&row[ec])?String(row[ec]).trim():'',
+                        createdAt: new Date().toISOString()
+                    };
+                    if (pc >= 0 && row[pc]) qObj.productCategory = String(row[pc]).trim();
+                    newQuestions.push(qObj);
                 }
             }
 
@@ -11106,7 +11317,7 @@ URL.revokeObjectURL(url);
                 const data = JSON.parse(text);
                 if (data.questions && Array.isArray(data.questions)) {
                     data.questions.forEach(q => {
-                        newQuestions.push({
+                        var nq = {
                             id: q.id || (Date.now().toString(36) + Math.random().toString(36).substr(2, 5)),
                             category: q.category || '默认分类',
                             type: q.type || 'qa',
@@ -11116,7 +11327,9 @@ URL.revokeObjectURL(url);
                             options: q.options || [],
                             explanation: q.explanation || '',
                             createdAt: q.createdAt || new Date().toISOString()
-                        });
+                        };
+                        if (q.productCategory) nq.productCategory = q.productCategory;
+                        newQuestions.push(nq);
                     });
                 }
                 if (data.categories) importedCategories = data.categories;
@@ -11214,27 +11427,49 @@ URL.revokeObjectURL(url);
                 const workbook = XLSX.read(data, { type: 'array' });
                 const sheetName = workbook.SheetNames[0];
                 const rows = XLSX.utils.sheet_to_json(workbook.Sheets[sheetName], { header: 1 });
-                let qCol = 0, aCol = 1, catCol = 2;
+                let qCol = 0, aCol = 1, catCol = 2, pCol = -1, tCol = -1, eCol = -1;
                 if (rows[0]) {
                     const headers = rows[0].map(h => String(h || '').toLowerCase());
-                    const qi = headers.findIndex(h => h.includes('题目') || h.includes('问题') || h.includes('question'));
+                    const qi = headers.findIndex(h => (h==='题目'||h==='问题'||h==='question') && !h.includes('id'));
+                    if (qi < 0) { const qi2 = headers.findIndex(h => (h.includes('题目')||h.includes('问题')||h.includes('question')) && !h.includes('id')); if (qi2>=0) qCol=qi2; }
+                    else qCol = qi;
                     const ai = headers.findIndex(h => h.includes('答案') || h.includes('answer'));
-                    const ci = headers.findIndex(h => h.includes('分类') || h.includes('category') || h.includes('模块'));
-                    if (qi >= 0) qCol = qi;
+                    const ci = headers.findIndex(h => h.includes('失误类别')||h.includes('分类') || h.includes('category') || h.includes('模块'));
+                    const pi = headers.findIndex(h => h.includes('品类'));
+                    const ti = headers.findIndex(h => h.includes('题型')||h.includes('type'));
+                    const ei = headers.findIndex(h => h.includes('答案解析')||h.includes('解析')||h.includes('explanation'));
                     if (ai >= 0) aCol = ai;
                     if (ci >= 0) catCol = ci;
+                    if (pi >= 0) pCol = pi;
+                    if (ti >= 0) tCol = ti;
+                    if (ei >= 0) eCol = ei;
                 }
+                var optCols2 = [];
+                if (rows[0]) {
+                    for (var oci2 = 0; oci2 < rows[0].length; oci2++) {
+                        var oh2 = String(rows[0][oci2]||'').trim();
+                        if (/^[A-Z]$/.test(oh2) && oci2 !== qCol && oci2 !== aCol && oci2 !== catCol && oci2 !== pCol && oci2 !== tCol && oci2 !== eCol) optCols2.push(oci2);
+                    }
+                }
+                var typeMap2 = { '单选':'choice', '多选':'choice', '判断':'judge', '问答':'qa', 'choice':'choice', 'qa':'qa', 'judge':'judge' };
                 for (let i = (rows[0] && rows[0][qCol] && String(rows[0][qCol]).includes('题目') ? 1 : 0); i < rows.length; i++) {
                     const row = rows[i];
                     if (!row || !row[qCol]) continue;
-                    newQuestions.push({
+                    var opts2 = [];
+                    for (var oi2 = 0; oi2 < optCols2.length; oi2++) { var ov2 = row[optCols2[oi2]]; if (ov2 !== undefined && ov2 !== null && String(ov2).trim()) opts2.push(String(ov2).trim()); }
+                    var qObj2 = {
                         id: Date.now().toString(36) + i,
                         category: (catCol >= 0 && row[catCol]) ? String(row[catCol]).trim() : '默认分类',
-                        type: 'qa', difficulty: '中等',
+                        type: (tCol>=0&&row[tCol])?(typeMap2[String(row[tCol]).trim()]||'qa'):'qa',
+                        difficulty: '中等',
                         question: String(row[qCol]).trim(),
                         answer: row[aCol] ? String(row[aCol]).trim() : '',
-                        options: [], createdAt: new Date().toISOString()
-                    });
+                        options: opts2,
+                        explanation: (eCol>=0&&row[eCol])?String(row[eCol]).trim():'',
+                        createdAt: new Date().toISOString()
+                    };
+                    if (pCol >= 0 && row[pCol]) qObj2.productCategory = String(row[pCol]).trim();
+                    newQuestions.push(qObj2);
                 }
             }
 
@@ -11258,9 +11493,22 @@ URL.revokeObjectURL(url);
 
     function downloadQuestionBank() {
         const qb = getQuestionBank();
-        const blob = new Blob([JSON.stringify(qb, null, 2)], { type: 'application/json' });
-        const link = document.createElement('a');
-        link.download = '题库_' + new Date().toISOString().slice(0, 10) + '.json';
+        if (typeof XLSX === 'undefined') { alert('Excel库未加载，请刷新页面重试'); return; }
+        var header = ['题目ID','品类','失误类别','题型','题目','答案','答案解析','选项A','选项B','选项C','选项D','选项E','选项F','题目图','答案解析图'];
+        var rows = (qb.questions || []).map(function(q, idx){
+            var opts = q.options || [];
+            return [idx+1, q.productCategory||'', q.category||'', q.type||'', q.question||'', q.answer||'',
+                (q.explanation||'').replace(/<img[^>]*>/g,'[图片]'),
+                opts[0]||'',opts[1]||'',opts[2]||'',opts[3]||'',opts[4]||'',opts[5]||'',
+                q.screenshot?'[图片]':'', (q.explanation||'').includes('<img')?'[图片]':''];
+        });
+        var ws = XLSX.utils.aoa_to_sheet([header].concat(rows));
+        var wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, ws, '题库');
+        var buf = XLSX.write(wb, { bookType:'xlsx', type:'array' });
+        var blob = new Blob([buf], { type:'application/octet-stream' });
+        var link = document.createElement('a');
+        link.download = '题库_' + new Date().toISOString().slice(0,10) + '.xlsx';
         link.href = URL.createObjectURL(blob);
         link.click();
     }
@@ -14422,7 +14670,8 @@ URL.revokeObjectURL(url);
                 if (!storedToken) reason = '<p style="color:#94a3b8;font-size:0.8rem;">未检测到已保存的授权</p>';
                 else if (storedToken.expiresAt <= Date.now()) reason = '<p style="color:#e67e22;font-size:0.8rem;">授权已过期，请重新授权</p>';
                 else reason = '<p style="color:#94a3b8;font-size:0.8rem;">授权信息异常，请重新授权</p>';
-                var authUrl = 'https://open.feishu.cn/open-apis/authen/v1/authorize?app_id=' + FEISHU_CONFIG.appId + '&redirect_uri=https%3A%2F%2Fjimu-111.github.io%2Fyouxuetang%2F&scope=sheets:spreadsheet:readonly%20drive:drive:readonly%20wiki:wiki:readonly';
+                var baseUrl = encodeURIComponent(window.location.origin + window.location.pathname.replace(/\/?$/, '/'));
+                var authUrl = 'https://open.feishu.cn/open-apis/authen/v1/authorize?app_id=' + FEISHU_CONFIG.appId + '&redirect_uri=' + baseUrl + '&scope=sheets:spreadsheet:readonly%20drive:drive:readonly%20wiki:wiki:readonly';
                 document.getElementById('mainContent').innerHTML =
                 '<div class="panorama-card" style="text-align:center;padding:40px;max-width:600px;margin:40px auto;">' +
                     '<div style="font-size:1.5rem;margin-bottom:8px;">🔐 需要飞书授权</div>' + reason +
@@ -15269,11 +15518,20 @@ URL.revokeObjectURL(url);
                 var qCat = (q.category || '').toLowerCase();
                 return qCat.includes(catLower) || catLower.includes(qCat);
             });
-            // 不够则补随机题
+            // 不够则从"判错责任方"或"未达标准"补齐
             if (matched.length < needed) {
-                var remaining = allQuestions.filter(function(q) { return !usedIds[q.id] && !matched.find(function(m) { return m.id === q.id; }); });
-                var shuffled = remaining.sort(function() { return Math.random() - 0.5; });
-                matched = matched.concat(shuffled.slice(0, needed - matched.length));
+                var fillCats = ['判错责任方','未达标准'];
+                for (var fi = 0; fi < fillCats.length && matched.length < needed; fi++) {
+                    var fillLower = fillCats[fi].toLowerCase();
+                    var fillQs = allQuestions.filter(function(q) {
+                        if (usedIds[q.id]) return false;
+                        if (matched.find(function(m) { return m.id === q.id; })) return false;
+                        var qCat = (q.category || '').toLowerCase();
+                        return qCat.includes(fillLower) || fillLower.includes(qCat);
+                    });
+                    var shuffledFill = fillQs.sort(function() { return Math.random() - 0.5; });
+                    matched = matched.concat(shuffledFill.slice(0, needed - matched.length));
+                }
             }
             var shuffledMatched = matched.sort(function() { return Math.random() - 0.5; });
             var picked = shuffledMatched.slice(0, needed);
@@ -15393,11 +15651,9 @@ URL.revokeObjectURL(url);
         var productCounts = {};
         personErrors.forEach(function(e) { var p = e.product||'未知'; productCounts[p] = (productCounts[p]||0)+1; });
         var dominantProduct = null;
-        var knownProducts = ['手机','平板','3C多品类'];
         Object.entries(productCounts).forEach(function(e) {
             if (e[1] / totalErrors >= 0.9) dominantProduct = e[0];
         });
-        var excludedProducts = dominantProduct ? knownProducts.filter(function(p) { return p !== dominantProduct; }) : [];
 
         // 匹配题目
         var selected = [];
@@ -15410,18 +15666,22 @@ URL.revokeObjectURL(url);
                 if (usedIds[q.id]) return false;
                 var qCat = (q.category || '').toLowerCase();
                 if (!(qCat.includes(catLower) || catLower.includes(qCat))) return false;
-                // 主品类过滤：排除提到其他品类的题目
-                if (excludedProducts.length > 0) {
-                    var qText = ((q.question||'') + ' ' + (q.answer||'') + ' ' + (q.options||[]).join(' ')).toLowerCase();
-                    for (var ep = 0; ep < excludedProducts.length; ep++) {
-                        if (qText.indexOf(excludedProducts[ep].toLowerCase()) >= 0) return false;
-                    }
-                }
+                // 主品类过滤：用 productCategory 字段匹配（全品类通配）
+                if (dominantProduct && q.productCategory && q.productCategory !== '全品类' && q.productCategory !== dominantProduct && !q.productCategory.includes(dominantProduct) && !dominantProduct.includes(q.productCategory) && !q.productCategory.replace(/[&、\-・\s]/g,'').includes(dominantProduct.replace(/[&、\-・\s]/g,''))) return false;
                 return true;
             });
             if (matched.length < needed) {
-                var remaining = allQuestions.filter(function(q) { return !usedIds[q.id] && !matched.find(function(m) { return m.id === q.id; }); });
-                matched = matched.concat(remaining.sort(function() { return Math.random() - 0.5; }).slice(0, needed - matched.length));
+                var fillCats = ['判错责任方','未达标准'];
+                for (var fi = 0; fi < fillCats.length && matched.length < needed; fi++) {
+                    var fillLower = fillCats[fi].toLowerCase();
+                    var fillQs = allQuestions.filter(function(q) {
+                        if (usedIds[q.id]) return false;
+                        if (matched.find(function(m) { return m.id === q.id; })) return false;
+                        var qCat = (q.category || '').toLowerCase();
+                        return qCat.includes(fillLower) || fillLower.includes(qCat);
+                    });
+                    matched = matched.concat(fillQs.sort(function() { return Math.random() - 0.5; }).slice(0, needed - matched.length));
+                }
             }
             var picked = matched.sort(function() { return Math.random() - 0.5; }).slice(0, needed);
             picked.forEach(function(q) { usedIds[q.id] = true; });
@@ -15901,6 +16161,12 @@ URL.revokeObjectURL(url);
         // 收集该人员的失误，提取关键词
         var personErrs = errorDashboardData.filter(function(e) { return e.reviewer === reviewerName; });
         if (personErrs.length === 0) { showAlert('当前时间维度下「' + reviewerName + '」无失误记录', '⚠️'); return; }
+        // 判断主品类
+        var totalErrors = personErrs.length;
+        var productCounts = {};
+        personErrs.forEach(function(e) { var p = e.product||'未知'; productCounts[p] = (productCounts[p]||0)+1; });
+        var dominantProduct = null;
+        Object.entries(productCounts).forEach(function(e) { if (e[1] / totalErrors >= 0.9) dominantProduct = e[0]; });
         // 从所有失误备注中提取关键词（按出现次数加权）
         var kwScores = {};
         personErrs.forEach(function(e) {
@@ -15921,9 +16187,10 @@ URL.revokeObjectURL(url);
                 }
             });
         });
-        // 精准匹配：对每个课程计算匹配分
+        // 精准匹配：对每个课程计算匹配分（按主品类过滤）
         var allItems = [];
         window._lmCategories.forEach(function(cat) {
+            if (dominantProduct && cat.title !== dominantProduct && !cat.title.includes(dominantProduct) && !dominantProduct.includes(cat.title) && !cat.title.replace(/[&、\-・\s]/g,'').includes(dominantProduct.replace(/[&、\-・\s]/g,''))) return;
             cat.groups.forEach(function(g) {
                 g.items.forEach(function(item) {
                     if (!item.link) return;
@@ -15948,9 +16215,9 @@ URL.revokeObjectURL(url);
                 });
             });
         });
-        // 按匹配分排序，最多取30节课
+        // 按匹配分排序，最多取20节课
         allItems.sort(function(a,b){ return b.weaknessCount - a.weaknessCount; });
-        allItems = allItems.slice(0, 30);
+        allItems = allItems.slice(0, 20);
         // 按知识领域分组，按薄弱程度排序
         var planAreas = {};
         allItems.forEach(function(item) {
@@ -16263,20 +16530,14 @@ URL.revokeObjectURL(url);
             });
         });
         var dominantProduct = null;
-        var knownProducts = ['手机','平板','3C多品类'];
         Object.entries(productCounts).forEach(function(e) {
             if (totalErrors > 0 && e[1] / totalErrors >= 0.9) dominantProduct = e[0];
         });
-        var excludedProducts = dominantProduct ? knownProducts.filter(function(p) { return p !== dominantProduct; }) : [];
         var allCases = getManualCasesFull();
         var matched = allCases.filter(function(c){
             if (!c.errorCategory || !cats[c.errorCategory]) return false;
-            if (excludedProducts.length > 0) {
-                var caseText = ((c.issueDesc||'') + ' ' + (c.correctDir||'') + ' ' + (c.errorCategory||'')).toLowerCase();
-                for (var ep = 0; ep < excludedProducts.length; ep++) {
-                    if (caseText.indexOf(excludedProducts[ep].toLowerCase()) >= 0) return false;
-                }
-            }
+            // 主品类过滤：用 productCategory 字段匹配（全品类通配）
+            if (dominantProduct && c.productCategory && c.productCategory !== '全品类' && c.productCategory !== dominantProduct && !c.productCategory.includes(dominantProduct) && !dominantProduct.includes(c.productCategory) && !c.productCategory.replace(/[&、\-・\s]/g,'').includes(dominantProduct.replace(/[&、\-・\s]/g,''))) return false;
             return true;
         });
         if (matched.length === 0) { showAlert("案例库中无匹配的案例", "⚠️"); return; }
@@ -18381,7 +18642,8 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
             let answerArea = '';
             if (q.type === 'choice' && q.options && q.options.length > 0) {
                 answerArea = '<div style="margin-top:8px;">' + q.options.map((opt, oi) => {
-                    return '<div class="exam-option" data-qidx="' + idx + '" data-oidx="' + oi + '">' + String.fromCharCode(65+oi) + '. ' + escapeHtml(opt) + '</div>';
+                    var im = (q.optionImages && q.optionImages[oi]) ? '<img src="'+q.optionImages[oi]+'" style="max-height:50px;max-width:50px;border-radius:6px;margin-left:4px;vertical-align:middle;border:1px solid #e2e8f0;">' : '';
+                    return '<div class="exam-option" data-qidx="' + idx + '" data-oidx="' + oi + '">' + String.fromCharCode(65+oi) + '. ' + escapeHtml(opt) + im + '</div>';
                 }).join('') + '</div>';
             } else if (q.type === 'judge') {
                 answerArea = '<div style="margin-top:8px;display:flex;gap:8px;"><div class="exam-option" data-qidx="' + idx + '" data-oidx="0">✅ 正确</div><div class="exam-option" data-qidx="' + idx + '" data-oidx="1">❌ 错误</div></div>';
@@ -18391,7 +18653,7 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
             return `<div class="exam-question-item" id="qitem_${idx}">
                 <div style="font-weight:600;margin-bottom:4px;">${idx+1}. ${escapeHtml(q.question)}</div>
                 ${q.screenshot ? photoTag(q.screenshot, 200, 150) : ''}
-                <div style="font-size:0.7rem;color:#94a3b8;">类型：${q.type==='choice'?'选择题':(q.type==='judge'?'判断题':'问答题')} | 分类：${escapeHtml(q.category||'未分类')} | 难度：${escapeHtml(q.difficulty||'中等')}</div>
+                <div style="font-size:0.7rem;color:#94a3b8;">${q.productCategory?'🏷️ '+escapeHtml(q.productCategory)+' | ':''}类型：${q.type==='choice'?'选择题':(q.type==='judge'?'判断题':'问答题')} | 分类：${escapeHtml(q.category||'未分类')} | 难度：${escapeHtml(q.difficulty||'中等')}</div>
                 ${answerArea}
             </div>`;
         }).join('');
@@ -18582,7 +18844,11 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
                     '<div style="font-weight:600;font-size:0.85rem;">' + (wq.index + 1) + '. ' + escapeHtml(wq.question || '') + '</div>' +
                     '<div style="font-size:0.75rem;margin-top:4px;color:#c0392b;">❌ 你的答案：' + escapeHtml(wq.userAnswer || '未作答') + '</div>' +
                     '<div style="font-size:0.75rem;color:#27ae60;">✅ 正确答案：' + escapeHtml(wq.answer || '详见解析') + '</div>' +
-                    (wq.options ? '<div style="font-size:0.7rem;color:#5e6f8d;margin-top:2px;">' + wq.options.map(function(o,i){return String.fromCharCode(65+i)+'. '+escapeHtml((o||'').replace(/^✓\\s*/, ''));}).join(' / ') + '</div>' : '') +
+                    (wq.options ? '<div style="font-size:0.7rem;color:#5e6f8d;margin-top:2px;">' + wq.options.map(function(o,i){
+                        var l = String.fromCharCode(65+i);
+                        var im = (wq.optionImages && wq.optionImages[i]) ? '<img src="'+wq.optionImages[i]+'" style="max-height:40px;max-width:40px;border-radius:4px;margin-left:4px;vertical-align:middle;border:1px solid #e2e8f0;">' : '';
+                        return l+'. '+escapeHtml((o||'').replace(/^✓\\s*/, ''))+im;
+                    }).join(' / ') + '</div>' : '') +
                 '</div>'; }).join('')}
             </div>` : '';
         resultOverlay.innerHTML = '<div class="modal-container" style="max-width:600px;">' +
