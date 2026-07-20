@@ -3,7 +3,7 @@ name: 周一自动推送
 on:
   workflow_dispatch:
   schedule:
-    - cron: "0 2 * * 1"
+    - cron: "30 2 * * 1"
 
 jobs:
   push:
