@@ -2,6 +2,11 @@ name: 周一自动推送
 
 on:
   workflow_dispatch:
+    inputs:
+      force:
+        description: '强制运行（忽略本周已推送标记）'
+        required: false
+        default: 'false'
   schedule:
     - cron: "30 2 * * 1"
 
@@ -18,3 +23,4 @@ jobs:
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          FORCE_RUN: ${{ github.event.inputs.force || 'false' }}
