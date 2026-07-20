@@ -97,9 +97,9 @@ async function main() {
     // 拉取上周数据，分析按人统计
     let rows = [];
     const FEISHU_SHEETS = [
-        { id: '4054dd', colDate: 0, colReviewer: 8, colCategory: 6, colProduct: 5 },
-        { id: 'mEiT35', colDate: 0, colReviewer: 6, colCategory: 10, colProduct: 5 },
-        { id: 'LIfICo', colDate: 0, colReviewer: 5, colCategory: 4, colProduct: 3 }
+        { id: '4054dd', colDate: 0, colReviewer: 8, colCategory: 6, colNote: 9, colProduct: 5 },
+        { id: 'mEiT35', colDate: 0, colReviewer: 6, colCategory: 10, colNote: 11, colProduct: 5 },
+        { id: 'LIfICo', colDate: 0, colReviewer: 5, colCategory: 4, colNote: 6, colProduct: 3 }
     ];
     for (const sh of FEISHU_SHEETS) {
         try {
@@ -113,7 +113,8 @@ async function main() {
                 if (rv) rows.push({
                     reviewer: rv,
                     category: (row[sh.colCategory] || '').toString().trim(),
-                    product: (row[sh.colProduct] || '').toString().trim()
+                    product: (row[sh.colProduct] || '').toString().trim(),
+                    note: (row[sh.colNote] || '').toString().trim()
                 });
             }
         } catch(e) {}
@@ -232,9 +233,49 @@ async function main() {
         }).catch(function() {});
     }
 
-    // 从 Supabase 读学习地图课程数据
+    // 从 Supabase 读学习地图课程数据（同看板 lm_cache）
     const lmCache = (await supabaseGet('lm_cache')) || {};
     const lmGroups = lmCache.groups || [];
+    // 重组为看板 _lmCategories 格式（按 sheetTitle 分组）
+    var lmCategories = [];
+    var sheetMap = {};
+    lmGroups.forEach(function(g) {
+        var st = g.sheetTitle || '其他';
+        if (!sheetMap[st]) sheetMap[st] = [];
+        sheetMap[st].push(g);
+    });
+    Object.keys(sheetMap).forEach(function(st) {
+        lmCategories.push({ title: st, groups: sheetMap[st] });
+    });
+    // 知识领域分类（同看板）
+    const KNOWLEDGE_AREA_RULES = [
+        { name: '基础信息', icon: '📋', keywords: ['入门','认识','知识','基础','名词','标准','sku','品牌','型号','参数','介绍','文化','组织','架构','展望','流程','办理','实物'] },
+        { name: '显示类', icon: '🖥️', keywords: ['显示','屏幕','屏'] },
+        { name: '外观类', icon: '📱', keywords: ['外观','成色','外壳','后壳','中框','正面'] },
+        { name: '功能类', icon: '⚙️', keywords: ['功能','验机','开机','账号','系统','保修'] },
+        { name: '拆修类', icon: '🔧', keywords: ['拆修','拆机','维修','浸液','零件','摄像','电池','主板','副屏'] },
+        { name: '考核实操', icon: '📝', keywords: ['考核','实操','考试','测试','练习题'] },
+        { name: '业务介绍', icon: '📦', keywords: ['业务','回收','上门','售后','以旧换新','曼哈顿'] }
+    ];
+    function classifyKnowledgeArea(item) {
+        var desc = (item.desc || '').toLowerCase();
+        var name = (item.name || '').toLowerCase();
+        var firstSegment = (item.desc || '').split('>')[0].trim().toLowerCase();
+        var searchText = firstSegment + ' ' + name;
+        var bestMatch = null, bestScore = 0;
+        for (var i = 0; i < KNOWLEDGE_AREA_RULES.length; i++) {
+            var rule = KNOWLEDGE_AREA_RULES[i];
+            var score = 0;
+            for (var j = 0; j < rule.keywords.length; j++) {
+                var kw = rule.keywords[j].toLowerCase();
+                if (firstSegment.indexOf(kw) >= 0) score += 3;
+                if (name.indexOf(kw) >= 0) score += 2;
+                if (desc.indexOf(kw) >= 0) score += 1;
+            }
+            if (score > bestScore) { bestScore = score; bestMatch = rule; }
+        }
+        return bestMatch || { name: '其他', icon: '📋' };
+    }
 
     // 从 Supabase 读案例库，用于生成培训报告
     const allCasesData = ((await supabaseGet('manualCases')) || []).filter(function(c) { return c.errorCategory && c.issueDesc; });
@@ -256,53 +297,94 @@ async function main() {
             try { await sendCard(email, card, appToken); console.log('  📝 考试 → ' + name+'('+count+') [' + examCode + ']'); sent++; }
             catch(e) { console.log('  ❌ ' + name + ': ' + e.message); fail++; }
         }
-        if (count >= TH.learnMin && lmGroups.length > 0) {
-            // 从失误备注提取关键词
-            var personRows = rows.filter(function(r) { return r.reviewer === name; });
+        if (count >= TH.learnMin && lmCategories.length > 0) {
+            // ===== 从看板一字不改搬过来的学习地图生成逻辑 =====
+            var personErrs = rows.filter(function(e) { return e.reviewer === name; });
+            if (personErrs.length === 0) { console.log('  ⏭ ' + name + ' 无失误记录'); continue; }
+            var totalE = personErrs.length;
+            var productCounts = {};
+            personErrs.forEach(function(e) { var p = e.product||'未知'; productCounts[p] = (productCounts[p]||0)+1; });
+            var dominantProduct = null;
+            Object.entries(productCounts).forEach(function(e) { if (e[1]/totalE >= 0.9) dominantProduct = e[0]; });
             var kwScores = {};
-            var stopWords = {手机:1,异常:1,反馈:1,问题:1,错误:1,未达:1,标准:1,情况:1,质检:1,失误:1,存在:1,进行:1,需要:1,注意:1,可能:1,部分:1,没有:1,是否:1,已经:1,还是:1,这个:1,因为:1,可以:1,如果:1,不是:1,应该:1,比较:1,什么:1,不过:1,怎么:1,但是:1,他们:1,自己:1,通过:1};
-            personRows.forEach(function(r) {
-                var text = (r.category + ' ' + (r.product||'')).toLowerCase();
-                text.split(/[，,、\s。；;：:（）()\/]+/).forEach(function(w) {
-                    w = w.trim(); if (!w || w.length < 2 || stopWords[w]) return;
-                    kwScores[w] = (kwScores[w]||0) + 1;
+            personErrs.forEach(function(e) {
+                var text = (e.note + ' ' + e.category).toLowerCase();
+                var stopWords = {手机:1,异常:1,反馈:1,问题:1,错误:1,未达:1,标准:1,情况:1,质检:1,失误:1,存在:1,进行:1,需要:1,注意:1,可能:1,部分:1};
+                var words = text.split(/[，,、\s。；;：:（）()\/]+/);
+                words.forEach(function(w) {
+                    w = w.trim();
+                    if (!w || w.length < 2 || stopWords[w]) return;
+                    if (w.length <= 4) { kwScores[w] = (kwScores[w]||0) + 1; }
+                    else {
+                        kwScores[w] = (kwScores[w]||0) + 1;
+                        for (var n=0; n <= w.length-2; n++) {
+                            var sub = w.substring(n, n+2);
+                            if (!stopWords[sub] && sub.length === 2) kwScores[sub] = (kwScores[sub]||0) + 0.5;
+                        }
+                    }
                 });
             });
-            // 匹配课程
-            var matchedItems = [];
-            lmGroups.forEach(function(cat) {
-                (cat.items||[]).forEach(function(item) {
-                    if (!item.link) return;
-                    var courseText = ((item.desc||'') + ' ' + (item.name||'')).toLowerCase();
-                    var score = 0;
-                    Object.keys(kwScores).forEach(function(kw) { if (courseText.indexOf(kw) >= 0) score += kwScores[kw]; });
-                    if (score >= 1) matchedItems.push({ name: item.name, desc: item.desc, link: item.link, score: score, catTitle: cat.title || '' });
+            var allItems = [];
+            lmCategories.forEach(function(cat) {
+                if (dominantProduct && cat.title !== dominantProduct && !cat.title.includes(dominantProduct) && !dominantProduct.includes(cat.title) && !cat.title.replace(/[&、\-・\s]/g,'').includes(dominantProduct.replace(/[&、\-・\s]/g,''))) return;
+                cat.groups.forEach(function(g) {
+                    g.items.forEach(function(item) {
+                        if (!item.link) return;
+                        var courseText = ((item.desc||'') + ' ' + (item.name||'')).toLowerCase();
+                        var matchScore = 0;
+                        var matchWords = [];
+                        Object.keys(kwScores).forEach(function(kw) {
+                            if (courseText.indexOf(kw) >= 0) {
+                                matchScore += kwScores[kw];
+                                matchWords.push(kw);
+                            }
+                        });
+                        if (matchScore >= 1) {
+                            var area = classifyKnowledgeArea(item);
+                            allItems.push({
+                                areaName: area.name, areaIcon: area.icon, catTitle: cat.title,
+                                name: item.name, desc: item.desc, link: item.link,
+                                weaknessCount: matchScore, matchWords: matchWords
+                            });
+                        }
+                    });
                 });
             });
-            matchedItems.sort(function(a,b){return b.score - a.score;});
-            matchedItems = matchedItems.slice(0, 20);
-            if (matchedItems.length > 0) {
+            allItems.sort(function(a,b){ return b.weaknessCount - a.weaknessCount; });
+            allItems = allItems.slice(0, 20);
+            var planAreas = {};
+            allItems.forEach(function(item) {
+                var key = item.areaName;
+                if (!planAreas[key]) planAreas[key] = { name: item.areaName, icon: item.areaIcon, weaknessCount: item.weaknessCount, items: [] };
+                planAreas[key].items.push(item);
+            });
+            var sortedAreas = Object.values(planAreas).sort(function(a, b) { return b.weaknessCount - a.weaknessCount; });
+            if (sortedAreas.length > 0) {
                 var planCode = 'LP' + Date.now().toString(36).toUpperCase();
-                var areas = {};
-                matchedItems.forEach(function(item) {
-                    var areaKey = item.catTitle || '其他';
-                    if (!areas[areaKey]) areas[areaKey] = { name: areaKey, icon: '📚', items: [] };
-                    areas[areaKey].items.push(item);
-                });
-                var sortedAreas = Object.values(areas).sort(function(a,b){return b.items.length - a.items.length;});
-                var planData = { id: planCode, code: planCode, reviewerName: name, generatedAt: new Date().toISOString(), areas: sortedAreas, totalCourses: matchedItems.length, source: '自动推送' };
-                // 存到 Supabase
+                var planData = {
+                    id: planCode, code: planCode, reviewerName: name,
+                    generatedAt: new Date().toISOString(), areas: sortedAreas,
+                    totalCourses: allItems.length, source: '自动推送（看板逻辑）'
+                };
                 var allPlans = (await supabaseGet('learningPlanData')) || {};
                 allPlans[planCode] = planData;
-                await fetch(SUPABASE_URL + '/rest/v1/app_data', {
-                    method: 'POST', headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY, 'Content-Type': 'application/json', 'Prefer': 'resolution=merge-duplicates' },
-                    body: JSON.stringify([{ key: 'learningPlanData', value: JSON.stringify(allPlans), updated_at: new Date().toISOString() }])
+                await fetch(SUPABASE_URL+'/rest/v1/app_data',{
+                    method:'POST',headers:{'apikey':SUPABASE_KEY,'Authorization':'Bearer '+SUPABASE_KEY,'Content-Type':'application/json','Prefer':'resolution=merge-duplicates'},
+                    body:JSON.stringify([{key:'learningPlanData',value:JSON.stringify(allPlans),updated_at:new Date().toISOString()}])
                 }).catch(function(){});
                 var areaNames = sortedAreas.slice(0,3).map(function(a){return a.name+'('+a.items.length+'课)';}).join('、');
-                var lcard = { config: { wide_screen_mode: true }, header: { title: { tag: 'plain_text', content: '🗺️ ' + name + ' 学习地图' }, template: 'blue' }, elements: [{ tag: 'div', text: { tag: 'lark_md', content: '**' + name + '** 上周失误 **' + count + ' 次**，已达学习阈值\n匹配课程：' + matchedItems.length + ' 节\n涉及：' + areaNames } }, { tag: 'action', actions: [{ tag: 'button', text: { tag: 'plain_text', content: '🗺️ 学习地图' }, type: 'primary', url: SITE_URL + '?learnPlan=' + planCode }] }] };
-                try { await sendCard(email, lcard, appToken); console.log('  🗺️ 学习 → ' + name+' [' + planCode + '] ' + matchedItems.length + '课'); sent++; }
-                catch(e) { console.log('  ❌ ' + name + ': ' + e.message); fail++; }
-            } else { console.log('  ⏭ ' + name + ' 无匹配课程，跳过'); }
+                var lcard = {config:{wide_screen_mode:true},header:{title:{tag:'plain_text',content:'🗺️ '+name+' 学习地图'},template:'blue'},elements:[{tag:'div',text:{tag:'lark_md',content:'**'+name+'** 上周失误 **'+count+' 次**，已达学习阈值\n课程：'+allItems.length+' 节\n涉及：'+areaNames}},{tag:'action',actions:[{tag:'button',text:{tag:'plain_text',content:'🗺️ 学习地图'},type:'primary',url:SITE_URL+'?learnPlan='+planCode}]}]};
+                try { await sendCard(email, lcard, appToken); console.log('  🗺️ 学习 → '+name+' ['+planCode+'] '+allItems.length+'课'); sent++; }
+                catch(e) { console.log('  ❌ '+name+': '+e.message); fail++; }
+            } else { console.log('  ⏭ '+name+' 未匹配到课程'); }
+        }
+                ap[planCode] = pd;
+                await fetch(SUPABASE_URL+'/rest/v1/app_data',{method:'POST',headers:{'apikey':SUPABASE_KEY,'Authorization':'Bearer '+SUPABASE_KEY,'Content-Type':'application/json','Prefer':'resolution=merge-duplicates'},body:JSON.stringify([{key:'learningPlanData',value:JSON.stringify(ap),updated_at:new Date().toISOString()}])}).catch(function(){});
+                var an = sa.slice(0,3).map(function(a){return a.name+'('+a.items.length+'课)';}).join('、');
+                var lc = {config:{wide_screen_mode:true},header:{title:{tag:'plain_text',content:'🗺️ '+name+' 学习地图'},template:'blue'},elements:[{tag:'div',text:{tag:'lark_md',content:'**'+name+'** 上周失误 **'+count+' 次**，已达学习阈值\n匹配课程：'+matchedItems.length+' 节\n涉及：'+an}},{tag:'action',actions:[{tag:'button',text:{tag:'plain_text',content:'🗺️ 学习地图'},type:'primary',url:SITE_URL+'?learnPlan='+planCode}]}]};
+                try { await sendCard(email, lc, appToken); console.log('  🗺️ 学习  '+name+' ['+planCode+'] '+matchedItems.length+'课'); sent++; }
+                catch(e) { console.log('  ❌ '+name+': '+e.message); fail++; }
+            } else { console.log('  ⏭ '+name+' 匹配课程不足3节'); }
         }
         if (count >= TH.trainMin) {
             // 从 Supabase 案例库匹配培训报告
@@ -344,12 +426,33 @@ async function main() {
                     '<h1 style="color:#1f3a6b;">📖 ' + name + ' 精准培训资料</h1>' +
                     '<p style="color:#5e6f8d;">周期：' + wk.key + ' | 失误总计：' + count + ' 次</p>' +
                     '<p style="background:#f1f5f9;padding:10px 16px;border-radius:12px;">主要失误类别：' + catsList + '</p>';
-                matched.forEach(function(c) {
+                // 图片下载函数
+                async function getImgBase64(ft) {
+                    if (!ft || typeof ft !== 'object' || !ft.t) return null;
+                    try {
+                        var url = 'https://open.feishu.cn/open-apis/drive/v1/medias/' + ft.t + '/download';
+                        var resp = await fetch(url, { headers: { 'Authorization': 'Bearer ' + appToken } });
+                        if (!resp.ok) return null;
+                        var buf = await resp.arrayBuffer();
+                        if (!buf || buf.byteLength === 0) return null;
+                        var base64 = Buffer.from(buf).toString('base64');
+                        var ext = resp.headers.get('content-type') || 'image/png';
+                        return 'data:' + ext + ';base64,' + base64;
+                    } catch(e) { return null; }
+                }
+                for (var ci = 0; ci < matched.length; ci++) {
+                    var c = matched[ci];
                     html += '<div style="border:1px solid #eef2f6;border-radius:16px;padding:20px;margin:20px 0;background:#fafcfd;">' +
                         '<div style="font-weight:700;color:#1f3a6b;">🔖 ' + (c.qcCode||'') + ' | 🏷️ ' + (c.errorCategory||'') + '</div>' +
-                        '<div style="margin-top:10px;"><strong>📝 问题描述：</strong>' + (c.issueDesc||'') + '</div>' +
-                        '<div style="margin-top:8px;"><strong>✅ 应操作方向：</strong>' + (c.correctDir||'') + '</div></div>';
-                });
+                        '<div style="margin-top:10px;"><strong>📝 问题描述：</strong>' + (c.issueDesc||'') + '</div>';
+                    // 下载并嵌入图片
+                    var allPhotos = (c.issuePhotos||[]).concat(c.dirPhotos||[]).concat(c.dirExamplePhotos||[]);
+                    for (var pi = 0; pi < allPhotos.length; pi++) {
+                        var b64 = await getImgBase64(allPhotos[pi]);
+                        if (b64) html += '<img src="' + b64 + '" style="max-width:300px;border-radius:8px;margin:6px;border:1px solid #e2e8f0;">';
+                    }
+                    html += '<div style="margin-top:8px;"><strong>✅ 应操作方向：</strong>' + (c.correctDir||'') + '</div></div>';
+                }
                 html += '<div style="text-align:center;color:#94a3b8;margin-top:30px;">优学堂 · 自动生成</div></body></html>';
                 // 保存到 Supabase
                 var reports = (await supabaseGet('generatedReports')) || {};
