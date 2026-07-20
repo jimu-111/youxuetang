@@ -97,7 +97,9 @@ async function main() {
     // 拉取上周数据，分析按人统计
     let rows = [];
     const FEISHU_SHEETS = [
-        { id: '4054dd', colDate: 0, colReviewer: 8 }, { id: 'mEiT35', colDate: 0, colReviewer: 6 }, { id: 'LIfICo', colDate: 0, colReviewer: 5 }
+        { id: '4054dd', colDate: 0, colReviewer: 8, colCategory: 6, colProduct: 5 },
+        { id: 'mEiT35', colDate: 0, colReviewer: 6, colCategory: 10, colProduct: 5 },
+        { id: 'LIfICo', colDate: 0, colReviewer: 5, colCategory: 4, colProduct: 3 }
     ];
     for (const sh of FEISHU_SHEETS) {
         try {
@@ -108,19 +110,28 @@ async function main() {
                 const row = vals[i]; if (!row) continue;
                 const d = parseDate(row[sh.colDate]); if (!isIn(d, wk.start, wk.end)) continue;
                 const rv = String(row[sh.colReviewer] || '').trim();
-                if (rv) rows.push({ reviewer: rv });
+                if (rv) rows.push({
+                    reviewer: rv,
+                    category: (row[sh.colCategory] || '').toString().trim(),
+                    product: (row[sh.colProduct] || '').toString().trim()
+                });
             }
         } catch(e) {}
     }
 
-    // 同时记录每人的失误类别分布
+    // 同时记录每人的失误类别分布和品类分布
     const rc = {};
     const rCat = {}; // { name: { category: count } }
+    const rProd = {}; // { name: { product: count } }
     rows.forEach(r => {
         rc[r.reviewer] = (rc[r.reviewer] || 0) + 1;
         if (!rCat[r.reviewer]) rCat[r.reviewer] = {};
         var cat = r.category || '其他';
         rCat[r.reviewer][cat] = (rCat[r.reviewer][cat] || 0) + 1;
+        if (r.product) {
+            if (!rProd[r.reviewer]) rProd[r.reviewer] = {};
+            rProd[r.reviewer][r.product] = (rProd[r.reviewer][r.product] || 0) + 1;
+        }
     });
     console.log('上周失误: ' + rows.length + '条, ' + Object.keys(rc).length + '人');
 
@@ -221,23 +232,12 @@ async function main() {
         }).catch(function() {});
     }
 
-    // 从 Supabase 读已有的学习地图（前端生成的）
-    const existingPlans = (await supabaseGet('learningPlanData')) || {};
-    // 按人名索引已有学习计划
-    var planByReviewer = {};
-    Object.values(existingPlans).forEach(function(p) {
-        if (p.reviewerName) planByReviewer[p.reviewerName] = p;
-    });
+    // 从 Supabase 读学习地图课程数据
+    const lmCache = (await supabaseGet('lm_cache')) || {};
+    const lmGroups = lmCache.groups || [];
 
-    // 从 Supabase 读已有的培训报告（前端生成的）
-    const trainingRecords = (await supabaseGet('trainingPushRecords')) || [];
-    const existingReports = (await supabaseGet('generatedReports')) || {};
-    // 按人名索引已有培训报告
-    var reportByReviewer = {};
-    trainingRecords.forEach(function(t) {
-        if (t.reviewerName && existingReports[t.reportName]) reportByReviewer[t.reviewerName] = t;
-    });
-
+    // 从 Supabase 读案例库，用于生成培训报告
+    const allCasesData = ((await supabaseGet('manualCases')) || []).filter(function(c) { return c.errorCategory && c.issueDesc; });
 
     for (const [name, count] of Object.entries(rc).sort((a,b) => b[1]-a[1])) {
         const email = emails[name];
@@ -256,27 +256,113 @@ async function main() {
             try { await sendCard(email, card, appToken); console.log('  📝 考试 → ' + name+'('+count+') [' + examCode + ']'); sent++; }
             catch(e) { console.log('  ❌ ' + name + ': ' + e.message); fail++; }
         }
-        if (count >= TH.learnMin) {
-            // 读已有的学习地图
-            var plan = planByReviewer[name];
-            if (plan && plan.code) {
-                var cats = (plan.areas||[]).slice(0,3).map(function(a){return a.name;}).join('、');
-                var lcard = { config: { wide_screen_mode: true }, header: { title: { tag: 'plain_text', content: '🗺️ ' + name + ' 学习地图' }, template: 'blue' }, elements: [{ tag: 'div', text: { tag: 'lark_md', content: '**' + name + '** 上周失误 **' + count + ' 次**，已达学习阈值\n涉及：' + cats } }, { tag: 'action', actions: [{ tag: 'button', text: { tag: 'plain_text', content: '🗺️ 学习地图' }, type: 'primary', url: SITE_URL + '?learnPlan=' + plan.code }] }] };
-                try { await sendCard(email, lcard, appToken); console.log('  🗺️ 学习 → ' + name+' [' + plan.code + ']'); sent++; }
+        if (count >= TH.learnMin && lmGroups.length > 0) {
+            // 从失误备注提取关键词
+            var personRows = rows.filter(function(r) { return r.reviewer === name; });
+            var kwScores = {};
+            var stopWords = {手机:1,异常:1,反馈:1,问题:1,错误:1,未达:1,标准:1,情况:1,质检:1,失误:1,存在:1,进行:1,需要:1,注意:1,可能:1,部分:1,没有:1,是否:1,已经:1,还是:1,这个:1,因为:1,可以:1,如果:1,不是:1,应该:1,比较:1,什么:1,不过:1,怎么:1,但是:1,他们:1,自己:1,通过:1};
+            personRows.forEach(function(r) {
+                var text = (r.category + ' ' + (r.product||'')).toLowerCase();
+                text.split(/[，,、\s。；;：:（）()\/]+/).forEach(function(w) {
+                    w = w.trim(); if (!w || w.length < 2 || stopWords[w]) return;
+                    kwScores[w] = (kwScores[w]||0) + 1;
+                });
+            });
+            // 匹配课程
+            var matchedItems = [];
+            lmGroups.forEach(function(cat) {
+                (cat.items||[]).forEach(function(item) {
+                    if (!item.link) return;
+                    var courseText = ((item.desc||'') + ' ' + (item.name||'')).toLowerCase();
+                    var score = 0;
+                    Object.keys(kwScores).forEach(function(kw) { if (courseText.indexOf(kw) >= 0) score += kwScores[kw]; });
+                    if (score >= 1) matchedItems.push({ name: item.name, desc: item.desc, link: item.link, score: score, catTitle: cat.title || '' });
+                });
+            });
+            matchedItems.sort(function(a,b){return b.score - a.score;});
+            matchedItems = matchedItems.slice(0, 20);
+            if (matchedItems.length > 0) {
+                var planCode = 'LP' + Date.now().toString(36).toUpperCase();
+                var areas = {};
+                matchedItems.forEach(function(item) {
+                    var areaKey = item.catTitle || '其他';
+                    if (!areas[areaKey]) areas[areaKey] = { name: areaKey, icon: '📚', items: [] };
+                    areas[areaKey].items.push(item);
+                });
+                var sortedAreas = Object.values(areas).sort(function(a,b){return b.items.length - a.items.length;});
+                var planData = { id: planCode, code: planCode, reviewerName: name, generatedAt: new Date().toISOString(), areas: sortedAreas, totalCourses: matchedItems.length, source: '自动推送' };
+                // 存到 Supabase
+                var allPlans = (await supabaseGet('learningPlanData')) || {};
+                allPlans[planCode] = planData;
+                await fetch(SUPABASE_URL + '/rest/v1/app_data', {
+                    method: 'POST', headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY, 'Content-Type': 'application/json', 'Prefer': 'resolution=merge-duplicates' },
+                    body: JSON.stringify([{ key: 'learningPlanData', value: JSON.stringify(allPlans), updated_at: new Date().toISOString() }])
+                }).catch(function(){});
+                var areaNames = sortedAreas.slice(0,3).map(function(a){return a.name+'('+a.items.length+'课)';}).join('、');
+                var lcard = { config: { wide_screen_mode: true }, header: { title: { tag: 'plain_text', content: '🗺️ ' + name + ' 学习地图' }, template: 'blue' }, elements: [{ tag: 'div', text: { tag: 'lark_md', content: '**' + name + '** 上周失误 **' + count + ' 次**，已达学习阈值\n匹配课程：' + matchedItems.length + ' 节\n涉及：' + areaNames } }, { tag: 'action', actions: [{ tag: 'button', text: { tag: 'plain_text', content: '🗺️ 学习地图' }, type: 'primary', url: SITE_URL + '?learnPlan=' + planCode }] }] };
+                try { await sendCard(email, lcard, appToken); console.log('  🗺️ 学习 → ' + name+' [' + planCode + '] ' + matchedItems.length + '课'); sent++; }
                 catch(e) { console.log('  ❌ ' + name + ': ' + e.message); fail++; }
-            } else {
-                console.log('  ⏭ ' + name + ' 无学习地图，跳过');
-            }
+            } else { console.log('  ⏭ ' + name + ' 无匹配课程，跳过'); }
         }
         if (count >= TH.trainMin) {
-            // 读已有的培训报告
-            var tr = reportByReviewer[name];
-            if (tr && tr.reportName) {
-                var tcard = { config: { wide_screen_mode: true }, header: { title: { tag: 'plain_text', content: '📖 ' + name + ' 精准培训' }, template: 'purple' }, elements: [{ tag: 'div', text: { tag: 'lark_md', content: '**' + name + '** 上周失误 **' + count + ' 次**，已达培训阈值\n涉及：' + (tr.cats||'') } }, { tag: 'action', actions: [{ tag: 'button', text: { tag: 'plain_text', content: '📖 查看培训' }, type: 'primary', url: SITE_URL + '?report=' + encodeURIComponent(tr.reportName) }] }] };
-                try { await sendCard(email, tcard, appToken); console.log('  📖 培训 → ' + name+' [' + tr.reportName + ']'); sent++; }
+            // 从 Supabase 案例库匹配培训报告
+            var personCats = rCat[name] || {};
+            var personProds = rProd[name] || {};
+            var catNames = Object.keys(personCats);
+            // 判断主品类
+            var prodEntries = Object.entries(personProds);
+            var totalM = prodEntries.reduce(function(a,b){return a+b[1];},0);
+            var dominantProd = null;
+            prodEntries.forEach(function(e) { if (e[1]/totalM >= 0.9) dominantProd = e[0]; });
+            // 按失误类别匹配案例
+            var matched = allCasesData.filter(function(c) {
+                return catNames.some(function(cn) { return (c.errorCategory||'').includes(cn) || cn.includes(c.errorCategory||''); });
+            });
+            // 主品类过滤
+            if (dominantProd) {
+                matched = matched.filter(function(c) {
+                    var cp = c.productCategory||'';
+                    return cp === '全品类' || cp.includes(dominantProd) || dominantProd.includes(cp);
+                });
+            }
+            // 不够20条按品类补齐
+            if (matched.length < 20) {
+                var fillProds = dominantProd ? [dominantProd] : Object.keys(personProds);
+                var fillCases = allCasesData.filter(function(c) {
+                    if (matched.find(function(m){return m.qcCode===c.qcCode;})) return false;
+                    var cp = c.productCategory||'';
+                    return cp === '全品类' || fillProds.some(function(p){ return cp.includes(p) || p.includes(cp); });
+                });
+                fillCases.sort(function(){return Math.random()-0.5;});
+                matched = matched.concat(fillCases.slice(0, 20 - matched.length));
+            }
+            if (matched.length > 0) {
+                matched = matched.slice(0, 20);
+                var reportName = name + ' 培训资料(' + wk.key + ')';
+                var catsList = Object.entries(personCats).sort(function(a,b){return b[1]-a[1];}).map(function(e){return e[0]+'('+e[1]+'次)';}).join('、');
+                var html = '<html><head><meta charset="UTF-8"><title>' + reportName + '</title></head><body style="font-family:Microsoft YaHei;padding:40px;max-width:900px;margin:0 auto;">' +
+                    '<h1 style="color:#1f3a6b;">📖 ' + name + ' 精准培训资料</h1>' +
+                    '<p style="color:#5e6f8d;">周期：' + wk.key + ' | 失误总计：' + count + ' 次</p>' +
+                    '<p style="background:#f1f5f9;padding:10px 16px;border-radius:12px;">主要失误类别：' + catsList + '</p>';
+                matched.forEach(function(c) {
+                    html += '<div style="border:1px solid #eef2f6;border-radius:16px;padding:20px;margin:20px 0;background:#fafcfd;">' +
+                        '<div style="font-weight:700;color:#1f3a6b;">🔖 ' + (c.qcCode||'') + ' | 🏷️ ' + (c.errorCategory||'') + '</div>' +
+                        '<div style="margin-top:10px;"><strong>📝 问题描述：</strong>' + (c.issueDesc||'') + '</div>' +
+                        '<div style="margin-top:8px;"><strong>✅ 应操作方向：</strong>' + (c.correctDir||'') + '</div></div>';
+                });
+                html += '<div style="text-align:center;color:#94a3b8;margin-top:30px;">优学堂 · 自动生成</div></body></html>';
+                // 保存到 Supabase
+                var reports = (await supabaseGet('generatedReports')) || {};
+                reports[reportName] = html;
+                await fetch(SUPABASE_URL + '/rest/v1/app_data', {
+                    method: 'POST', headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY, 'Content-Type': 'application/json', 'Prefer': 'resolution=merge-duplicates' },
+                    body: JSON.stringify([{ key: 'generatedReports', value: JSON.stringify(reports), updated_at: new Date().toISOString() }])
+                }).catch(function(){});
+                var tcard = { config: { wide_screen_mode: true }, header: { title: { tag: 'plain_text', content: '📖 ' + name + ' 精准培训' }, template: 'purple' }, elements: [{ tag: 'div', text: { tag: 'lark_md', content: '**' + name + '** 上周失误 **' + count + ' 次**，已达培训阈值\n匹配案例：' + matched.length + ' 条' } }, { tag: 'action', actions: [{ tag: 'button', text: { tag: 'plain_text', content: '📖 查看培训' }, type: 'primary', url: SITE_URL + '?report=' + encodeURIComponent(reportName) }] }] };
+                try { await sendCard(email, tcard, appToken); console.log('  📖 培训 → ' + name+' (' + matched.length + '条)'); sent++; }
                 catch(e) { console.log('  ❌ ' + name + ': ' + e.message); fail++; }
             } else {
-                console.log('  ⏭ ' + name + ' 无培训报告，跳过');
+                console.log('  ⏭ ' + name + ' 案例库无匹配，跳过');
             }
         }
     }
