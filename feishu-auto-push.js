@@ -378,14 +378,6 @@ async function main() {
                 catch(e) { console.log('  ❌ '+name+': '+e.message); fail++; }
             } else { console.log('  ⏭ '+name+' 未匹配到课程'); }
         }
-                ap[planCode] = pd;
-                await fetch(SUPABASE_URL+'/rest/v1/app_data',{method:'POST',headers:{'apikey':SUPABASE_KEY,'Authorization':'Bearer '+SUPABASE_KEY,'Content-Type':'application/json','Prefer':'resolution=merge-duplicates'},body:JSON.stringify([{key:'learningPlanData',value:JSON.stringify(ap),updated_at:new Date().toISOString()}])}).catch(function(){});
-                var an = sa.slice(0,3).map(function(a){return a.name+'('+a.items.length+'课)';}).join('、');
-                var lc = {config:{wide_screen_mode:true},header:{title:{tag:'plain_text',content:'🗺️ '+name+' 学习地图'},template:'blue'},elements:[{tag:'div',text:{tag:'lark_md',content:'**'+name+'** 上周失误 **'+count+' 次**，已达学习阈值\n匹配课程：'+matchedItems.length+' 节\n涉及：'+an}},{tag:'action',actions:[{tag:'button',text:{tag:'plain_text',content:'🗺️ 学习地图'},type:'primary',url:SITE_URL+'?learnPlan='+planCode}]}]};
-                try { await sendCard(email, lc, appToken); console.log('  🗺️ 学习  '+name+' ['+planCode+'] '+matchedItems.length+'课'); sent++; }
-                catch(e) { console.log('  ❌ '+name+': '+e.message); fail++; }
-            } else { console.log('  ⏭ '+name+' 匹配课程不足3节'); }
-        }
         if (count >= TH.trainMin) {
             // 从 Supabase 案例库匹配培训报告
             var personCats = rCat[name] || {};
