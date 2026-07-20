@@ -221,62 +221,22 @@ async function main() {
         }).catch(function() {});
     }
 
-    // 自动生成学习计划（≥learnMin 的人）
-    const learnPlans = (await supabaseGet('learnPlanPushes')) || [];
-    for (const [name, count] of Object.entries(rc)) {
-        if (count >= TH.learnMin) {
-            var hasLearn = learnPlans.some(function(l) {
-                return l.reviewerName === name && new Date(l.time || 0) >= wk.start;
-            });
-            if (!hasLearn) {
-                var planCode = 'LP' + Date.now().toString(36).toUpperCase() + Math.random().toString(36).substring(2,4).toUpperCase();
-                learnPlans.push({ reviewerName: name, planCode: planCode, mistakeCount: count, cats: Object.keys(rCat[name]||{}).slice(0,5), time: new Date().toISOString() });
-                console.log('  🗺️ 学习 → ' + name + ' [' + planCode + ']');
-            }
-        }
-    }
-    if (learnPlans.length > 0) {
-        await fetch(SUPABASE_URL + '/rest/v1/app_data', {
-            method: 'POST',
-            headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY, 'Content-Type': 'application/json', 'Prefer': 'resolution=merge-duplicates' },
-            body: JSON.stringify([{ key: 'learnPlanPushes', value: JSON.stringify(learnPlans), updated_at: new Date().toISOString() }])
-        }).catch(function() {});
-    }
+    // 从 Supabase 读已有的学习地图（前端生成的）
+    const existingPlans = (await supabaseGet('learningPlanData')) || {};
+    // 按人名索引已有学习计划
+    var planByReviewer = {};
+    Object.values(existingPlans).forEach(function(p) {
+        if (p.reviewerName) planByReviewer[p.reviewerName] = p;
+    });
 
-    // 自动生成培训报告（≥trainMin 的人）
-    const training = (await supabaseGet('trainingPushRecords')) || [];
-    const generatedReports = (await supabaseGet('generatedReports')) || {};
-    for (const [name, count] of Object.entries(rc)) {
-        if (count >= TH.trainMin) {
-            var hasTrain = training.some(function(t) {
-                return t.reviewerName === name && new Date(t.time || 0) >= wk.start;
-            });
-            if (!hasTrain) {
-                var reportName = name + ' 培训资料(' + wk.key + ')';
-                var catList = Object.entries(rCat[name]||{}).sort(function(a,b){return b[1]-a[1];}).map(function(e){return e[0]+'('+e[1]+'次)';}).join('、');
-                var reportHtml = '<html><head><meta charset="UTF-8"><title>' + reportName + '</title></head><body style="font-family:Microsoft YaHei;padding:20px;">' +
-                    '<h2>📖 ' + name + ' 精准培训资料</h2><p>周期：' + wk.key + ' | 失误总计：' + count + ' 次</p>' +
-                    '<p>主要失误类别：' + catList + '</p>' +
-                    '<p>培训建议：针对上述类别查阅SOP文档，重点复习高频失误类型的判定标准。</p>' +
-                    '<p style="color:#5e6f8d;margin-top:30px;">智训通+数据分析中心 · 自动生成</p></body></html>';
-                training.push({ reviewerName: name, reportName: reportName, mistakeCount: count, cats: catList, time: new Date().toISOString() });
-                generatedReports[reportName] = reportHtml;
-                console.log('  📖 培训 → ' + name + ' [' + reportName + ']');
-            }
-        }
-    }
-    if (training.length > 0) {
-        await fetch(SUPABASE_URL + '/rest/v1/app_data', {
-            method: 'POST',
-            headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY, 'Content-Type': 'application/json', 'Prefer': 'resolution=merge-duplicates' },
-            body: JSON.stringify([{ key: 'trainingPushRecords', value: JSON.stringify(training), updated_at: new Date().toISOString() }])
-        }).catch(function() {});
-        await fetch(SUPABASE_URL + '/rest/v1/app_data', {
-            method: 'POST',
-            headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY, 'Content-Type': 'application/json', 'Prefer': 'resolution=merge-duplicates' },
-            body: JSON.stringify([{ key: 'generatedReports', value: JSON.stringify(generatedReports), updated_at: new Date().toISOString() }])
-        }).catch(function() {});
-    }
+    // 从 Supabase 读已有的培训报告（前端生成的）
+    const trainingRecords = (await supabaseGet('trainingPushRecords')) || [];
+    const existingReports = (await supabaseGet('generatedReports')) || {};
+    // 按人名索引已有培训报告
+    var reportByReviewer = {};
+    trainingRecords.forEach(function(t) {
+        if (t.reviewerName && existingReports[t.reportName]) reportByReviewer[t.reviewerName] = t;
+    });
 
 
     for (const [name, count] of Object.entries(rc).sort((a,b) => b[1]-a[1])) {
@@ -297,25 +257,26 @@ async function main() {
             catch(e) { console.log('  ❌ ' + name + ': ' + e.message); fail++; }
         }
         if (count >= TH.learnMin) {
-            // 找本周生成的学习计划码
-            var lp = learnPlans.find(function(l) {
-                return l.reviewerName === name && new Date(l.time || 0) >= wk.start;
-            });
-            if (lp && lp.planCode) {
-                var lcard = { config: { wide_screen_mode: true }, header: { title: { tag: 'plain_text', content: '🗺️ ' + name + ' 学习地图' }, template: 'blue' }, elements: [{ tag: 'div', text: { tag: 'lark_md', content: '**' + name + '** 上周失误 **' + count + ' 次**，已达学习阈值\n涉及类别：' + (lp.cats||[]).slice(0,3).join('、') } }, { tag: 'action', actions: [{ tag: 'button', text: { tag: 'plain_text', content: '🗺️ 学习地图' }, type: 'primary', url: SITE_URL + '?learnPlan=' + lp.planCode }] }] };
-                try { await sendCard(email, lcard, appToken); console.log('  🗺️ 学习 → ' + name+'('+count+') [' + lp.planCode + ']'); sent++; }
+            // 读已有的学习地图
+            var plan = planByReviewer[name];
+            if (plan && plan.code) {
+                var cats = (plan.areas||[]).slice(0,3).map(function(a){return a.name;}).join('、');
+                var lcard = { config: { wide_screen_mode: true }, header: { title: { tag: 'plain_text', content: '🗺️ ' + name + ' 学习地图' }, template: 'blue' }, elements: [{ tag: 'div', text: { tag: 'lark_md', content: '**' + name + '** 上周失误 **' + count + ' 次**，已达学习阈值\n涉及：' + cats } }, { tag: 'action', actions: [{ tag: 'button', text: { tag: 'plain_text', content: '🗺️ 学习地图' }, type: 'primary', url: SITE_URL + '?learnPlan=' + plan.code }] }] };
+                try { await sendCard(email, lcard, appToken); console.log('  🗺️ 学习 → ' + name+' [' + plan.code + ']'); sent++; }
                 catch(e) { console.log('  ❌ ' + name + ': ' + e.message); fail++; }
+            } else {
+                console.log('  ⏭ ' + name + ' 无学习地图，跳过');
             }
         }
         if (count >= TH.trainMin) {
-            // 找本周生成的培训报告
-            var tr = training.find(function(t) {
-                return t.reviewerName === name && new Date(t.time || 0) >= wk.start;
-            });
+            // 读已有的培训报告
+            var tr = reportByReviewer[name];
             if (tr && tr.reportName) {
-                var tcard = { config: { wide_screen_mode: true }, header: { title: { tag: 'plain_text', content: '📖 ' + name + ' 精准培训' }, template: 'purple' }, elements: [{ tag: 'div', text: { tag: 'lark_md', content: '**' + name + '** 上周失误 **' + count + ' 次**，已达培训阈值\n涉及类别：' + (tr.cats||'') } }, { tag: 'action', actions: [{ tag: 'button', text: { tag: 'plain_text', content: '📖 查看培训' }, type: 'primary', url: SITE_URL + '?report=' + encodeURIComponent(tr.reportName) }] }] };
-                try { await sendCard(email, tcard, appToken); console.log('  📖 培训 → ' + name+'('+count+') [' + tr.reportName + ']'); sent++; }
+                var tcard = { config: { wide_screen_mode: true }, header: { title: { tag: 'plain_text', content: '📖 ' + name + ' 精准培训' }, template: 'purple' }, elements: [{ tag: 'div', text: { tag: 'lark_md', content: '**' + name + '** 上周失误 **' + count + ' 次**，已达培训阈值\n涉及：' + (tr.cats||'') } }, { tag: 'action', actions: [{ tag: 'button', text: { tag: 'plain_text', content: '📖 查看培训' }, type: 'primary', url: SITE_URL + '?report=' + encodeURIComponent(tr.reportName) }] }] };
+                try { await sendCard(email, tcard, appToken); console.log('  📖 培训 → ' + name+' [' + tr.reportName + ']'); sent++; }
                 catch(e) { console.log('  ❌ ' + name + ': ' + e.message); fail++; }
+            } else {
+                console.log('  ⏭ ' + name + ' 无培训报告，跳过');
             }
         }
     }

@@ -16555,9 +16555,23 @@ URL.revokeObjectURL(url);
             if (dominantProduct && c.productCategory && c.productCategory !== '全品类' && c.productCategory !== dominantProduct && !c.productCategory.includes(dominantProduct) && !dominantProduct.includes(c.productCategory) && !c.productCategory.replace(/[&、\-・\s]/g,'').includes(dominantProduct.replace(/[&、\-・\s]/g,''))) return false;
             return true;
         });
+        // 不够20条则按品类补齐（不限失误类别）
+        if (matched.length < 20) {
+            var fillProducts = dominantProduct ? [dominantProduct] : Object.keys(productCounts).filter(function(p){ return p !== '未知'; });
+            var fillCases = allCases.filter(function(c){
+                if (matched.find(function(m){ return m.qcCode === c.qcCode; })) return false;
+                if (!fillProducts.length) return true;
+                var cp = c.productCategory || '';
+                return cp === '全品类' || fillProducts.some(function(p){
+                    return cp.includes(p) || p.includes(cp);
+                });
+            });
+            fillCases.sort(function(){ return Math.random() - 0.5; });
+            matched = matched.concat(fillCases.slice(0, 20 - matched.length));
+        }
         if (matched.length === 0) { showAlert("案例库中无匹配的案例", "⚠️"); return; }
         matched.sort(function(a,b){ return (cats[b.errorCategory]||0)-(cats[a.errorCategory]||0); });
-        matched = matched.slice(0, 30);
+        matched = matched.slice(0, 20);
 
         var docHtml = "<!DOCTYPE html><html><head><meta charset=\"UTF-8\"><title>培训资料</title>" +
         "<style>body{font-family:Microsoft YaHei,SimHei,sans-serif;padding:40px;max-width:900px;margin:0 auto;color:#333;}" +
