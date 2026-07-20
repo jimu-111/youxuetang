@@ -120,6 +120,29 @@ async function main() {
         } catch(e) {}
     }
 
+    // 再读一遍全部数据（不限周），用于学习地图关键词提取
+    var allRows = [];
+    for (const sh of FEISHU_SHEETS) {
+        try {
+            var r3 = await fetch(PROXY_URL, {method:'POST',
+                headers:{'Authorization':'Bearer '+SUPABASE_KEY,'x-target-url':'https://open.feishu.cn/open-apis/sheets/v2/spreadsheets/EdI0sn3qkh7H6wtkhcpcxrTnnDf/values/'+sh.id+'?majorDimension=ROWS','x-target-method':'GET','x-target-auth':'Bearer '+userToken,'Content-Type':'application/json'}
+            });
+            var d3 = await r3.json();
+            var vals3 = (d3.data&&d3.data.valueRange&&d3.data.valueRange.values)||[];
+            for (let i=2; i<vals3.length; i++) {
+                var row3 = vals3[i]; if (!row3) continue;
+                var rv3 = String(row3[sh.colReviewer]||'').trim();
+                if (rv3) allRows.push({
+                    reviewer: rv3,
+                    category: (row3[sh.colCategory]||'').toString().trim(),
+                    product: (row3[sh.colProduct]||'').toString().trim(),
+                    note: (row3[sh.colNote]||'').toString().trim()
+                });
+            }
+        } catch(e) {}
+    }
+    console.log('全部数据: ' + allRows.length + '条');
+
     // 同时记录每人的失误类别分布和品类分布
     const rc = {};
     const rCat = {}; // { name: { category: count } }
@@ -299,7 +322,7 @@ async function main() {
         }
         if (count >= TH.learnMin && lmCategories.length > 0) {
             // ===== 从看板一字不改搬过来的学习地图生成逻辑 =====
-            var personErrs = rows.filter(function(e) { return e.reviewer === name; });
+            var personErrs = allRows.filter(function(e) { return e.reviewer === name; });
             if (personErrs.length === 0) { console.log('  ⏭ ' + name + ' 无失误记录'); continue; }
             var totalE = personErrs.length;
             var productCounts = {};
@@ -416,14 +439,15 @@ async function main() {
                 var catsList = Object.entries(personCats).sort(function(a,b){return b[1]-a[1];}).map(function(e){return e[0]+'('+e[1]+'次)';}).join('、');
                 var html = '<html><head><meta charset="UTF-8"><title>' + reportName + '</title></head><body style="font-family:Microsoft YaHei;padding:40px;max-width:900px;margin:0 auto;">' +
                     '<h1 style="color:#1f3a6b;">📖 ' + name + ' 精准培训资料</h1>' +
-                    '<p style="color:#5e6f8d;">周期：' + wk.key + ' | 失误总计：' + count + ' 次</p>' +
+                    '<p style="color:#5e6f8d;">周期：' + fmt(wk.start) + ' ~ ' + fmt(wk.end) + ' | 失误总计：' + count + ' 次</p>' +
                     '<p style="background:#f1f5f9;padding:10px 16px;border-radius:12px;">主要失误类别：' + catsList + '</p>';
                 // 图片下载函数
                 async function getImgBase64(ft) {
                     if (!ft || typeof ft !== 'object' || !ft.t) return null;
                     try {
-                        var url = 'https://open.feishu.cn/open-apis/drive/v1/medias/' + ft.t + '/download';
-                        var resp = await fetch(url, { headers: { 'Authorization': 'Bearer ' + appToken } });
+                        var resp = await fetch('https://open.feishu.cn/open-apis/drive/v1/medias/' + ft.t + '/download', {
+                            headers: { 'Authorization': 'Bearer ' + userToken }
+                        });
                         if (!resp.ok) return null;
                         var buf = await resp.arrayBuffer();
                         if (!buf || buf.byteLength === 0) return null;
