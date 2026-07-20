@@ -13160,22 +13160,35 @@ URL.revokeObjectURL(url);
             matchedQuestions.push(...matched);
         });
 
-        if (matchedQuestions.length < 20) {
-            const remaining = allQuestions.filter(q => !matchedQuestions.find(m => m.id === q.id));
+        // 提取该初审人涉及的品类列表
+        const reviewerErrors = getFilteredErrors().filter(function(e) {
+            return (e.reviewer || '').replace(/解答失误|解答/g, '').trim() === reviewerName;
+        });
+        const reviewerProducts = [...new Set(reviewerErrors.map(function(e) { return e.product; }).filter(Boolean))];
+
+        if (matchedQuestions.length < 30) {
+            const remaining = allQuestions.filter(q => {
+                if (matchedQuestions.find(m => m.id === q.id)) return false;
+                if (!reviewerProducts.length) return true;
+                const qProd = (q.productCategory || '').toLowerCase();
+                return qProd === '全品类' || reviewerProducts.some(function(p) {
+                    return qProd.includes(p.toLowerCase()) || p.toLowerCase().includes(qProd);
+                });
+            });
             const shuffled = remaining.sort(() => Math.random() - 0.5);
-            matchedQuestions.push(...shuffled.slice(0, 20 - matchedQuestions.length));
+            matchedQuestions.push(...shuffled.slice(0, 30 - matchedQuestions.length));
         }
 
         const shuffled = [...new Set(matchedQuestions)].sort(() => Math.random() - 0.5);
-        const selected20 = shuffled.slice(0, 20);
-        if (selected20.length < 5) { alert('匹配到的题目不足5题，请扩充题库'); return; }
+        const selectedQuestions = shuffled.slice(0, 30);
+        if (selectedQuestions.length < 5) { alert('匹配到的题目不足5题，请扩充题库'); return; }
 
         const examData = getExamHistory();
         const examId = 'exam_' + Date.now();
         const examCode = generateExamCode();
         const examRecord = {
             id: examId, examCode, reviewerName,
-            questions: selected20, generatedAt: new Date().toISOString(),
+            questions: selectedQuestions, generatedAt: new Date().toISOString(),
             source: '失误前五警示画像',
             mistakeCategories: categoryKeys, status: 'pending', attempts: 0, records: [],
             timeLimit: 40, maxAttempts: 2, wrongAnswers: []
@@ -15509,6 +15522,8 @@ URL.revokeObjectURL(url);
         // 按类别匹配题目
         var selectedQuestions = [];
         var usedIds = {};
+        // 提取当前筛选范围内的品类列表
+        var relevantProducts = [...new Set(filtered.map(function(e) { return e.product; }).filter(Boolean))];
         categories.forEach(function(entry) {
             var cat = entry[0];
             var needed = catQuestions[cat] || 0;
@@ -15518,20 +15533,19 @@ URL.revokeObjectURL(url);
                 var qCat = (q.category || '').toLowerCase();
                 return qCat.includes(catLower) || catLower.includes(qCat);
             });
-            // 不够则从"判错责任方"或"未达标准"补齐
+            // 不够则按品类补齐（不限定失误类别，但不跨品类）
             if (matched.length < needed) {
-                var fillCats = ['判错责任方','未达标准'];
-                for (var fi = 0; fi < fillCats.length && matched.length < needed; fi++) {
-                    var fillLower = fillCats[fi].toLowerCase();
-                    var fillQs = allQuestions.filter(function(q) {
-                        if (usedIds[q.id]) return false;
-                        if (matched.find(function(m) { return m.id === q.id; })) return false;
-                        var qCat = (q.category || '').toLowerCase();
-                        return qCat.includes(fillLower) || fillLower.includes(qCat);
+                var fillQs = allQuestions.filter(function(q) {
+                    if (usedIds[q.id]) return false;
+                    if (matched.find(function(m) { return m.id === q.id; })) return false;
+                    if (!relevantProducts.length) return true;
+                    var qProd = (q.productCategory || '').toLowerCase();
+                    return qProd === '全品类' || relevantProducts.some(function(p) {
+                        return qProd.includes(p.toLowerCase()) || p.toLowerCase().includes(qProd);
                     });
-                    var shuffledFill = fillQs.sort(function() { return Math.random() - 0.5; });
-                    matched = matched.concat(shuffledFill.slice(0, needed - matched.length));
-                }
+                });
+                var shuffledFill = fillQs.sort(function() { return Math.random() - 0.5; });
+                matched = matched.concat(shuffledFill.slice(0, needed - matched.length));
             }
             var shuffledMatched = matched.sort(function() { return Math.random() - 0.5; });
             var picked = shuffledMatched.slice(0, needed);
@@ -15628,7 +15642,7 @@ URL.revokeObjectURL(url);
             catCounts[cat] = (catCounts[cat] || 0) + entry[1];
         });
         var totalErrors = personErrors.length;
-        var TOTAL_QUESTIONS = 20;
+        var TOTAL_QUESTIONS = 30;
         var categories = Object.entries(catCounts).sort(function(a, b) { return b[1] - a[1]; });
 
         // 按比例分配
@@ -15670,18 +15684,19 @@ URL.revokeObjectURL(url);
                 if (dominantProduct && q.productCategory && q.productCategory !== '全品类' && q.productCategory !== dominantProduct && !q.productCategory.includes(dominantProduct) && !dominantProduct.includes(q.productCategory) && !q.productCategory.replace(/[&、\-・\s]/g,'').includes(dominantProduct.replace(/[&、\-・\s]/g,''))) return false;
                 return true;
             });
+            // 不够则按品类补齐（不限定失误类别，但不跨品类）
             if (matched.length < needed) {
-                var fillCats = ['判错责任方','未达标准'];
-                for (var fi = 0; fi < fillCats.length && matched.length < needed; fi++) {
-                    var fillLower = fillCats[fi].toLowerCase();
-                    var fillQs = allQuestions.filter(function(q) {
-                        if (usedIds[q.id]) return false;
-                        if (matched.find(function(m) { return m.id === q.id; })) return false;
-                        var qCat = (q.category || '').toLowerCase();
-                        return qCat.includes(fillLower) || fillLower.includes(qCat);
+                var fillProducts = dominantProduct ? [dominantProduct] : [...new Set(personErrors.map(function(e) { return e.product; }).filter(Boolean))];
+                var fillQs = allQuestions.filter(function(q) {
+                    if (usedIds[q.id]) return false;
+                    if (matched.find(function(m) { return m.id === q.id; })) return false;
+                    if (!fillProducts.length) return true;
+                    var qProd = (q.productCategory || '').toLowerCase();
+                    return qProd === '全品类' || fillProducts.some(function(p) {
+                        return qProd.includes(p.toLowerCase()) || p.toLowerCase().includes(qProd);
                     });
-                    matched = matched.concat(fillQs.sort(function() { return Math.random() - 0.5; }).slice(0, needed - matched.length));
-                }
+                });
+                matched = matched.concat(fillQs.sort(function() { return Math.random() - 0.5; }).slice(0, needed - matched.length));
             }
             var picked = matched.sort(function() { return Math.random() - 0.5; }).slice(0, needed);
             picked.forEach(function(q) { usedIds[q.id] = true; });
