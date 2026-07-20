@@ -80,7 +80,8 @@ async function main() {
     console.log('上周: ' + wk.key + ' ~ ' + fmt(wk.end));
 
     const doneKey = 'auto_push_done_' + wk.key;
-    if (await supabaseGet(doneKey)) { console.log('已推送，跳过'); return; }
+    if (process.env.FORCE_RUN !== 'true' && await supabaseGet(doneKey)) { console.log('已推送，跳过'); return; }
+    if (process.env.FORCE_RUN === 'true') console.log('⚠️ 强制运行模式（已忽略推送标记）');
 
     const appToken = await getAppToken();
     const emails = (await supabaseGet('personnelEmails')) || {};
