@@ -2089,7 +2089,7 @@
         let mistakeMap = {};
         try { mistakeMap = JSON.parse(localStorage.getItem('samplingModule3MistakeMap') || '{}'); } catch(e) { mistakeMap = {}; }
         // 正名修正：确保所有数据源的key都是正名
-        const displayNameFix = {'吴晖':'吴辉','樊昱舜':'樊景舜','樊慧舞':'樊景舜','李思林':'李忠林','姜钧琪':'麦钧淇','姜钧淇':'麦钧淇','雍彬彬':null};
+        const displayNameFix = {'吴晖':'吴辉','樊昱舜':'樊景舜','樊慧舞':'樊景舜','李思林':'李忠林','姜钧琪':'麦钧淇','姜钧淇':'麦钧淇','麦均淇':'麦钧淇','何显键':'何显健','雍彬彬':null};
         function fixNameKey(map) {
             const fixed = {};
             for (const [k, v] of Object.entries(map)) {
@@ -2507,7 +2507,7 @@
 
             // 5. 解析AI返回的JSON
             // AI识别名字智能修正：精确映射 + 基于名单的模糊匹配
-            const aiNameFix = {'吴晖':'吴辉','樊昱舜':'樊景舜','樊慧舞':'樊景舜','李思林':'李忠林','姜钧琪':'麦钧淇','姜钧淇':'麦钧淇'};
+            const aiNameFix = {'吴晖':'吴辉','樊昱舜':'樊景舜','樊慧舞':'樊景舜','李思林':'李忠林','姜钧琪':'麦钧淇','姜钧淇':'麦钧淇','麦均淇':'麦钧淇','何显键':'何显健'};
             const validNames = module3NameList; // 用固定名单作为标准名
             // 计算两个字符串的编辑距离
             function levenshtein(a, b) {
@@ -2846,7 +2846,7 @@
             console.log('[AI识别] 原始回复:', aiReply);
 
             // 4. 解析+名字修正（与模块3一致，放宽匹配到编辑距离≤2）
-            const aiNameFix = {'吴晖':'吴辉','樊昱舜':'樊景舜','樊慧舞':'樊景舜','李思林':'李忠林','姜钧琪':'麦钧淇','姜钧淇':'麦钧淇'};
+            const aiNameFix = {'吴晖':'吴辉','樊昱舜':'樊景舜','樊慧舞':'樊景舜','李思林':'李忠林','姜钧琪':'麦钧淇','姜钧淇':'麦钧淇','麦均淇':'麦钧淇','何显键':'何显健'};
             const validNames = module3NameList;
             function levenshtein(a, b) {
                 const m = a.length, n = b.length;
@@ -2964,7 +2964,7 @@
 
         // 解析文本框内容
         const lines = textArea.value.trim().split('\n');
-        const aiNameFix = {'吴晖':'吴辉','樊昱舜':'樊景舜','樊慧舞':'樊景舜','李思林':'李忠林','姜钧琪':'麦钧淇','姜钧淇':'麦钧淇'};
+        const aiNameFix = {'吴晖':'吴辉','樊昱舜':'樊景舜','樊慧舞':'樊景舜','李思林':'李忠林','姜钧琪':'麦钧淇','姜钧淇':'麦钧淇','麦均淇':'麦钧淇','何显键':'何显健'};
         const validNames = module3NameList;
         function levenshtein(a, b) {
             const m = a.length, n = b.length;
@@ -3286,7 +3286,7 @@
     function fixFeishuChouJianName(name) {
         name = String(name || '').trim();
         if (!name) return null;
-        const exactFix = {'吴晖':'吴辉','樊昱舜':'樊景舜','樊慧舞':'樊景舜','李思林':'李忠林','姜钧琪':'麦钧淇','姜钧淇':'麦钧淇'};
+        const exactFix = {'吴晖':'吴辉','樊昱舜':'樊景舜','樊慧舞':'樊景舜','李思林':'李忠林','姜钧琪':'麦钧淇','姜钧淇':'麦钧淇','麦均淇':'麦钧淇','何显键':'何显健'};
         if (exactFix[name]) return exactFix[name];
         if (module3NameList.includes(name)) return name;
         // 编辑距离 ≤1 模糊匹配
@@ -4458,7 +4458,7 @@
         const module3PeriodData = getModule3PeriodData(thisPeriodKey);
         let mistakeMapData = {};
         try { mistakeMapData = JSON.parse(localStorage.getItem('samplingModule3MistakeMap') || '{}'); } catch(e) {}
-        const displayNameFix = {'吴晖':'吴辉','樊昱舜':'樊景舜','樊慧舞':'樊景舜','李思林':'李忠林','姜钧琪':'麦钧淇','姜钧淇':'麦钧淇','雍彬彬':null};
+        const displayNameFix = {'吴晖':'吴辉','樊昱舜':'樊景舜','樊慧舞':'樊景舜','李思林':'李忠林','姜钧琪':'麦钧淇','姜钧淇':'麦钧淇','麦均淇':'麦钧淇','何显键':'何显健','雍彬彬':null};
         function fixNK(map) { const f = {}; for (const [k,v] of Object.entries(map)) { const nk = displayNameFix[k] !== undefined ? displayNameFix[k] : k; if (nk === null) continue; f[nk] = v; } return f; }
         const cjMap = fixNK(module3PeriodData.chouJianMap || {});
         const pzMap = fixNK(module3PeriodData.panZeMap || {});
@@ -4664,7 +4664,7 @@
         const module3PeriodData = getModule3PeriodData(thisPeriodKey);
         let mistakeMapData = {};
         try { mistakeMapData = JSON.parse(localStorage.getItem('samplingModule3MistakeMap') || '{}'); } catch(e) {}
-        const dnf = {'吴晖':'吴辉','樊昱舜':'樊景舜','樊慧舞':'樊景舜','李思林':'李忠林','姜钧琪':'麦钧淇','姜钧淇':'麦钧淇','雍彬彬':null};
+        const dnf = {'吴晖':'吴辉','樊昱舜':'樊景舜','樊慧舞':'樊景舜','李思林':'李忠林','姜钧琪':'麦钧淇','姜钧淇':'麦钧淇','麦均淇':'麦钧淇','何显键':'何显健','雍彬彬':null};
         function fixNK(map) { const f = {}; for (const [k,v] of Object.entries(map)) { const nk = dnf[k] !== undefined ? dnf[k] : k; if (nk === null) continue; f[nk] = (f[nk] !== undefined ? Number(f[nk]) + Number(v) : v); } return f; }
         const cjMap = fixNK(module3PeriodData.chouJianMap || {});
         const pzMap = fixNK(module3PeriodData.panZeMap || {});
@@ -4832,6 +4832,7 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
             const reviewer = row[reviewerField] ? String(row[reviewerField]).trim() : '';
             const detail = row[detailField] ? String(row[detailField]).trim() : `第${index + 2}行数据`;
             category = mergeCategory(category);
+            if (source === 'QA') category = 'QA失误';
             
             if (source) {
                 validRows++;
@@ -4919,7 +4920,7 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
             ? getReviewerMonthlyStats(allRows, dateColumn, reviewerColumn, periodRanges)
             : getReviewerWeeklyStats(allRows, dateColumn, reviewerColumn, periodRanges);
         // 合并同人不同名：肖建平 → 肖健平
-        const _nameMerge = {'肖建平':'肖健平'};
+        const _nameMerge = {'肖建平':'肖健平','何显键':'何显健','麦均淇':'麦钧淇','何显键':'何显健'};
         const _mergedStats = {};
         Object.keys(reviewerPeriodStats0).forEach(function(name) {
             const target = _nameMerge[name] || name;
@@ -10397,7 +10398,7 @@ URL.revokeObjectURL(url);
         if (!sheetsData.data || !sheetsData.data.sheets || sheetsData.data.sheets.length === 0) {
             showToast('❌ 无法读取表格，请确认已授权飞书', 'error'); return;
         }
-        var sheetId = sheetsData.data.sheets[0].sheetId;
+        var sheetId = sheetsData.data.sheets[0].sheetId || sheetsData.data.sheets[0].sheet_id;
         // 直接用 app token 读数据
         var appToken = null;
         try {
@@ -10505,7 +10506,7 @@ URL.revokeObjectURL(url);
                     if(qb.questions.some(function(q){return q.category===category&&q.question.trim().toLowerCase()===qText.toLowerCase();})){duplicated++;continue;}
                     var screenshot = null;
                     var imgTks = getImgs(gc(row,'题目图'))||getImgs(gc(row,'图片'));
-                    if(imgTks.length>0&&typeof fetchImageAsBase64==='function'){try{screenshot=await fetchImageAsBase64('https://open.feishu.cn/open-apis/im/v1/images/'+imgTks[0]);}catch(e){}}
+                    if(imgTks.length>0) screenshot = {t: imgTks[0]};
                     var explanation = gc(row,'答案解析')||'';
                     var explTks = getImgs(gc(row,'答案解析图'))||getImgs(gc(row,'解析图'));
                     if(explTks.length>0&&typeof fetchImageAsBase64==='function'){
@@ -10515,15 +10516,10 @@ URL.revokeObjectURL(url);
                     for(var oi=0;oi<optCols.length;oi++){var ov=row[col[optCols[oi]]];if(ov!==undefined&&ov!==null&&String(ov).trim())options.push(String(ov).trim());}
                     // 选项对应的图片（从 optImgCols 中逐个提取）
                     var optionImages = [];
-                    if (optImgCols.length > 0 && typeof fetchImageAsBase64 === 'function') {
+                    if (optImgCols.length > 0) {
                         for (var oii = 0; oii < Math.min(optImgCols.length, options.length); oii++) {
                             var imgTks2 = getImgs(row[optImgCols[oii]]);
-                            if (imgTks2.length > 0) {
-                                try {
-                                    var oi2 = await fetchImageAsBase64('https://open.feishu.cn/open-apis/im/v1/images/' + imgTks2[0]);
-                                    if (oi2) optionImages.push(oi2);
-                                } catch(e) { optionImages.push(null); }
-                            } else { optionImages.push(null); }
+                            if (imgTks2.length > 0) optionImages.push({t: imgTks2[0]});
                         }
                     }
                     var typeMap={'单选':'choice','多选':'choice','判断':'judge','问答':'qa','QA':'qa'};
@@ -10559,6 +10555,7 @@ URL.revokeObjectURL(url);
     }
 
     function handleQBGlobalSearch(keyword) {
+        try {
         const qb = getQuestionBank();
         const allQuestions = qb.questions || [];
         const grid = document.getElementById('qbCatGrid');
@@ -10652,6 +10649,7 @@ URL.revokeObjectURL(url);
                         '</div></div></div>';
                 }).join('');
         }
+    } catch(e) {}
     }
 
     function openQBDetailFromSearch(catName) {
@@ -11563,7 +11561,7 @@ URL.revokeObjectURL(url);
 
     // 全局格式化初审名字：附加站点（如 徐行（成都））
     function fmtRvGlobal(name) {
-        const nameFix = {'肖建平':'肖健平'};
+        const nameFix = {'肖建平':'肖健平','何显键':'何显健','麦均淇':'麦钧淇','何显键':'何显健'};
         const displayName = nameFix[name] || name;
         const map = window._reviewerSiteMap || {};
         return map[displayName] ? displayName + '（' + map[displayName] + '）' : displayName;
@@ -16555,23 +16553,9 @@ URL.revokeObjectURL(url);
             if (dominantProduct && c.productCategory && c.productCategory !== '全品类' && c.productCategory !== dominantProduct && !c.productCategory.includes(dominantProduct) && !dominantProduct.includes(c.productCategory) && !c.productCategory.replace(/[&、\-・\s]/g,'').includes(dominantProduct.replace(/[&、\-・\s]/g,''))) return false;
             return true;
         });
-        // 不够20条则按品类补齐（不限失误类别）
-        if (matched.length < 20) {
-            var fillProducts = dominantProduct ? [dominantProduct] : Object.keys(productCounts).filter(function(p){ return p !== '未知'; });
-            var fillCases = allCases.filter(function(c){
-                if (matched.find(function(m){ return m.qcCode === c.qcCode; })) return false;
-                if (!fillProducts.length) return true;
-                var cp = c.productCategory || '';
-                return cp === '全品类' || fillProducts.some(function(p){
-                    return cp.includes(p) || p.includes(cp);
-                });
-            });
-            fillCases.sort(function(){ return Math.random() - 0.5; });
-            matched = matched.concat(fillCases.slice(0, 20 - matched.length));
-        }
         if (matched.length === 0) { showAlert("案例库中无匹配的案例", "⚠️"); return; }
         matched.sort(function(a,b){ return (cats[b.errorCategory]||0)-(cats[a.errorCategory]||0); });
-        matched = matched.slice(0, 20);
+        matched = matched.slice(0, 30);
 
         var docHtml = "<!DOCTYPE html><html><head><meta charset=\"UTF-8\"><title>培训资料</title>" +
         "<style>body{font-family:Microsoft YaHei,SimHei,sans-serif;padding:40px;max-width:900px;margin:0 auto;color:#333;}" +
@@ -18269,41 +18253,6 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
     }
 
     function renderExamSystem(filterReviewer) {
-        // 从 Supabase 同步考试记录（脚本推送的也在云端）
-        try {
-            fetch(SUPABASE_URL + '/rest/v1/app_data?key=eq.examHistoryData&select=value&limit=1', {
-                headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY }
-            }).then(function(r) { return r.json(); }).then(function(rows) {
-                if (rows && rows.length > 0 && rows[0].value) {
-                    var cloud = JSON.parse(rows[0].value);
-                    var local = JSON.parse(localStorage.getItem('examHistoryData') || '{}');
-                    var changed = false;
-                    Object.keys(cloud).forEach(function(k) {
-                        if (!local[k]) { local[k] = cloud[k]; changed = true; }
-                    });
-                    if (changed) localStorage.setItem('examHistoryData', JSON.stringify(local));
-                }
-            }).catch(function() {});
-        } catch(e) {}
-        // 从 Supabase 同步培训报告
-        try {
-            fetch(SUPABASE_URL + '/rest/v1/app_data?key=eq.generatedReports&select=value&limit=1', {
-                headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY }
-            }).then(function(r) { return r.json(); }).then(function(rows) {
-                if (rows && rows.length > 0 && rows[0].value) {
-                    var cloudR = JSON.parse(rows[0].value);
-                    var localR = JSON.parse(localStorage.getItem('generatedReports') || '{}');
-                    var changedR = false;
-                    Object.keys(cloudR).forEach(function(k) {
-                        if (!localR[k]) { localR[k] = cloudR[k]; changedR = true; }
-                    });
-                    if (changedR) {
-                        localStorage.setItem('generatedReports', JSON.stringify(localR));
-                        window.generatedReports = localR;
-                    }
-                }
-            }).catch(function() {});
-        } catch(e) {}
         // 记录推送人筛选
         if (filterReviewer) window._examFilterReviewer = filterReviewer;
         // 恢复侧边栏（从独立考试页面返回时）
