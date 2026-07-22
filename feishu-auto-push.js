@@ -179,10 +179,37 @@ async function main() {
     }
 
     const TH = { examMin: 6, learnMin: 11, trainMin: 16 };
+    // 类别别名映射（去标点后仍不同的）
+    const catAlias = {'组合差价未勾选':'组合项未同步判责','拍照/取证不规范':'拍照取证不规范','低级/投诉失误':'明显失误','低级失误':'明显失误','责任分类错':'判错责任方','责任明细选错':'判错责任方','责任类选错':'判错责任方'};
+    // 2-6字滑动提取
+    function extractKW(texts) {
+      const stop = new Set(['的','了','是','在','有','和','就','不','人','都','一','个','上','也','很','到','说','要','去','你','会','着','没有','看','好','自己','这','他','她','它','们','那','些','什么','怎么','因为','所以','但是','如果','虽然','然后','可以','应该','可能','需要','不是','这个','那个','比较','非常','还是','已经','通过','进行','以及','对于','关于','被','把','让','从','向','往','用','以','为','能','下','中','等','之','与','其','未','将','改','改正','正常','主动','报备','照片','图片','总部','报告','修改','师傅','没有','情况','反馈','问题','是否','售后','mm','cm']);
+      const all = texts.join('|').replace(/[，,。、：:；;！!?？（）()【】\[\]「」\s\/]+/g,'|');
+      const words = {};
+      all.split('|').forEach(part => {
+        if (!part || part.length < 2) return;
+        for (var len = 6; len >= 2; len--) {
+          for (var i = 0; i <= part.length - len; i++) {
+            var w = part.substring(i, i + len);
+            if (!stop.has(w)) { words[w] = len; }
+          }
+        }
+      });
+      // 按字长排序（6字优先）
+      return Object.entries(words).sort(function(a,b){return b[1]-a[1];}).map(function(e){return e[0];});
+    }
+    // 去标点+别名映射
+    function matchCat(qCat, errCat) {
+      if (!qCat || !errCat) return false;
+      var alias = catAlias[errCat];
+      if (alias) errCat = alias;
+      var qc = qCat.replace(/[\/\-・\s]/g,'').toLowerCase();
+      var ec = errCat.replace(/[\/\-・\s]/g,'').toLowerCase();
+      return qc.includes(ec) || ec.includes(qc);
+    }
 
     for (const [name, count] of Object.entries(rc).sort((a,b) => b[1]-a[1])) {
         if (count >= TH.examMin) {
-            // 检查本周是否已有考试
             var hasExam = Object.values(examHistory).some(function(e) {
                 if (e.reviewerName !== name) return false;
                 var t = new Date(e.generatedAt || e.time || 0);
@@ -191,45 +218,99 @@ async function main() {
             if (hasExam) continue;
             if (allQuestions.length < 5) continue;
 
-            // 按失误类别比例选题
             var cats = rCat[name] || {};
             var totalMistakes = Object.values(cats).reduce(function(a,b){return a+b;},0);
-            // 合并标准化类别
-            var merged = {};
-            Object.entries(cats).forEach(function(e) {
-                var nc = normCat(e[0]);
-                merged[nc] = (merged[nc] || 0) + e[1];
-            });
-            // 按比例分配题数（最少1题，最多20题）
-            var qCount = 20; // 固定20题
+            var prods = rProd[name] || {};
+            var totalProds = Object.values(prods).reduce(function(a,b){return a+b;},0);
+            var qCount = 30;
             var selected = [];
-            var slots = qCount;
-            var catList = Object.entries(merged).sort(function(a,b){return b[1]-a[1];});
-            // 每个类别按比例分配
-            for (var ci = 0; ci < catList.length && slots > 0; ci++) {
-                var catName = catList[ci][0];
-                var catRatio = catList[ci][1] / totalMistakes;
-                var catSlots = Math.max(1, Math.min(slots, Math.ceil(qCount * catRatio)));
-                if (ci === catList.length - 1) catSlots = slots; // 最后一个类别拿剩余
-                // 从题库找匹配该类别的题
-                var catQuestions = allQuestions.filter(function(q) {
-                    var qc = normCat(q.category || q.type || '');
-                    return qc === catName || qc.includes(catName) || catName.includes(qc);
-                });
-                if (catQuestions.length === 0) catQuestions = allQuestions; // 兜底：随机
-                var shuffled = [...catQuestions].sort(function(){return Math.random()-0.5;});
-                for (var s = 0; s < catSlots && s < shuffled.length; s++) {
-                    if (selected.length >= qCount) break;
-                    selected.push(shuffled[s]);
-                }
-                slots = qCount - selected.length;
+            var usedIds = new Set();
+
+            // 按类别分配题数
+            var catList = Object.entries(cats).sort(function(a,b){return b[1]-a[1];});
+            var catQ = {};
+            var assigned = 0;
+            catList.forEach(function(e,i){
+              var n = Math.max(1, Math.round(e[1]/totalMistakes*qCount));
+              catQ[e[0]] = n;
+              assigned += n;
+            });
+            var diff = qCount - assigned;
+            for (var di = 0; di < Math.abs(diff); di++) {
+              if (diff > 0) catQ[catList[di%catList.length][0]]++;
+              else if (catQ[catList[di%catList.length][0]] > 1) catQ[catList[di%catList.length][0]]--;
             }
-            // 不够的随机补齐
+
+            // 按品类分配：每种类别需要多少题来自各品类
+            var prodRatio = {};
+            Object.entries(prods).forEach(function(e){ prodRatio[e[0]] = e[1]/totalProds; });
+
+            // 该人的所有失误备注
+            var personRows = rows.filter(function(r){ return r.reviewer === name; });
+
+            // 对每个类别出题
+            catList.forEach(function(entry){
+              var cat = entry[0];
+              var needed = catQ[cat] || 0;
+              var matched = [];
+              // 该类别下的备注
+              var catNotes = personRows.filter(function(r){ return r.category === cat; }).map(function(r){ return r.note; }).filter(Boolean);
+
+              // === 第1层：2-6字→题面/答案 ===
+              var kws = extractKW(catNotes);
+              kws.forEach(function(kw){
+                if (matched.length >= needed) return;
+                var kl = kw.toLowerCase();
+                allQuestions.forEach(function(q){
+                  if (matched.length >= needed) return;
+                  if (usedIds.has(q.id)) return;
+                  var text = ((q.question||'')+' '+(q.answer||'')+' '+(q.explanation||'')).toLowerCase();
+                  if (text.includes(kl)) {
+                    matched.push(q);
+                    usedIds.add(q.id);
+                  }
+                });
+              });
+
+              // === 第2层：分类匹配（去标点+别名）===
+              if (matched.length < needed) {
+                allQuestions.forEach(function(q){
+                  if (matched.length >= needed) return;
+                  if (usedIds.has(q.id)) return;
+                  if (matchCat(q.category, cat)) {
+                    matched.push(q);
+                    usedIds.add(q.id);
+                  }
+                });
+              }
+
+              // === 第3层：按品类补齐 ===
+              if (matched.length < needed) {
+                var relevantProds = Object.keys(prods);
+                allQuestions.forEach(function(q){
+                  if (matched.length >= needed) return;
+                  if (usedIds.has(q.id)) return;
+                  var qp = (q.productCategory||'').toLowerCase();
+                  if (qp === '全品类') { matched.push(q); usedIds.add(q.id); return; }
+                  for (var pi = 0; pi < relevantProds.length; pi++) {
+                    var rp = relevantProds[pi].toLowerCase();
+                    if (qp.includes(rp) || rp.includes(qp)) { matched.push(q); usedIds.add(q.id); break; }
+                  }
+                });
+              }
+
+              matched.sort(function(){return Math.random()-0.5;});
+              for (var mi = 0; mi < matched.length && mi < needed; mi++) selected.push(matched[mi]);
+            });
+
+            // 仍然不够就从全部题库补
             if (selected.length < qCount) {
-                var remaining = [...allQuestions].sort(function(){return Math.random()-0.5;});
-                for (var r = 0; r < remaining.length && selected.length < qCount; r++) {
-                    if (!selected.some(function(q){return q === remaining[r];})) selected.push(remaining[r]);
-                }
+              allQuestions.sort(function(){return Math.random()-0.5;}).forEach(function(q){
+                if (selected.length >= qCount) return;
+                if (usedIds.has(q.id)) return;
+                selected.push(q);
+                usedIds.add(q.id);
+              });
             }
 
             var examCode = genExamCode();
@@ -238,7 +319,7 @@ async function main() {
                 examCode: examCode,
                 reviewerName: name,
                 questions: selected,
-                generatedAt: wk.end.toISOString(), // 标记为上周日
+                generatedAt: wk.end.toISOString(),
                 source: '周一自动推送',
                 status: 'pending', attempts: 0, records: [],
                 timeLimit: 40, maxAttempts: 2, wrongAnswers: []
