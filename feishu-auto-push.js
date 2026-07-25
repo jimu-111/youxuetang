@@ -89,10 +89,39 @@ async function main() {
 
     let sent = 0, fail = 0;
 
-    // 从飞书获取用户的 token 读表格
+    // 从飞书获取用户的 token 读表格（优先 refresh，失败才降级 appToken）
     const stored = await supabaseGet('feishu_token');
-    var userToken = appToken;
-    if (stored && stored.access_token && stored.expiresAt > Date.now()) userToken = stored.access_token;
+    var userToken = null;
+    if (stored && stored.access_token) {
+        if (stored.expiresAt > Date.now()) {
+            userToken = stored.access_token;
+        } else if (stored.refresh_token) {
+            // token 过期，尝试 refresh
+            try {
+                var refResp = await fetch('https://open.feishu.cn/open-apis/authen/v1/refresh_access_token', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ app_id: FEISHU_APP_ID, app_secret: FEISHU_APP_SECRET, grant_type: 'refresh_token', refresh_token: stored.refresh_token })
+                });
+                var refData = await refResp.json();
+                if (refData.code === 0 && refData.data && refData.data.access_token) {
+                    userToken = refData.data.access_token;
+                    // 保存新 token 回 Supabase
+                    var newToken = { access_token: refData.data.access_token, refresh_token: refData.data.refresh_token || stored.refresh_token, expiresAt: Date.now() + (refData.data.expires_in || 7200) * 1000 };
+                    await fetch(SUPABASE_URL + '/rest/v1/app_data', {
+                        method: 'POST',
+                        headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY, 'Content-Type': 'application/json', 'Prefer': 'resolution=merge-duplicates' },
+                        body: JSON.stringify([{ key: 'feishu_token', value: JSON.stringify(newToken), updated_at: new Date().toISOString() }])
+                    }).catch(function(){});
+                    console.log('🔄 Token 已刷新');
+                }
+            } catch(e) { console.warn('⚠️ Token 刷新失败: ' + e.message); }
+        }
+    }
+    if (!userToken) {
+        console.warn('⚠️ 无有效用户 token，降级使用租户 token（可能无读表格权限）');
+        userToken = appToken;
+    }
 
     // 拉取上周数据，分析按人统计
     let rows = [];
@@ -105,6 +134,7 @@ async function main() {
         try {
             const r2 = await fetch(PROXY_URL, { method: 'POST', headers: { 'Authorization': 'Bearer ' + SUPABASE_KEY, 'x-target-url': 'https://open.feishu.cn/open-apis/sheets/v2/spreadsheets/EdI0sn3qkh7H6wtkhcpcxrTnnDf/values/' + sh.id + '?majorDimension=ROWS', 'x-target-method': 'GET', 'x-target-auth': 'Bearer ' + userToken } });
             const d2 = await r2.json();
+            if (d2.code && d2.code !== 0) { console.warn('  ⚠️ Sheet ' + sh.id + ' 返回错误: ' + (d2.msg||d2.code)); continue; }
             const vals = (d2.data && d2.data.valueRange && d2.data.valueRange.values) || [];
             for (let i = 2; i < vals.length; i++) {
                 const row = vals[i]; if (!row) continue;
@@ -117,7 +147,7 @@ async function main() {
                     note: (row[sh.colNote] || '').toString().trim()
                 });
             }
-        } catch(e) {}
+        } catch(e) { console.warn('  ⚠️ Sheet ' + sh.id + ' 读取异常: ' + e.message); }
     }
 
     // 再读一遍全部数据（不限周），用于学习地图关键词提取
@@ -128,6 +158,7 @@ async function main() {
                 headers:{'Authorization':'Bearer '+SUPABASE_KEY,'x-target-url':'https://open.feishu.cn/open-apis/sheets/v2/spreadsheets/EdI0sn3qkh7H6wtkhcpcxrTnnDf/values/'+sh.id+'?majorDimension=ROWS','x-target-method':'GET','x-target-auth':'Bearer '+userToken,'Content-Type':'application/json'}
             });
             var d3 = await r3.json();
+            if (d3.code && d3.code !== 0) { console.warn('  ⚠️ 全量Sheet ' + sh.id + ' 返回错误: ' + (d3.msg||d3.code)); continue; }
             var vals3 = (d3.data&&d3.data.valueRange&&d3.data.valueRange.values)||[];
             for (let i=2; i<vals3.length; i++) {
                 var row3 = vals3[i]; if (!row3) continue;
@@ -139,7 +170,7 @@ async function main() {
                     note: (row3[sh.colNote]||'').toString().trim()
                 });
             }
-        } catch(e) {}
+        } catch(e) { console.warn('  ⚠️ 全量Sheet ' + sh.id + ' 读取异常: ' + e.message); }
     }
     console.log('全部数据: ' + allRows.length + '条');
 
@@ -162,7 +193,13 @@ async function main() {
     // 读题库和考试历史，按失误类别比例出卷
     const examHistory = (await supabaseGet('examHistoryData')) || {};
     const qbData = (await supabaseGet('questionBankData')) || {};
-    const allQuestions = qbData.questions || [];
+    const reportedQuestions = (await supabaseGet('reportedQuestions')) || {};
+    // 过滤被反馈且未解决的试题
+    const allQuestions = (qbData.questions || []).filter(function(q) {
+        var r = reportedQuestions[q.id];
+        return !(r && !r.resolved);
+    });
+    console.log('题库: ' + (qbData.questions||[]).length + '题 → 排除反馈后: ' + allQuestions.length + '题');
 
     const examCodeChars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
     function genExamCode() {
@@ -178,7 +215,7 @@ async function main() {
         return c.replace(/[\d]+$/, '').replace(/[（(].*[)）]/g, '').trim() || c;
     }
 
-    const TH = { examMin: 6, learnMin: 11, trainMin: 16 };
+    const TH = { examMin: 6, learnMin: 16, trainMin: 11 };
     // 类别别名映射（去标点后仍不同的）
     const catAlias = {'组合差价未勾选':'组合项未同步判责','拍照/取证不规范':'拍照取证不规范','低级/投诉失误':'明显失误','低级失误':'明显失误','责任分类错':'判错责任方','责任明细选错':'判错责任方','责任类选错':'判错责任方'};
     // 2-6字滑动提取
