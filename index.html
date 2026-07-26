@@ -23,7 +23,7 @@
         .nav-btn.sub-item { font-size:0.8rem; padding:8px 14px 8px 32px; border:none; background:transparent; border-radius:8px; margin:1px 8px; width:auto; opacity:0.7; }
         .nav-btn.sub-item:hover { opacity:1; background:rgba(255,255,255,0.06); }
         .nav-btn.sub-item.active { opacity:1; background:rgba(42,82,152,0.5); color:white; font-weight:500; }
-        .main-content { flex: 1; overflow-y: auto; padding: 20px 28px; scroll-behavior: smooth; }
+        .main-content { flex: 1; overflow-y: auto; padding: 20px 28px; scroll-behavior: smooth; overscroll-behavior: contain; }
         
         .city-tabs { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 24px; background: white; padding: 8px 16px; border-radius: 60px; align-items: center; box-shadow: 0 2px 6px rgba(0,0,0,0.02); }
         .city-btn { background: #f1f5f9; border: none; padding: 6px 18px; border-radius: 40px; font-weight: 500; cursor: pointer; transition: 0.2s; display: flex; align-items: center; gap: 6px; }
@@ -343,6 +343,7 @@
 </div>
 
 <script>
+    window._panzeAllData = window._panzeAllData || [];
     // 动态加载 SheetJS 库
     function loadSheetJS() {
         return new Promise((resolve, reject) => {
@@ -1459,14 +1460,14 @@
             if (id === 'panzeDetail' && el.style.display === 'block') refreshPanzeStatus();
         };
         // 更新卡片数字
-        var _panzeAllData = [];
+        window._panzeAllData = [];
         function refreshPanzeStatus() {
             var countEl = document.getElementById('panzeCount');
             var badgeEl = document.getElementById('panzeBadge');
             fetch(SUPABASE_URL + '/rest/v1/app_data?key=like.feishu_panze_2026*&select=key,value&order=key.desc', {
                 headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY }
             }).then(function(r){return r.json();}).then(function(rows){
-                _panzeAllData = [];
+                window._panzeAllData = [];
                 rows.forEach(function(r){
                     try {
                         var d = JSON.parse(r.value);
@@ -1475,15 +1476,15 @@
                         var map = d.map || {};
                         var cnt = Object.keys(map).length;
                         var total = Object.values(map).reduce(function(a,b){return a+Number(b);},0);
-                        _panzeAllData.push({ date: dateStr, count: cnt, total: total, map: map });
+                        window._panzeAllData.push({ date: dateStr, count: cnt, total: total, map: map });
                     } catch(e) {}
                 });
-                _panzeAllData.sort(function(a,b){ return b.date.localeCompare(a.date); });
-                if (countEl && _panzeAllData.length > 0) {
-                    countEl.textContent = _panzeAllData[0].date;
-                    if (badgeEl) badgeEl.textContent = _panzeAllData[0].count + '人/' + _panzeAllData[0].total + '次';
+                window._panzeAllData.sort(function(a,b){ return b.date.localeCompare(a.date); });
+                if (countEl && window._panzeAllData.length > 0) {
+                    countEl.textContent = window._panzeAllData[0].date;
+                    if (badgeEl) badgeEl.textContent = window._panzeAllData[0].count + '人/' + window._panzeAllData[0].total + '次';
                     // 判断数据是否最新（距今天不超过3天显示绿色，否则橙色警告）
-                    var latestDate = new Date(_panzeAllData[0].date);
+                    var latestDate = new Date(window._panzeAllData[0].date);
                     var now = new Date();
                     var daysDiff = Math.floor((now - latestDate) / 86400000);
                     var cardEl = document.getElementById('panzeCard');
@@ -1561,7 +1562,7 @@
             var tableEl = document.getElementById('panzeDetailTable');
             var pagEl = document.getElementById('panzePagination');
             var searchVal = (document.getElementById('panzeSearch')||{}).value || '';
-            var filtered = _panzeAllData.filter(function(d){ return !searchVal || d.date.indexOf(searchVal) >= 0 || Object.keys(d.map).some(function(n){ return n.indexOf(searchVal) >= 0; }); });
+            var filtered = window._panzeAllData.filter(function(d){ return !searchVal || d.date.indexOf(searchVal) >= 0 || Object.keys(d.map).some(function(n){ return n.indexOf(searchVal) >= 0; }); });
             var pageSize = 10;
             var totalPages = Math.ceil(filtered.length / pageSize) || 1;
             if (page > totalPages) page = totalPages;
@@ -1584,7 +1585,7 @@
         window.renderPanzePage = renderPanzePage;
         window.showPanzeDetailPopup = showPanzeDetailPopup;
         function showPanzeDetailPopup(date) {
-            var item = _panzeAllData.find(function(d){ return d.date === date; });
+            var item = window._panzeAllData.find(function(d){ return d.date === date; });
             if (!item) return;
             var searchVal = (document.getElementById('panzeSearch')||{}).value || '';
             var entries = Object.entries(item.map).sort(function(a,b){ return b[1] - a[1]; });
@@ -3043,16 +3044,12 @@
     function showAccRateDetailModal(reviewerName) {
         const pr = window._analysisPeriodRanges || [];
         if (!pr.length) return;
-        let accRateAll = {};
-        try { accRateAll = JSON.parse(localStorage.getItem('reviewerAccRateData') || '{}'); } catch(e) {}
-
         // 收集各期数据（从远到近）
         const periods = [];
         for (let i = pr.length - 1; i >= 0; i--) {
-            const pk = pr[i].periodKey;
-            const label = i === 0 ? '本期' : pr[i].periodName;
-            const val = accRateAll[pk] ? accRateAll[pk][reviewerName] : undefined;
-            periods.push({ label, value: val !== undefined ? Number(val) : null });
+            var val = getAccRateForReviewer(reviewerName, pr[i].periodKey, pr[i]);
+            var label = i === 0 ? '本期' : pr[i].periodName;
+            periods.push({ label: label, value: val });
         }
 
         // 生成数据行HTML
@@ -3272,6 +3269,28 @@
     function getReviewerAccRateAuto(name, pzMap, mkMap) {
         const pz = Number(pzMap[name]); const mk = Number(mkMap[name]) || 0;
         if (!pz || pz <= 0) return null;
+        return (pz - mk) / pz * 100;
+    }
+    // 通用准确率获取：每日同步优先 → 手动数据兜底
+    function getAccRateForReviewer(name, periodKey, periodRange) {
+        // 判责量：从每日同步聚合 | 失误量：从飞书看板按周期筛选
+        if (!window._panzeAllData || !window._panzeAllData.length || !periodRange) return null;
+        var ws = new Date(periodRange.startDate || periodRange.start); ws.setHours(0,0,0,0);
+        var we = new Date(periodRange.endDate || periodRange.end); we.setHours(23,59,59,999);
+        var pz = 0;
+        window._panzeAllData.forEach(function(d) {
+            var parts = d.date.split('-');
+            var dd = new Date(parseInt(parts[0]), parseInt(parts[1])-1, parseInt(parts[2]));
+            if (dd >= ws && dd <= we && d.map) pz += Number(d.map[name]) || 0;
+        });
+        if (!pz || pz <= 0) return null;
+        var mk = 0;
+        if (typeof errorDashboardData !== 'undefined' && errorDashboardData.length > 0) {
+            errorDashboardData.forEach(function(e) {
+                var rv = (e.reviewer || '').replace(/解答失误|解答/g, '').trim();
+                if (rv === name && e.date >= ws && e.date <= we) mk++;
+            });
+        }
         return (pz - mk) / pz * 100;
     }
 
@@ -4080,7 +4099,7 @@
         }
         const effData = displayPr.map(p => { const v = ncData[p.periodKey]?.[ncName]?.efficiencyThis; return v !== undefined && v !== '' ? Number(v) : null; }).reverse();
         const misData = displayPr.map(p => rps[ncName]?.[p.periodKey] ?? null).reverse();
-        const accData = displayPr.map(p => accRateAll[p.periodKey]?.[ncName] ? Number(accRateAll[p.periodKey][ncName]) : null).reverse();
+        const accData = displayPr.map(p => getAccRateForReviewer(ncName, p.periodKey, p)).reverse();
         drawSparkline(modalId + '_eff', effData, '#2a5298', 'rgba(42,82,152,0.25)', 'rgba(42,82,152,0.02)', '');
         drawSparkline(modalId + '_mis', misData, '#c0392b', 'rgba(192,57,43,0.25)', 'rgba(192,57,43,0.02)', '');
         drawSparkline(modalId + '_acc', accData, '#27ae60', 'rgba(39,174,96,0.25)', 'rgba(39,174,96,0.02)', '%');
@@ -4446,14 +4465,8 @@
     function renderTop3WarningHorizontal(persona) {
         if (!persona.topPersonnel || persona.topPersonnel.length === 0) return '<div class="empty-placeholder">暂无数据</div>';
 
-        // 读取初审准确率
-        let accRateAll = {};
-        try { accRateAll = JSON.parse(localStorage.getItem('reviewerAccRateData') || '{}'); } catch(e) {}
+        // 读取初审准确率（从飞书数据自动计算）
         const pr = window._analysisPeriodRanges || [];
-        const thisPeriodKey = pr.length > 0 ? pr[0].periodKey : '';
-        const lastPeriodKey = pr.length > 1 ? pr[1].periodKey : '';
-        const accRateThis = thisPeriodKey ? (accRateAll[thisPeriodKey] || {}) : {};
-        const accRateLast = lastPeriodKey ? (accRateAll[lastPeriodKey] || {}) : {};
 
         // 读取抽检准确率（模块3）
         const module3PeriodData = getModule3PeriodData(thisPeriodKey);
@@ -4487,8 +4500,8 @@
             }
 
             // 初审准确率
-            const reviewerAcc = accRateThis[person.name] !== undefined ? Number(accRateThis[person.name]) : null;
-            const reviewerAccLast = accRateLast[person.name] !== undefined ? Number(accRateLast[person.name]) : null;
+            const reviewerAcc = getAccRateForReviewer(person.name, null, pr[0]);
+            const reviewerAccLast = pr.length > 1 ? getAccRateForReviewer(person.name, null, pr[1]) : null;
             let accRateHtml = '<span style="color:#94a3b8;font-style:italic;">待录入</span>';
             if (reviewerAcc !== null) {
                 const color = reviewerAcc > 99.5 ? '#27ae60' : '#c0392b';
@@ -4541,9 +4554,23 @@
         const lastPeriodLabel = isMonth ? '上月' : '上周';
 
         // ---- 1. 摘要卡片 ----
-        // 自动计算优先：判责量 - 总失误量 / 判责量（使用全部来源的失误量）
+        // 自动计算优先：先从每日同步聚合，没有再用模块3手动数据
         const _pd = getModule3PeriodData(thisPeriodKey);
-        const _pzMap = _pd.panZeMap || {};
+        var _pzMap = {};
+        if (window._panzeAllData && weekRange) {
+            var weekStart = new Date(weekRange.startDate || weekRange.start); weekStart.setHours(0,0,0,0);
+            var weekEnd = new Date(weekRange.endDate || weekRange.end); weekEnd.setHours(23,59,59,999);
+            window._panzeAllData.forEach(function(d) {
+                var parts = d.date.split('-');
+                var dd = new Date(parseInt(parts[0]), parseInt(parts[1])-1, parseInt(parts[2]));
+                if (dd >= weekStart && dd <= weekEnd && d.map) {
+                    Object.keys(d.map).forEach(function(n) {
+                        _pzMap[n] = (_pzMap[n] || 0) + Number(d.map[n]);
+                    });
+                }
+            });
+        }
+        if (Object.keys(_pzMap).length === 0) _pzMap = _pd.panZeMap || {};
         const _mkMapRaw = JSON.parse(localStorage.getItem('reviewerTotalMistakeMap') || '{}');
         const _mergedAcc = {};
         Object.keys(_pzMap).forEach(n => {
@@ -4607,30 +4634,23 @@
             let trendHtml = diff > 0 ? `<span class="trend-up">↑${diff}</span>` : (diff < 0 ? `<span class="trend-down">↓${Math.abs(diff)}</span>` : `<span class="trend-same">→0</span>`);
             let weekCells = '';
             for (let i = 0; i < weekCounts.length; i++) weekCells += `<td>${weekCounts[i]}</td>`;
-            // 准确率：自动计算优先
-            let accCellContent = null;
-            const curVal = accRateThisPeriod?.[reviewer];
-            const lastVal = accRateLastPeriod?.[reviewer];
-            // 优先自动计算
-            const autoVal2 = getReviewerAccRateAuto(reviewer, _pzMap, _mkMapRaw);
-            if (autoVal2 !== null) {
-                accCellContent = { val: autoVal2, isAuto: true };
-            } else if (curVal !== undefined && curVal !== null) {
-                accCellContent = { val: Number(curVal), isAuto: false };
-            }
+            // 准确率：从飞书数据自动计算
+            var accVal = getAccRateForReviewer(reviewer, null, periodRanges[0]);
+            var accValLast = periodRanges.length > 1 ? getAccRateForReviewer(reviewer, null, periodRanges[1]) : null;
             let accCell;
-            if (accCellContent) {
-                const curNum = accCellContent.val;
+            if (accVal !== null) {
                 let bg = '';
-                if (curNum >= 100) bg = 'background:#c8e6c9;';
-                else if (curNum <= 99.5) bg = 'background:#ffcdd2;';
-                else { const t = (curNum - 99.5) / 0.5; const r = Math.round(255 + (200-255)*t); const g = Math.round(183 + (230-183)*t); const b = Math.round(77 + (201-77)*t); bg = `background:rgb(${r},${g},${b});`; }
-                const autoTag = accCellContent.isAuto ? ' <span style="font-size:0.65rem;color:#6b7280;">[自动]</span>' : '';
-                if (accCellContent.isLast) {
-                    accCell = `<td style="color:#94a3b8;">(${curNum.toFixed(2)}%)</td>`;
-                } else {
-                    accCell = `<td style="${bg}">${curNum.toFixed(2)}%${autoTag}</td>`;
+                if (accVal >= 100) bg = 'background:#c8e6c9;';
+                else if (accVal <= 99.5) bg = 'background:#ffcdd2;';
+                else { const t = (accVal - 99.5) / 0.5; const r = Math.round(255 + (200-255)*t); const g = Math.round(183 + (230-183)*t); const b = Math.round(77 + (201-77)*t); bg = `background:rgb(${r},${g},${b});`; }
+                var trend = '';
+                if (accValLast !== null) {
+                    var aDiff = accVal - accValLast;
+                    if (aDiff > 0) trend = ' <span style=\"color:#27ae60;font-size:0.65rem;\">↑'+aDiff.toFixed(2)+'%</span>';
+                    else if (aDiff < 0) trend = ' <span style=\"color:#c0392b;font-size:0.65rem;\">↓'+Math.abs(aDiff).toFixed(2)+'%</span>';
+                    else trend = ' <span style=\"color:#2980b9;font-size:0.65rem;\">→0</span>';
                 }
+                accCell = `<td style="${bg}">${accVal.toFixed(2)}%${trend}</td>`;
             } else {
                 accCell = '<td style="color:#94a3b8;font-style:italic;">待录入</td>';
             }
@@ -5031,9 +5051,23 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
         const accRateThisPeriod = accRateAll[thisPeriodKey] || {};
         const accRateLastPeriod = (periodRanges.length > 1 && accRateAll[periodRanges[1].periodKey]) ? accRateAll[periodRanges[1].periodKey] : {};
 
-        // 读取判责量（用于准确率自动计算和判责量列）
+        // 读取判责量（用于准确率自动计算和判责量列）：每日同步优先，没有则用手动数据
         const _pd2 = getModule3PeriodData(periodRanges[0].periodKey);
-        const _pzMap2 = _pd2.panZeMap || {};
+        var _pzMap2 = {};
+        if (window._panzeAllData && periodRanges.length > 0) {
+            var _ws2 = new Date(periodRanges[0].startDate || periodRanges[0].start); _ws2.setHours(0,0,0,0);
+            var _we2 = new Date(periodRanges[0].endDate || periodRanges[0].end); _we2.setHours(23,59,59,999);
+            window._panzeAllData.forEach(function(d) {
+                var parts = d.date.split('-');
+                var dd = new Date(parseInt(parts[0]), parseInt(parts[1])-1, parseInt(parts[2]));
+                if (dd >= _ws2 && dd <= _we2 && d.map) {
+                    Object.keys(d.map).forEach(function(n) {
+                        _pzMap2[n] = (_pzMap2[n] || 0) + Number(d.map[n]);
+                    });
+                }
+            });
+        }
+        if (Object.keys(_pzMap2).length === 0) _pzMap2 = _pd2.panZeMap || {};
         const _mkMap2 = JSON.parse(localStorage.getItem('reviewerTotalMistakeMap') || '{}');
         function _autoAcc(name) {
             const pz = Number(_pzMap2[name]); const mk = Number(_mkMap2[name]) || 0;
@@ -5063,10 +5097,10 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
                 const colorStyle = i === 0 ? `color:${getRelativeColor(weekCounts[i], minThisWeek, maxThisWeek, false)};font-weight:bold;` : '';
                 weekCells += `<td style="${colorStyle}padding:2px 4px;">${weekCounts[i]}</div>`;
             }
-            // 准确率单元格：自动计算优先
+            // 准确率单元格：从飞书数据自动计算
             let accCell = '<td style="padding:2px 4px;color:#94a3b8;font-style:italic;">待录入</td>';
-            const curVal = _autoAcc(reviewer) !== null ? _autoAcc(reviewer) : accRateThisPeriod[reviewer];
-            const lastVal = accRateLastPeriod[reviewer];
+            const curVal = getAccRateForReviewer(reviewer, null, periodRanges[0]);
+            const lastVal = periodRanges.length > 1 ? getAccRateForReviewer(reviewer, null, periodRanges[1]) : null;
             if (curVal !== undefined && curVal !== null) {
                 const curNum = Number(curVal);
                 const curPct = curNum.toFixed(2) + '%';
@@ -5101,7 +5135,20 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
                 initTrendCanvasResize();
             }, 50);
         });
-        
+
+        // 总计行准确率：从飞书数据算平均
+        var _totalAccVals = []; var _totalAccLastVals = [];
+        sortedReviewers.forEach(function(rv) {
+            var v = getAccRateForReviewer(rv, null, periodRanges[0]);
+            if (v !== null) _totalAccVals.push(v);
+            if (periodRanges.length > 1) {
+                var vl = getAccRateForReviewer(rv, null, periodRanges[1]);
+                if (vl !== null) _totalAccLastVals.push(vl);
+            }
+        });
+        var _totalAccAvg = _totalAccVals.length > 0 ? _totalAccVals.reduce(function(a,b){return a+b;},0) / _totalAccVals.length : null;
+        var _totalAccLastAvg = _totalAccLastVals.length > 0 ? _totalAccLastVals.reduce(function(a,b){return a+b;},0) / _totalAccLastVals.length : null;
+
         let sourceStats = {};
         allRows.forEach(row => {
             const source = row[sourceColumn] ? String(row[sourceColumn]).trim() : '';
@@ -5278,9 +5325,9 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
             // 失误（来源于模块1）
             const misThis = stored.mistakesThis ?? (reviewerPeriodStats[ncName]?.[thisPeriodKey] ?? '');
             const misLast = stored.mistakesLast ?? (reviewerPeriodStats[ncName]?.[prevPeriodKey] ?? '');
-            // 准确率（来源于模块1）
-            const accThis = stored.accuracyThis ?? (accRateThisPeriod[ncName] ? Number(accRateThisPeriod[ncName]) : '');
-            const accLast = stored.accuracyLast ?? (accRateLastPeriod[ncName] ? Number(accRateLastPeriod[ncName]) : '');
+            // 准确率（从飞书数据自动计算）
+            const accThis = getAccRateForReviewer(ncName, null, periodRanges[0]) ?? '';
+            const accLast = periodRanges.length > 1 ? (getAccRateForReviewer(ncName, null, periodRanges[1]) ?? '') : '';
             // 平均人效 = 总人效÷出勤天数
             const avgEffThis = (effThis !== '' && attThis && Number(attThis) > 0) ? Number(effThis) / Number(attThis) : null;
             const avgEffLast = (effLast !== '' && attLast && Number(attLast) > 0) ? Number(effLast) / Number(attLast) : null;
@@ -5368,13 +5415,13 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
                     <div style="text-align:left;"><strong style="display:inline-block;width:9em;white-space:nowrap;">📈 上期失误对比：</strong><span class="${diffClass}">${diffText}</span></div>
                     <div style="text-align:left;"><strong style="display:inline-block;width:9em;white-space:nowrap;">📉 失误人数浮动：</strong>上涨 <strong class="trend-up">${increaseCount}</strong> 人，下降 <strong class="trend-down">${decreaseCount}</strong> 人，持平 <strong class="trend-same">${sameCount}</strong> 人</div>
                     <div style="text-align:left;"><strong style="display:inline-block;width:9em;white-space:nowrap;">⚠️ 本周失误前${reviewerTopN}：</strong><span style="white-space:nowrap;">${topReviewers.map((r, i) => `<strong style="cursor:pointer;border-bottom:1px dashed #2a5298;" onclick="showReviewerSourceModal('${r.replace(/'/g, "\\'")}', window._analysisRows, window._analysisDateCol, window._analysisReviewerCol, window._analysisSourceCol, window._analysisWeekRange, window._analysisPeriodRanges)">${i+1}. ${r}</strong>`).join('、')}</span></div>
-                    <div style="text-align:left;"><strong style="display:inline-block;width:9em;white-space:nowrap;">🎯 本期平均准确率：</strong>${(() => { const allNames = new Set([...Object.keys(accRateThisPeriod||{}), ...Object.keys(_pzMap2||{})]); const vals = []; allNames.forEach(n => { const auto = _autoAcc(n); vals.push(auto !== null ? auto : Number(accRateThisPeriod[n])); }); const validVals = vals.filter(v => !isNaN(v)); const avg = validVals.length > 0 ? validVals.reduce((a,b)=>a+b,0)/validVals.length : null; const lastVals = Object.values(accRateLastPeriod).map(Number).filter(v => !isNaN(v)); const lastAvg = lastVals.length > 0 ? lastVals.reduce((a,b)=>a+b,0)/lastVals.length : null; if (avg === null) return '<span style="color:#94a3b8;font-style:italic;">待录入</span>'; let trend = ''; if (lastAvg !== null) { const diff = avg - lastAvg; if (diff > 0) trend = ' <span style="color:#27ae60;font-weight:600;">↑' + diff.toFixed(2) + '%</span>'; else if (diff < 0) trend = ' <span style="color:#c0392b;font-weight:600;">↓' + Math.abs(diff).toFixed(2) + '%</span>'; else trend = ' <span style="color:#2980b9;font-weight:600;">→0.00%</span>'; } return '<strong>' + avg.toFixed(2) + '%</strong>' + trend; })()}</div>
+                    <div style="text-align:left;"><strong style="display:inline-block;width:9em;white-space:nowrap;">🎯 本期平均准确率：</strong>${(() => { if (_totalAccAvg === null) return '<span style="color:#94a3b8;font-style:italic;">待录入</span>'; var trend = ''; if (_totalAccLastAvg !== null) { var d = _totalAccAvg - _totalAccLastAvg; if (d > 0) trend = ' <span style=\"color:#27ae60;font-weight:600;\">↑'+d.toFixed(2)+'%</span>'; else if (d < 0) trend = ' <span style=\"color:#c0392b;font-weight:600;\">↓'+Math.abs(d).toFixed(2)+'%</span>'; else trend = ' <span style=\"color:#2980b9;font-weight:600;\">→0.00%</span>'; } return '<strong>'+_totalAccAvg.toFixed(2)+'%</strong>'+trend; })()}</div>
                 </div>
                 <div style="font-size: 0.7rem; color: #94a3b8; text-align:center; margin-bottom: 8px;">💡 点击上方文字可手动编辑 | 💡 表头右侧可拖拽调整列宽</div>
                 <table class="compact-table resizable-table" id="reviewerCompareTable">
                     <thead><tr><th>初审</th><th>趋势（曲线图+对比）</th><th>初审准确率 ${currentAnalysisType !== 'custom' ? '<button onclick="showAccRateModal()" style="background:#eef2ff;border:1px solid #cbd5e1;padding:2px 10px;border-radius:10px;cursor:pointer;font-size:0.7rem;margin-left:4px;">📸 识别</button>' : ''}</th><th>判责量</th>${weekHeaders}</tr></thead>
                     <tbody>
-                        <tr style="background:#f0f2f6;"><td style="font-weight:bold;text-align:center;">总计</td><td><div class="trend-cell"><canvas id="${totalSparklineId}" width="100" height="20"></canvas><span class="trend-text" style="font-size:0.65rem; margin-left:3px;">${totalTrendHtml}</span></div></td><td style="font-weight:bold;padding:2px 4px;"><div style="position:relative;text-align:center;">${(() => { const vals = Object.values(accRateThisPeriod).map(Number).filter(v => !isNaN(v)); const avg = vals.length > 0 ? vals.reduce((a,b)=>a+b,0)/vals.length : null; const lastVals = Object.values(accRateLastPeriod).map(Number).filter(v => !isNaN(v)); const lastAvg = lastVals.length > 0 ? lastVals.reduce((a,b)=>a+b,0)/lastVals.length : null; let trend = ''; if (avg !== null && lastAvg !== null) { const diff = avg - lastAvg; if (diff > 0) trend = '<span style="position:absolute;right:0;top:50%;transform:translateY(-50%);font-size:0.65rem;color:#27ae60;font-weight:600;">↑' + diff.toFixed(2) + '%</span>'; else if (diff < 0) trend = '<span style="position:absolute;right:0;top:50%;transform:translateY(-50%);font-size:0.65rem;color:#c0392b;font-weight:600;">↓' + Math.abs(diff).toFixed(2) + '%</span>'; else trend = '<span style="position:absolute;right:0;top:50%;transform:translateY(-50%);font-size:0.65rem;color:#2980b9;font-weight:600;">→0.00%</span>'; } return (avg !== null ? avg.toFixed(2) + '%' : '-') + trend; })()}</div></td><td style="font-weight:bold;text-align:center;">${(() => { const total = sortedReviewers.reduce((a,rv)=>a+Number(_panZeBySite(rv)),0); console.log('[判责总计] sel='+JSON.stringify(window._selectedSites)+' total='+total+' reviewers='+sortedReviewers.length); return total || '-'; })()}</td>${totalRowCells}</tr>
+                        <tr style="background:#f0f2f6;"><td style="font-weight:bold;text-align:center;">总计</td><td><div class="trend-cell"><canvas id="${totalSparklineId}" width="100" height="20"></canvas><span class="trend-text" style="font-size:0.65rem; margin-left:3px;">${totalTrendHtml}</span></div></td><td style="font-weight:bold;padding:2px 4px;"><div style="position:relative;text-align:center;">${(() => { var trend = ''; if (_totalAccAvg !== null && _totalAccLastAvg !== null) { var d = _totalAccAvg - _totalAccLastAvg; if (d > 0) trend = '<span style=\"position:absolute;right:0;top:50%;transform:translateY(-50%);font-size:0.65rem;color:#27ae60;font-weight:600;\">↑'+d.toFixed(2)+'%</span>'; else if (d < 0) trend = '<span style=\"position:absolute;right:0;top:50%;transform:translateY(-50%);font-size:0.65rem;color:#c0392b;font-weight:600;\">↓'+Math.abs(d).toFixed(2)+'%</span>'; else trend = '<span style=\"position:absolute;right:0;top:50%;transform:translateY(-50%);font-size:0.65rem;color:#2980b9;font-weight:600;\">→0.00%</span>'; } return (_totalAccAvg !== null ? _totalAccAvg.toFixed(2) + '%' : '-') + trend; })()}</div></td><td style="font-weight:bold;text-align:center;">${(() => { const total = sortedReviewers.reduce((a,rv)=>a+Number(_panZeBySite(rv)),0); console.log('[判责总计] sel='+JSON.stringify(window._selectedSites)+' total='+total+' reviewers='+sortedReviewers.length); return total || '-'; })()}</td>${totalRowCells}</tr>
                         ${reviewerRows || '<tr><td colspan="10" style="text-align:center;">暂无数据</td></tr>'}
                     </tbody>
                 </table>
@@ -7480,7 +7527,7 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
         ).join('');
 
         container.innerHTML = ''
-        + '<div style="max-width:1100px;margin:0 auto;">'
+        + '<div style="margin:0 auto;">'
         +   '<div class="report-box" style="margin-bottom:20px;">'
         +     '<div class="report-title">📚 培训案例收集库</div>'
         +     '<div style="display:flex;gap:10px;flex-wrap:wrap;justify-content:center;margin-top:12px;">'
@@ -7505,6 +7552,10 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
     }
 
     function switchCaseHubTab() {
+        var pptWrap = document.getElementById('caseLibPptWrap');
+        if (pptWrap) {
+            pptWrap.style.display = (currentCaseHubTab === 'library') ? '' : 'none';
+        }
         if (currentCaseHubTab === 'collection') renderTrainingCollection('caseHubContent');
         else if (currentCaseHubTab === 'library') renderCaseLibraryView('caseHubContent');
         else if (currentCaseHubTab === 'exam') renderGenerateExam('caseHubContent');
@@ -8095,7 +8146,7 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
     }
 
     // ==================== 状态变量 ====================
-    let currentTrainingSubNav = 'biweekly';
+    let currentTrainingSubNav = 'manual';
     let currentCaseLibSubNav = 'completed';
     let currentBiweeklyPeriod = null;
 
@@ -8165,14 +8216,12 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
                     ov.innerHTML='<div class="modal-container" style="max-width:400px;"><div class="modal-header">📥 导入到哪个分类？<button class="modal-close-btn" id="importTypeClose">✕</button></div>'+
                     '<div class="modal-body" style="text-align:center;padding:20px;">'+
                     '<button id="importToTrain" style="width:100%;padding:12px;margin-bottom:8px;background:#fff7ed;border:1px solid #fbbf24;border-radius:12px;cursor:pointer;font-size:0.9rem;">📌 培训案例</button>'+
-                    '<button id="importToBiweekly" style="width:100%;padding:12px;margin-bottom:8px;background:#f0fdf4;border:1px solid #86efac;border-radius:12px;cursor:pointer;font-size:0.9rem;">📅 双周培训</button>'+
                     '<button id="importToKnowledge" style="width:100%;padding:12px;background:#f0f6ff;border:1px solid #93c5fd;border-radius:12px;cursor:pointer;font-size:0.9rem;">📖 知识巩固</button>'+
                     '</div></div></div>';
                     document.body.appendChild(ov);
                     ov.querySelector('#importTypeClose').onclick = function(){ov.remove();resolve(null);};
                     ov.onclick = function(e){if(e.target===ov){ov.remove();resolve(null);}};
                     ov.querySelector('#importToTrain').onclick = function(){ov.remove();resolve('培训案例');};
-                    ov.querySelector('#importToBiweekly').onclick = function(){ov.remove();resolve('双周培训');};
                     ov.querySelector('#importToKnowledge').onclick = function(){ov.remove();resolve('知识巩固');};
                 });
                 if (!importType) return;
@@ -8275,117 +8324,32 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
         }
     }
 
-    // 子Tab1：双周培训案例
+    // 子Tab1：双周培训案例（飞书链接内嵌，可编辑）
+    var BIWEEKLY_FEISHU_KEY = 'biweeklyFeishuUrl';
+    function getBiweeklyFeishuUrl() { return localStorage.getItem(BIWEEKLY_FEISHU_KEY) || 'https://zhuanspirit.feishu.cn/slides/XTGGslL2TlPqYwdQQDOc8jeOnlc'; }
     function renderBiweeklyTab() {
-        const content = document.getElementById('trainingSubContent');
-        const allData = getBiweeklyCases();
-        const periodKeys = Object.keys(allData).sort().reverse();
-        if (!currentBiweeklyPeriod || !periodKeys.includes(currentBiweeklyPeriod)) {
-            currentBiweeklyPeriod = periodKeys[0] || getCurrentWeekKey();
-        }
-        const files = allData[currentBiweeklyPeriod] || [];
-
-        let filesHtml = '';
-        if (files.length === 0) {
-            filesHtml = '<div class="empty-placeholder" style="padding:30px;">暂无该周期培训案例，请上传文件</div>';
-        } else {
-            filesHtml = files.map((f, idx) => {
-                const typeIcon = f.fileName.match(/\.(ppt|pptx)$/i) ? '📊' : f.fileName.match(/\.(xls|xlsx)$/i) ? '📈' : f.fileName.match(/\.(doc|docx)$/i) ? '📝' : f.fileName.match(/\.pdf$/i) ? '📕' : '📎';
-                const timeStr = new Date(f.uploadTime).toLocaleString('zh-CN');
-                const sizeStr = f.fileData ? (f.fileData.length / 1024).toFixed(1) + 'KB' : '未知';
-                return `<div style="display:flex;align-items:center;gap:12px;padding:12px;border-bottom:1px solid #eef2f6;">
-                    <span style="font-size:1.5rem;">${typeIcon}</span>
-                    <div style="flex:1;">
-                        <div style="font-weight:600;color:#1f3a6b;">${escapeHtml(f.fileName)}</div>
-                        <div style="font-size:0.75rem;color:#94a3b8;">${timeStr} · ${sizeStr}</div>
-                    </div>
-                    <button onclick="(function(){var d=getBiweeklyCases();var f=(d['${currentBiweeklyPeriod}']||[])[${idx}];if(f&&f.fileData){var a=document.createElement('a');a.href=f.fileData;a.download=f.fileName;a.click();}})()" style="background:#eef2ff;border:none;padding:6px 14px;border-radius:20px;cursor:pointer;font-size:0.75rem;color:#2a5298;">📥 下载</button>
-                    <button onclick="deleteCaseFile('${currentBiweeklyPeriod}',${idx})" style="background:#fef2f2;border:none;padding:6px 14px;border-radius:20px;cursor:pointer;font-size:0.75rem;color:#c0392b;">🗑️ 删除</button>
-                </div>`;
-            }).join('');
-        }
-
-        let periodOpts = periodKeys.length > 0 ? periodKeys.map(k => `<option value="${k}" ${k===currentBiweeklyPeriod?'selected':''}>${formatWeekLabel(k)}</option>`).join('') : `<option value="${getCurrentWeekKey()}">${formatWeekLabel(getCurrentWeekKey())}（本周）</option>`;
-
-        content.innerHTML = `
-        <div class="report-box">
-            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;flex-wrap:wrap;gap:12px;">
-                <div style="display:flex;align-items:center;gap:12px;">
-                    <label style="font-weight:600;color:#1f3a6b;">📅 选择周期：</label>
-                    <select id="biweeklyPeriodSelect" class="training-period-select" style="padding:6px 16px;border:1px solid #cbd5e1;border-radius:20px;font-size:0.85rem;background:white;">
-                        <option value="__new__">+ 新建周期</option>
-                        ${periodOpts}
-                    </select>
-                </div>
-                <button id="addBiweeklyFileBtn" class="primary" style="display:flex;align-items:center;gap:6px;">📤 上传培训文件</button>
-            </div>
-            <input type="file" id="biweeklyFileInput" accept=".ppt,.pptx,.xls,.xlsx,.doc,.docx,.pdf,.wps" style="display:none;" multiple>
-            <div style="margin-top:8px;">${filesHtml}</div>
-            <div style="color:#94a3b8;font-size:0.75rem;margin-top:12px;">支持格式：PPT、Excel、Word、PDF、WPS 等办公文件</div>
-        </div>`;
-
-        document.getElementById('biweeklyPeriodSelect').addEventListener('change', function() {
-            if (this.value === '__new__') {
-                const newPeriod = prompt('请输入新周期标识（格式：w_YYYYMMDD，如 w_20260616）：', getCurrentWeekKey());
-                if (newPeriod && /^w_\d{8}$/.test(newPeriod)) {
-                    const d = getBiweeklyCases();
-                    d[newPeriod] = d[newPeriod] || [];
-                    saveBiweeklyCases(d);
-                    currentBiweeklyPeriod = newPeriod;
-                } else if (newPeriod) {
-                    alert('格式错误，请输入如 w_20260616 的格式');
-                }
-                renderBiweeklyTab();
-            } else {
-                currentBiweeklyPeriod = this.value;
-                renderBiweeklyTab();
-            }
-        });
-
-        document.getElementById('addBiweeklyFileBtn').addEventListener('click', () => {
-            document.getElementById('biweeklyFileInput').click();
-        });
-
-        document.getElementById('biweeklyFileInput').addEventListener('change', async function() {
-            if (!this.files || this.files.length === 0) return;
-            const dataUrls = await readFilesAsDataURLs(this.files);
-            const d = getBiweeklyCases();
-            d[currentBiweeklyPeriod] = d[currentBiweeklyPeriod] || [];
-            Array.from(this.files).forEach((file, i) => {
-                d[currentBiweeklyPeriod].push({
-                    fileName: file.name,
-                    fileType: file.type,
-                    fileData: dataUrls[i],
-                    uploadTime: Date.now()
-                });
-            });
-            saveBiweeklyCases(d);
-            this.value = '';
-            renderBiweeklyTab();
-        });
-
-        // 下载按钮需要单独绑定
-        content.querySelectorAll('button').forEach(btn => {
-            if (btn.textContent.includes('📥 下载')) {
-                const origClick = btn.onclick;
-                btn.onclick = null;
-                btn.addEventListener('click', () => {
-                    const match = btn.parentElement.querySelector('div div:first-child');
-                    if (match) {
-                        const files = getBiweeklyCases()[currentBiweeklyPeriod] || [];
-                        // find by filename
-                        const fileName = match.textContent;
-                        const file = files.find(f => f.fileName === fileName);
-                        if (file && file.fileData) {
-                            const a = document.createElement('a');
-                            a.href = file.fileData;
-                            a.download = file.fileName;
-                            a.click();
-                        }
-                    }
-                });
-            }
-        });
+        var title = localStorage.getItem('biweeklyFeishuTitle') || '复核双周培训汇总';
+        var url = getBiweeklyFeishuUrl();
+        var note = localStorage.getItem('biweeklyPptNote') || '2025/06/03至2026/06/17双周培训资料汇总';
+        document.getElementById('trainingSubContent').innerHTML = '<div class="report-box"><div style="font-size:0.85rem;color:#5e6f8d;margin-bottom:12px;">当前链接：<span style="color:#2a5298;">'+escapeHtml(url)+'</span></div><div style="margin-bottom:12px;"><strong>名称：</strong>'+escapeHtml(title)+'</div><div style="margin-bottom:16px;"><strong>备注：</strong>'+escapeHtml(note)+'</div><button onclick="editBiweeklyFeishuLink()" class="primary" style="background:#27ae60;color:white;border:none;padding:8px 20px;border-radius:20px;cursor:pointer;font-weight:600;">✏️ 编辑链接</button></div>';
+    }
+    function editBiweeklyFeishuLink() {
+        var ov=document.createElement('div');ov.className='modal-overlay';ov.style.zIndex='4000';
+        ov.innerHTML='<div class="modal-container" style="max-width:500px;"><div class="modal-header"><span>✏️ 编辑双周培训链接</span><button class="modal-close-btn" id="bwEditClose">✕</button></div><div class="modal-body" style="padding:20px;"><label style="font-weight:600;">名称</label><input id="bwTitle" value="'+(localStorage.getItem('biweeklyFeishuTitle')||'复核双周培训汇总')+'" style="width:100%;padding:8px;border:1px solid #cbd5e1;border-radius:8px;margin:4px 0 12px;"><label style="font-weight:600;">飞书链接</label><input id="bwUrl" value="'+getBiweeklyFeishuUrl()+'" style="width:100%;padding:8px;border:1px solid #cbd5e1;border-radius:8px;margin:4px 0 12px;"><label style="font-weight:600;">备注</label><input id="bwNote" value="'+(localStorage.getItem('biweeklyPptNote')||'2025/06/03至2026/06/17双周培训资料汇总')+'" style="width:100%;padding:8px;border:1px solid #cbd5e1;border-radius:8px;margin:4px 0 12px;"><input id="bwPwd" type="password" placeholder="管理密码" style="width:100%;padding:8px;border:1px solid #cbd5e1;border-radius:8px;text-align:center;margin-bottom:8px;"><div id="bwMsg" style="color:#c0392b;font-size:0.75rem;display:none;margin-bottom:8px;"></div><button id="bwSave" style="width:100%;background:#27ae60;color:white;border:none;padding:10px;border-radius:10px;cursor:pointer;font-weight:600;">💾 保存</button></div></div>';
+        document.body.appendChild(ov);
+        ov.querySelector('#bwEditClose').onclick=function(){ov.remove();};
+        ov.addEventListener('click',function(e){if(e.target===ov)ov.remove();});
+        ov.querySelector('#bwSave').onclick=function(){
+            if(document.getElementById('bwPwd').value!=='888888'){document.getElementById('bwMsg').textContent='❌ 密码错误';document.getElementById('bwMsg').style.display='block';return;}
+            localStorage.setItem(BIWEEKLY_FEISHU_KEY,document.getElementById('bwUrl').value.trim());
+            localStorage.setItem('biweeklyFeishuTitle',document.getElementById('bwTitle').value.trim());
+            var note=document.getElementById('bwNote').value.trim();
+            if(note)localStorage.setItem('biweeklyPptNote',note);
+            ov.remove();renderBiweeklyTab();showToast('✅ 已更新','success');
+            // 同步更新案例库卡片上的备注文字
+            var cardEls = document.querySelectorAll('.qb-type-card');
+            cardEls.forEach(function(card){ if(card.textContent.indexOf('双周培训')>=0){ var noteDiv=card.querySelector('div[style*=\"font-size:0.6rem\"]'); if(noteDiv) noteDiv.textContent=note||noteDiv.textContent; } });
+        };
     }
 
     // 手动录入表单（按钮展开）
@@ -8884,18 +8848,44 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
     targetId = targetId || 'mainContent';
         const container = document.getElementById(targetId);
         container.innerHTML = `
-        <div style="max-width:1000px;margin:0 auto;">
+        <div style="margin:0 auto;">
             <div class="report-box" style="margin-bottom:16px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">
                 <div class="report-title" style="margin-bottom:0;">📚 案例库</div>
                 <input id="caseLibSearch" type="text" placeholder="🔍 搜索质检码/问题描述..." style="padding:6px 14px;border:1px solid #cbd5e1;border-radius:20px;font-size:0.8rem;width:240px;" oninput="filterCaseLibCards(this.value)">
             </div>
             <div id="caseLibCatContent"></div>
-            <div id="caseLibBiweeklyContent" style="margin-top:24px;"></div>
         </div>`;
         renderCompletedCasesTab();
-        renderBiweeklyLibTab();
+        // PPT浮层查看（点击卡片弹窗打开）
     }
 
+    function openPptOverlay(){
+        var existing=document.getElementById('caseLibPptWrap');
+        if(existing){ existing.remove(); return; }
+        var wrap=document.createElement('div');
+        wrap.id='caseLibPptWrap';
+        wrap.style.cssText='background:white;border-radius:16px;overflow:hidden;box-shadow:0 4px 12px rgba(0,0,0,0.05);border:1px solid #eef2f6;height:calc(100vh - 55px);margin-bottom:16px;';
+        wrap.innerHTML='<div style="background:#27ae60;color:white;padding:8px 16px;display:flex;justify-content:space-between;align-items:center;"><span>📊 复核双周培训汇总</span><div style="display:flex;gap:8px;"><a href="'+getBiweeklyFeishuUrl()+'" target="_blank" style="color:white;font-size:0.7rem;text-decoration:none;background:rgba(255,255,255,0.2);padding:4px 10px;border-radius:12px;">🔗 新窗口</a><button onclick="document.getElementById(\'caseLibPptWrap\').remove()" style="background:rgba(255,255,255,0.2);border:none;color:white;width:28px;height:28px;border-radius:50%;cursor:pointer;font-size:1rem;">✕</button></div></div><div style="width:100%;height:calc(100% - 44px);"><iframe src="'+getBiweeklyFeishuUrl()+'" style="width:100%;height:100%;border:none;" sandbox="allow-same-origin allow-scripts allow-popups allow-forms allow-top-navigation"></iframe></div>';
+        document.getElementById('mainContent').appendChild(wrap);
+        wrap.scrollIntoView({behavior:'smooth'});
+    }
+    function editPptNotePopup(el) {
+        var ov=document.createElement('div');ov.className='modal-overlay';ov.style.zIndex='4000';
+        ov.innerHTML='<div class="modal-container" style="max-width:420px;"><div class="modal-header"><span>📝 修改日期范围</span><button class="modal-close-btn" id="pptNoteClose">✕</button></div><div class="modal-body" style="padding:20px;"><textarea id="pptNoteInput" style="width:100%;padding:10px;border:1px solid #cbd5e1;border-radius:10px;font-size:0.85rem;min-height:60px;resize:vertical;">'+(localStorage.getItem('biweeklyPptNote')||'2025/06/03至2026/06/17双周培训资料汇总')+'</textarea><input id="pptNotePwd" type="password" placeholder="管理密码" style="width:100%;padding:10px;border:1px solid #cbd5e1;border-radius:10px;font-size:0.85rem;margin-top:8px;text-align:center;"><div id="pptNoteMsg" style="color:#c0392b;font-size:0.75rem;margin-top:4px;display:none;"></div><button id="pptNoteSave" style="width:100%;margin-top:12px;background:#27ae60;color:white;border:none;padding:10px;border-radius:10px;cursor:pointer;font-size:0.85rem;font-weight:600;">💾 保存</button></div></div>';
+        document.body.appendChild(ov);
+        ov.querySelector('#pptNoteClose').onclick=function(){ov.remove();};
+        ov.addEventListener('click',function(e){if(e.target===ov)ov.remove();});
+        ov.querySelector('#pptNoteSave').onclick=function(){
+            var note=document.getElementById('pptNoteInput').value.trim();
+            var pwd=document.getElementById('pptNotePwd').value;
+            if(!note)return;
+            if(pwd!=='888888'){document.getElementById('pptNoteMsg').textContent='❌ 密码错误';document.getElementById('pptNoteMsg').style.display='block';return;}
+            localStorage.setItem('biweeklyPptNote',note);
+            if(el)el.textContent=note;
+            ov.remove();
+            showToast('✅ 已更新','success');
+        };
+    }
     function filterCaseLibCards(kw) {
         kw = (kw || '').trim().toLowerCase();
         var container = document.getElementById('caseLibCatContent');
@@ -8958,12 +8948,14 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
 	var typeIcons={'培训案例':'📌','双周培训':'📅','知识巩固':'📖'};
 	var typeColors={'培训案例':'#fff7ed','双周培训':'#f0fdf4','知识巩固':'#f0f6ff'};
 	var typeCards='';
-	['培训案例','双周培训','知识巩固'].forEach(function(t){
+	['培训案例','知识巩固'].forEach(function(t){
 		var count=typeCounts[t]||0;
 		var icon=typeIcons[t]||'📋';
 		var bg=typeColors[t]||'#f8fafc';
 		typeCards+='<div class="qb-type-card" onclick="showCaseTypeDetail(\''+t+'\')" style="cursor:pointer;background:'+bg+';"><div class="qb-cat-icon">'+icon+'</div><div class="qb-cat-name">'+t+'</div><div class="qb-cat-count">'+count+' 例</div><div class="qb-cat-actions"><button class="qb-card-btn qb-card-view" onclick="event.stopPropagation();showCaseTypeDetail(\''+t+'\')">👁️ 查看</button></div></div>';
 	});
+	var pptNote=localStorage.getItem("biweeklyPptNote")||"2025/06/03至2026/06/17双周培训资料汇总";
+	typeCards+="<div class=\"qb-type-card\" style=\"background:#f0fdf4;cursor:pointer;\" onclick=\"openPptOverlay()\"><div class=\"qb-cat-icon\">📅</div><div class=\"qb-cat-name\">双周培训</div><div class=\"qb-cat-count\">飞书PPT</div><div style=\"font-size:0.6rem;color:#5e6f8d;margin:2px 0;cursor:pointer;\" title=\"点击修改日期\" onclick=\"event.stopPropagation();editPptNotePopup(this)\">"+pptNote+"</div><div class=\"qb-cat-actions\"><button class=\"qb-card-btn qb-card-view\" onclick=\"event.stopPropagation();openPptOverlay()\">👁️ 查看</button></div></div>";
 	// 按失误类别统计
 	var catMap={};
 	cases.forEach(function(c){var cat=c.errorCategory||"未分类";if(!catMap[cat])catMap[cat]=[];catMap[cat].push(c);});
@@ -10004,6 +9996,9 @@ URL.revokeObjectURL(url);
     }
 
     function renderSubContent(nav) {
+        // 保护PPT不被innerHTML销毁
+        var pw = document.getElementById('caseLibPptWrap');
+        if (pw && pw.parentNode) { pw.parentNode.removeChild(pw); window._pptWrapEl = pw; }
         // 切换模块时关闭所有弹窗
         document.querySelectorAll('.modal-overlay').forEach(function(m) { m.remove(); });
         if (!nav) return;
@@ -19847,6 +19842,22 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
         setTimeout(function(){
             migrateOldPushRecords();
             initAutoPush();
+            // 自动加载每日判责量数据（无需进管理后台）
+            fetch(SUPABASE_URL + '/rest/v1/app_data?key=like.feishu_panze_2026*&select=key,value&order=key.desc', {
+                headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY }
+            }).then(function(r){return r.json();}).then(function(rows){
+                window._panzeAllData = [];
+                rows.forEach(function(r){
+                    try {
+                        var pd = JSON.parse(r.value);
+                        var ds = r.key.replace('feishu_panze_', '');
+                        if (ds === 'latest') return;
+                        var m = pd.map || {};
+                        window._panzeAllData.push({ date: ds, count: Object.keys(m).length, total: Object.values(m).reduce(function(a,b){return a+Number(b);},0), map: m });
+                    } catch(e) {}
+                });
+                window._panzeAllData.sort(function(a,b){ return b.date.localeCompare(a.date); });
+            }).catch(function(){});
             getFeishuToken().then(function(){
                 fetchLearningMapData(false).then(function(){ buildLMCache(); });
                 refreshErrorDashboardData(true, true);
