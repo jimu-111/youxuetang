@@ -9739,7 +9739,7 @@ URL.revokeObjectURL(url);
                             const percent = totalStudents > 0 ? Math.round(cityStudents.length / totalStudents * 100) : 0;
                             return `<div style="flex:1;min-width:100px;background:#f8fafc;border-radius:16px;padding:16px;text-align:center;">
                                 <div style="font-size:1.6rem;font-weight:700;color:#1f3a6b;">${cityStudents.length}</div>
-                                <div style="font-size:0.85rem;color:#5e6f8d;">🐼 ${city}</div>
+                                <div style="font-size:0.85rem;color:#5e6f8d;">${city==='成都'?'🐼':(city==='青岛'?'🌊':'📱')} ${city}</div>
                                 <div style="margin-top:4px;">${renderPercentBar(percent)}</div>
                             </div>`;
                         }).join('')}
