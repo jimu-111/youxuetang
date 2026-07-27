@@ -1132,6 +1132,7 @@
                     if(currentPanoramaStudentId===sid) currentPanoramaStudentId=students[0]?.id;
                     saveToLocal();
                     overlay.remove();
+                    showToast('✅ 已删除', 'success');
                     showFrontendAdminModal();
                     renderFrontend();
                 }
@@ -19710,13 +19711,14 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
             body: JSON.stringify(batch)
         });
     }
-    // 侧边栏同步按钮点击事件
+    // 侧边栏同步按钮点击事件（先拉后推，双向同步）
     document.getElementById('sidebarSyncBadge').addEventListener('click', function(){
         var badge = document.getElementById('sidebarSyncBadge');
         if (badge) { badge.textContent = '☁️ 同步中…'; badge.style.color = '#4fc3f7'; }
-        _syncPushAll().then(function(){
+        _syncPullAll().then(function(){
             localStorage.setItem('trainee_data_sync_time', new Date().toISOString());
             _updateSyncBadge();
+            location.reload();
         }).catch(function(){
             var b = document.getElementById('sidebarSyncBadge');
             if (b) { b.textContent = '☁️ 同步失败'; b.style.color = '#c0392b'; }
@@ -19757,29 +19759,26 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
                             } catch(e) {}
                         }
                     }
-                    // 学员数据：按更新时间比较，云端更新则覆盖本地，本地更新则推送到云端
+                    // 学员数据：按时间戳同步，哪边新用哪边
                     if (row.key === 'trainee_full_admin_backup') {
                         var localStu = _realLS.getItem('trainee_full_admin_backup');
                         var cloudTime = row.updated_at ? new Date(row.updated_at).getTime() : 0;
                         if (localStu) {
-                            try {
-                                // 比较两端时间，以最新为准
-                                var localTime = _realLS.getItem('trainee_data_sync_time');
-                                localTime = localTime ? new Date(localTime).getTime() : 0;
-                                if (localTime >= cloudTime) {
-                                    // 本地更新 → 推本地到云端
-                                    fetch(SUPABASE_URL + '/rest/v1/app_data', {
-                                        method: 'POST',
-                                        headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY, 'Content-Type': 'application/json', 'Prefer': 'resolution=merge-duplicates' },
-                                        body: JSON.stringify([{ key: 'trainee_full_admin_backup', value: localStu, updated_at: new Date().toISOString() }])
-                                    }).catch(function() {});
-                                    _realLS.setItem('trainee_data_sync_time', new Date().toISOString());
-                                    return;
-                                }
-                                // 云端更新 → 拉云端到本地
-                            } catch(e) {}
+                            var localTime = _realLS.getItem('trainee_data_sync_time');
+                            localTime = localTime ? new Date(localTime).getTime() : 0;
+                            if (!localTime && !cloudTime) return; // 都没时间戳，不动
+                            if (localTime >= cloudTime) {
+                                // 本地更新 → 推本地到云端
+                                fetch(SUPABASE_URL + '/rest/v1/app_data', {
+                                    method: 'POST',
+                                    headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY, 'Content-Type': 'application/json', 'Prefer': 'resolution=merge-duplicates' },
+                                    body: JSON.stringify([{ key: 'trainee_full_admin_backup', value: localStu, updated_at: new Date().toISOString() }])
+                                }).catch(function() {});
+                                _realLS.setItem('trainee_data_sync_time', new Date().toISOString());
+                                return;
+                            }
                         }
-                        // 云端更新或无本地数据，用云端覆盖
+                        // 云端更新或无本地数据 → 拉云端到本地
                         _realLS.setItem(row.key, row.value);
                         _realLS.setItem('trainee_data_sync_time', row.updated_at || new Date().toISOString());
                         return;
