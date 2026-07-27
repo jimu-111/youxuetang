@@ -447,7 +447,7 @@
     let generatedReports = JSON.parse(localStorage.getItem('generatedReports') || '{}');
     function refreshReportSection() { var s = document.getElementById('reportGenSection'); if (s && s.parentNode) s.parentNode.removeChild(s); appendReportSection(); }
     function saveReportToLocal(name, htmlContent) { generatedReports[name] = htmlContent; localStorage.setItem('generatedReports', JSON.stringify(generatedReports)); refreshReportSection(); }
-    function deleteReport(name) { delete generatedReports[name]; var val = JSON.stringify(generatedReports); localStorage.setItem('generatedReports', val); refreshReportSection(); try { fetch(SUPABASE_URL + '/rest/v1/app_data', { method: 'POST', headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY, 'Content-Type': 'application/json', 'Prefer': 'resolution=merge-duplicates' }, body: JSON.stringify({ key: 'generatedReports', value: val, updated_at: new Date().toISOString() }) }).catch(function(){}); } catch(e) {} }
+    function deleteReport(name) { delete generatedReports[name]; var val = JSON.stringify(generatedReports); localStorage.setItem('generatedReports', val); refreshReportSection(); try { fetch(SUPABASE_URL + '/rest/v1/app_data', { method: 'POST', headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY, 'Content-Type': 'application/json', 'Prefer': 'resolution=merge-duplicates' }, body: JSON.stringify([{ key: 'generatedReports', value: val, updated_at: new Date().toISOString() }]) }).catch(function(){}); } catch(e) {} }
     
     // ==================== 新人情况模块 ====================
     const ADMIN_PASSWORD = "888888";
