@@ -2129,8 +2129,9 @@
             const mv = mistakeMap[n]; const cjv = chouJianMap[n]; const pzv = panZeMapFixed[n];
             return (mv !== undefined && mv !== null && Number(mv) > 0) || (cjv !== undefined && cjv !== null && Number(cjv) > 0) || (pzv !== undefined && pzv !== null && Number(pzv) > 0);
         });
-        // 只显示固定21人名单 + 条件显示名单，不再添加任何其他名字
-        const allNames = [...new Set([...module3NameList, ...condShow])];
+        // 只显示成都人员
+        const siteMap = window._SITE_MAP || {};
+        const allNames = [...new Set([...module3NameList, ...condShow, ...Object.keys(mistakeMap||{}), ...Object.keys(chouJianMap||{}), ...Object.keys(panZeMapFixed||{})])].filter(function(n) { return n && siteMap[n] === '成都' && !getDepartedReviewers()[n]; });
 
         let card = '<div id="samplingCard3" style="background:#fff;border-radius:12px;border:1px solid #e2e8f0;box-shadow:0 1px 4px rgba(0,0,0,0.06);padding:16px;margin-bottom:16px;">';
         card += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">';
@@ -4979,6 +4980,9 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
             if (departedRev3[name] && !(_mergedStats[name] && (_mergedStats[name][periodRanges[0].periodKey]||0) > 0)) return;
             reviewerPeriodStats[name] = _mergedStats[name];
         });
+        // 补齐：固定名单 + 徐行唐洲 + 历史数据中所有初审（已离职且无数据的除外，应用同名合并）
+        ['何显健','周金山','陈毅军','樊景舜','向阳','胡志鹏','赵晨鸿','马浩','伏鑫','杜攀','罗宁','肖健平','吴辉','任青俊','张俊','麦钧淇','杨宏','李晓洋','刘超','徐行','唐洲'].forEach(function(n) { if (!reviewerPeriodStats[n] && !departedRev3[n] && !(_nameMerge[n])) reviewerPeriodStats[n] = {}; });
+        allRows.forEach(function(r) { var rn = _nameMerge[String(r[reviewerColumn] || '').trim()] || String(r[reviewerColumn] || '').trim(); if (rn && !reviewerPeriodStats[rn] && !departedRev3[rn]) reviewerPeriodStats[rn] = {}; });
         window._analysisReviewerPeriodStats = reviewerPeriodStats;
         const thisPeriodKey = periodRanges[0].periodKey;
         const reviewerList = Object.keys(reviewerPeriodStats);
@@ -12101,6 +12105,9 @@ async function importQBFromFeishu() {
 
         const reviewerStats = {};
         rows.forEach(row => { const r = getVal(row, errorReviewerCol); if (r) reviewerStats[r] = (reviewerStats[r] || 0) + 1; });
+        // 全部历史数据中所有初审 + 固定名单兜底（失误为 0）
+        errorAllRows.forEach(function(r2) { var rn = getVal(r2, errorReviewerCol); if (rn && !(rn in reviewerStats)) reviewerStats[rn] = 0; });
+        ['何显健','周金山','陈毅军','樊景舜','向阳','胡志鹏','赵晨鸿','马浩','伏鑫','杜攀','罗宁','肖健平','吴辉','任青俊','张俊','麦钧淇','杨宏','李晓洋','刘超','李忠林','延依飞','徐行','唐洲'].forEach(function(n) { if (!(n in reviewerStats)) reviewerStats[n] = 0; });
         // 过滤已离职且无失误的人员
         const departedRev2 = getDepartedReviewers();
         Object.keys(reviewerStats).forEach(function(name) {
@@ -14851,7 +14858,7 @@ async function importQBFromFeishu() {
                 return;
             }
             // 站点映射（提取到循环外，避免每行重复赋值）
-            window._SITE_MAP = { '袁彬城':'深圳','许嘉林':'深圳','林嘉士':'深圳','王跃强':'深圳','孙俊':'深圳','姜玉林':'深圳','邹文文':'深圳','刘华城':'深圳','彭士观':'深圳','宁泰联':'深圳','吕建效':'深圳','张兢':'深圳','贺涛':'深圳','黄俊德':'深圳','李晓阳':'深圳','赵元坤':'深圳','盘训起':'深圳','冯开宁':'深圳','刘文能':'深圳','丁怀强':'深圳','林欣彬':'深圳','许泽雄':'深圳','曾清源':'深圳','吴松豪':'深圳','王燕文':'深圳','庄振航':'深圳','陈跃军':'深圳','王帅':'深圳','李念甘':'深圳','林家文':'深圳','廖天水':'深圳','廖国辉':'深圳','孙伟':'青岛','苏超跃':'青岛','王清婷':'青岛','徐贤炜':'青岛','王洋':'青岛','郑凯雄':'青岛','陶永嵩':'青岛','王为':'青岛','刘荫民':'青岛','代金鹏':'青岛','辛明泉':'青岛','王兴清':'青岛','姜超':'青岛','张明':'青岛','魏才玉':'青岛','张凯凯':'青岛','刘昊东':'青岛','李选国':'青岛','王梦阳':'青岛','王瑞宇':'青岛','陈文彬':'青岛','许江':'青岛','贺文锐':'青岛','臧天昊':'青岛','王璐':'青岛','李仁义':'青岛','徐行':'成都','何显健':'成都','陈毅军':'成都','胡志鹏':'成都','樊景舜':'成都','向阳':'成都','周金山':'成都','马浩':'成都','雍彬彬':'成都','伏鑫':'成都','肖健平':'成都','罗宁':'成都','吴辉':'成都','任青俊':'成都','杜攀':'成都','麦钧淇':'成都','杨宏':'成都','赵晨鸿':'成都','李忠林':'成都','延依飞':'成都','张俊':'成都','刘超':'成都','李晓洋':'成都' };
+            window._SITE_MAP = { '袁彬城':'深圳','许嘉林':'深圳','林嘉士':'深圳','王跃强':'深圳','孙俊':'深圳','姜玉林':'深圳','邹文文':'深圳','刘华城':'深圳','彭士观':'深圳','宁泰联':'深圳','吕建效':'深圳','张兢':'深圳','贺涛':'深圳','黄俊德':'深圳','李晓阳':'深圳','赵元坤':'深圳','盘训起':'深圳','冯开宁':'深圳','刘文能':'深圳','丁怀强':'深圳','林欣彬':'深圳','许泽雄':'深圳','曾清源':'深圳','吴松豪':'深圳','王燕文':'深圳','庄振航':'深圳','陈跃军':'深圳','王帅':'深圳','李念甘':'深圳','林家文':'深圳','廖天水':'深圳','廖国辉':'深圳','孙伟':'青岛','苏超跃':'青岛','王清婷':'青岛','徐贤炜':'青岛','王洋':'青岛','郑凯雄':'青岛','陶永嵩':'青岛','王为':'青岛','刘荫民':'青岛','代金鹏':'青岛','辛明泉':'青岛','王兴清':'青岛','姜超':'青岛','张明':'青岛','魏才玉':'青岛','张凯凯':'青岛','刘昊东':'青岛','李选国':'青岛','王梦阳':'青岛','王瑞宇':'青岛','陈文彬':'青岛','许江':'青岛','贺文锐':'青岛','臧天昊':'青岛','王璐':'青岛','李仁义':'青岛','徐行':'成都','何显健':'成都','陈毅军':'成都','胡志鹏':'成都','樊景舜':'成都','向阳':'成都','周金山':'成都','马浩':'成都','雍彬彬':'成都','伏鑫':'成都','肖健平':'成都','罗宁':'成都','吴辉':'成都','任青俊':'成都','杜攀':'成都','麦钧淇':'成都','杨宏':'成都','赵晨鸿':'成都','李忠林':'成都','延依飞':'成都','张俊':'成都','刘超':'成都','李晓洋':'成都','张浩文':'成都','唐洲':'成都' };
             // 并行拉取3个Sheet
             var sheetTasks = FEISHU_CONFIG.sheets.map(function(sh) {
                 return (async function() {
