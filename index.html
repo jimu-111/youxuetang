@@ -4876,6 +4876,8 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
             let category = row[categoryField] ? String(row[categoryField]).trim() : '';
             const reviewer = row[reviewerField] ? String(row[reviewerField]).trim() : '';
             const detail = row[detailField] ? String(row[detailField]).trim() : `第${index + 2}行数据`;
+            // QA表来源：类别统一映射为QA失误
+            if (source && ['QA', 'qa失误', 'QA失误'].some(function(kw) { return source.includes(kw); })) category = 'QA失误';
             category = mergeCategory(category);
             
             if (source) {
@@ -11934,6 +11936,14 @@ async function importQBFromFeishu() {
             }
             return 'rgb(' + Math.min(255, r) + ',' + Math.min(255, g) + ',' + Math.min(255, b) + ')';
         };
+
+        // QA表来源的行：类别统一映射为QA失误
+        rows.forEach(function(row) {
+            var src = getVal(row, errorSourceCol);
+            if (src && ['QA', 'qa失误', 'QA失误'].some(function(kw) { return src.includes(kw); })) {
+                if (errorCategoryCol >= 0) row[errorCategoryCol] = 'QA失误';
+            }
+        });
 
         // ====== A. 失误来源分布（卡片模式） ======
         // 6个卡片定义：{ key, label, icon, color, sourceField, keywords }
