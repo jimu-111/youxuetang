@@ -335,7 +335,7 @@
             <button id="adminLoginBtn" class="nav-btn" style="font-size:0.75rem;text-align:center;padding:8px;background:rgba(255,255,255,0.12);border:1px solid rgba(255,255,255,0.25);color:#fff;border-radius:10px;cursor:pointer;font-weight:600;">🔒 游客模式</button>
             <div style="display:flex;align-items:stretch;gap:6px;">
                 <button class="nav-btn" data-nav="admin" style="font-size:0.72rem;flex:1;text-align:center;padding:6px 8px;display:flex;align-items:center;justify-content:center;">⚙️ 管理后台</button>
-                <span id="syncStatus" style="flex:1;display:flex;align-items:center;justify-content:center;font-size:0.7rem;color:#4fc3f7;border-radius:8px;background:rgba(255,255,255,0.04);cursor:pointer;" title="点击手动同步" onclick="var s=document.getElementById('syncStatus');s.textContent='☁️ 同步中';s.style.color='#4fc3f7';_syncPushAll().then(function(){s.textContent='☁️ 已同步';s.style.color='#27ae60';}).catch(function(){s.textContent='☁️ 失败';s.style.color='#c0392b';});">☁️ 同步中</span>
+                <span id="sidebarSyncBadge" class="nav-btn" style="font-size:0.72rem;flex:1;text-align:center;padding:6px 8px;display:flex;align-items:center;justify-content:center;cursor:pointer;min-width:0;overflow:hidden;text-overflow:ellipsis;" title="点击手动同步">☁️ 同步中</span>
             </div>
         </div>
     </div>
@@ -810,6 +810,9 @@
             if(!isReadOnly && student.stage===4 && !student.stageProgress.graduatedFormal){
                 tableHtml+=`<tr><td colspan="6" style="text-align:center;"><div class="action-group"><button id="extendWeekBtn" class="small-outline">⏰ 延长考评周期(+1周)</button><button id="reduceWeekBtn" class="small-outline">📉 减少考评周期(-1周)</button><button id="manualArchiveBtn" class="small-outline" style="background:#2a5298;color:white;">📦 手动归档</button></div> </div></tr>`;
             }
+            if(!isReadOnly && student.stageProgress.returnFlag && student.stage<4){
+                tableHtml+=`<tr><td colspan="6" style="text-align:center;"><div class="action-group"><button id="cancelReturnBtn" class="small-outline" style="background:#c0392b;color:white;">🔓 取消退回（恢复至正式判责）</button></div></tr>`;
+            }
         } else {
             const rows=stage.getRows(student);
             rows.forEach(row=>{
@@ -858,8 +861,20 @@
                     else { alert("归档失败"); }
                 }
             };
+            const cancelBtn = modalElement.querySelector('#cancelReturnBtn');
+            if(cancelBtn) cancelBtn.onclick = async () => {
+                if(await showConfirm("确定取消退回？学员将恢复到正式判责阶段", '🔓')){
+                    student.stageProgress.returnFlag = false;
+                    student.stageProgress.consecutiveFailWeeks = 0;
+                    student.returnReason = null;
+                    student.stage = 4;
+                    saveToLocal();
+                    modalElement.remove();
+                    renderFrontend();
+                }
+            };
         }
-        
+
         if(!isReadOnly){
             const saveBtn = modalElement.querySelector('#saveModalBtn');
             if(saveBtn) saveBtn.onclick = ()=>{
@@ -908,14 +923,7 @@
                             method:'POST',
                             headers:{ 'apikey':'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InpmeHduaXhsdmR4YXdveWxoZ3hqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODIyMDEyNzIsImV4cCI6MjA5Nzc3NzI3Mn0.aPfO4Ry_LzoOColCVx64JQPF-BWga-_J2fX9hg-E4G8','Authorization':'Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InpmeHduaXhsdmR4YXdveWxoZ3hqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODIyMDEyNzIsImV4cCI6MjA5Nzc3NzI3Mn0.aPfO4Ry_LzoOColCVx64JQPF-BWga-_J2fX9hg-E4G8','Content-Type':'application/json','Prefer':'resolution=merge-duplicates' },
                             body:JSON.stringify([{ key:'trainee_full_admin_backup', value:_d, updated_at:new Date().toISOString() }])
-                        }).then(function(r){
-                            var s=document.getElementById('syncStatus');
-                            if(s) s.textContent=r.ok?'☁️ 已同步':'☁️ 同步失败';
-                            if(s) s.style.color=r.ok?'#27ae60':'#c0392b';
-                        }).catch(function(){
-                            var s=document.getElementById('syncStatus');
-                            if(s){ s.textContent='☁️ 同步失败'; s.style.color='#c0392b'; }
-                        });
+                        }).then(function(){ _updateSyncBadge(); }).catch(function(){ _updateSyncBadge(); });
                     } catch(e){}
                     renderFrontend();
                     modalElement.remove();
@@ -991,7 +999,8 @@
         let stu = students.find(s=>s.id===currentPanoramaStudentId)||filtered[0];
         if(stu) currentPanoramaStudentId = stu.id;
         let panoramaHtml = `<div class="panorama-card"><div class="panorama-header"><h3>🌟 新人全景成长看板</h3><select id="panoramaSelect"></select></div><div id="panoramaDetail"></div></div>`;
-        container.innerHTML = `<div style="display:flex;justify-content:space-between;align-items:center;"><div style="display:flex;gap:6px;align-items:center;">${cityHtml}</div><button id="frontendAdminBtn" style="background:linear-gradient(135deg,#1f3a6b,#2a5298);color:white;border:none;padding:8px 16px;border-radius:20px;cursor:pointer;font-size:0.85rem;box-shadow:0 2px 8px rgba(31,58,107,0.25);">⚙️ 管理</button></div>` + stagesHtml + archiveHtml + panoramaHtml;
+        let syncBadgeHtml = (()=>{var t=localStorage.getItem('trainee_data_sync_time');if(t){var d=new Date(t);var now=new Date();var diffMin=Math.floor((now-d)/60000);var diffStr=diffMin<1?'刚刚':(diffMin<60?diffMin+'分钟前':(diffMin<1440?Math.floor(diffMin/60)+'小时前':Math.floor(diffMin/1440)+'天前'));return `<span style="font-size:0.7rem;color:#27ae60;background:#e6f7e6;padding:4px 10px;border-radius:12px;white-space:nowrap;" title="上次同步: ${d.toLocaleString()}">☁️ 已同步 · ${diffStr}</span>`;}return '<span style="font-size:0.7rem;color:#f39c12;background:#fff8e1;padding:4px 10px;border-radius:12px;white-space:nowrap;">☁️ 未同步</span>';})();
+        container.innerHTML = `<div style="display:flex;justify-content:space-between;align-items:center;"><div style="display:flex;gap:6px;align-items:center;">${cityHtml}${syncBadgeHtml}</div><button id="frontendAdminBtn" style="background:linear-gradient(135deg,#1f3a6b,#2a5298);color:white;border:none;padding:8px 16px;border-radius:20px;cursor:pointer;font-size:0.85rem;box-shadow:0 2px 8px rgba(31,58,107,0.25);">⚙️ 管理</button></div>` + stagesHtml + archiveHtml + panoramaHtml;
         
         document.querySelectorAll('.student-item').forEach(el=>{
             el.addEventListener('click',(e)=>{
@@ -1936,6 +1945,7 @@
     function saveToLocal(){
         localStorage.setItem("trainee_full_admin_backup",JSON.stringify(students.map(s=>({...s,stageProgress:s.stageProgress,returnReason:s.returnReason,graduatedDate:s.graduatedDate}))));
         localStorage.setItem("trainee_data_version",DATA_VERSION);
+        localStorage.setItem("trainee_data_sync_time", new Date().toISOString());
     }
     function loadData(){ 
         const saved=localStorage.getItem("trainee_full_admin_backup"); 
@@ -19620,6 +19630,21 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
     let _syncQueue = {};
     let _syncTimer = null;
 
+    function _updateSyncBadge(){
+        var t = localStorage.getItem('trainee_data_sync_time');
+        var sidebarBadge = document.getElementById('sidebarSyncBadge');
+        if (t) {
+            var d = new Date(t), now = new Date();
+            var diffMin = Math.floor((now - d) / 60000);
+            var diffStr = diffMin < 1 ? '刚刚' : (diffMin < 60 ? diffMin + '分钟前' : (diffMin < 1440 ? Math.floor(diffMin / 60) + '小时前' : Math.floor(diffMin / 1440) + '天前'));
+            var text = '☁️ 已同步 · ' + diffStr;
+            if (sidebarBadge) { sidebarBadge.textContent = text; sidebarBadge.style.color = '#27ae60'; sidebarBadge.style.background = 'rgba(39,174,96,0.12)'; sidebarBadge.title = '上次同步: ' + d.toLocaleString() + '\n点击手动同步'; }
+        } else {
+            if (sidebarBadge) { sidebarBadge.textContent = '☁️ 未同步'; sidebarBadge.style.color = '#f39c12'; sidebarBadge.style.background = 'rgba(243,156,18,0.1)'; sidebarBadge.title = '点击手动同步'; }
+        }
+    }
+    _updateSyncBadge();
+
     function _syncFlush() {
         var keys = Object.keys(_syncQueue);
         if (keys.length === 0) return;
@@ -19629,7 +19654,7 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
             method: 'POST',
             headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY, 'Content-Type': 'application/json', 'Prefer': 'resolution=merge-duplicates' },
             body: JSON.stringify(batch)
-        }).then(function(){ var s=document.getElementById("syncStatus"); if(s){ s.textContent="☁️ 已同步"; s.style.color="#27ae60"; s.style.borderColor="rgba(39,174,96,0.3)"; } }).catch(function(){ var s=document.getElementById("syncStatus"); if(s){ s.textContent="☁️ 同步失败"; s.style.color="#c0392b"; s.style.borderColor="rgba(192,57,43,0.3)"; } });
+        }).then(function(){ _updateSyncBadge(); }).catch(function(){ _updateSyncBadge(); });
     }
 
     function _syncPushAll() {
@@ -19647,6 +19672,18 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
             body: JSON.stringify(batch)
         });
     }
+    // 侧边栏同步按钮点击事件
+    document.getElementById('sidebarSyncBadge').addEventListener('click', function(){
+        var badge = document.getElementById('sidebarSyncBadge');
+        if (badge) { badge.textContent = '☁️ 同步中…'; badge.style.color = '#4fc3f7'; }
+        _syncPushAll().then(function(){
+            localStorage.setItem('trainee_data_sync_time', new Date().toISOString());
+            _updateSyncBadge();
+        }).catch(function(){
+            var b = document.getElementById('sidebarSyncBadge');
+            if (b) { b.textContent = '☁️ 同步失败'; b.style.color = '#c0392b'; }
+        });
+    });
 
     function _syncSetItem(key, value) {
         _realLS.setItem(key, value);
@@ -19682,16 +19719,32 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
                             } catch(e) {}
                         }
                     }
-                    // 学员数据保护：本地学员数>=云端时不覆盖（防止云端旧数据冲掉新加的学员）
+                    // 学员数据：按更新时间比较，云端更新则覆盖本地，本地更新则推送到云端
                     if (row.key === 'trainee_full_admin_backup') {
                         var localStu = _realLS.getItem('trainee_full_admin_backup');
+                        var cloudTime = row.updated_at ? new Date(row.updated_at).getTime() : 0;
                         if (localStu) {
                             try {
-                                var localArr = JSON.parse(localStu);
-                                var cloudArr = JSON.parse(row.value);
-                                if (localArr.length >= cloudArr.length) return;
+                                // 比较两端时间，以最新为准
+                                var localTime = _realLS.getItem('trainee_data_sync_time');
+                                localTime = localTime ? new Date(localTime).getTime() : 0;
+                                if (localTime >= cloudTime) {
+                                    // 本地更新 → 推本地到云端
+                                    fetch(SUPABASE_URL + '/rest/v1/app_data', {
+                                        method: 'POST',
+                                        headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY, 'Content-Type': 'application/json', 'Prefer': 'resolution=merge-duplicates' },
+                                        body: JSON.stringify([{ key: 'trainee_full_admin_backup', value: localStu, updated_at: new Date().toISOString() }])
+                                    }).catch(function() {});
+                                    _realLS.setItem('trainee_data_sync_time', new Date().toISOString());
+                                    return;
+                                }
+                                // 云端更新 → 拉云端到本地
                             } catch(e) {}
                         }
+                        // 云端更新或无本地数据，用云端覆盖
+                        _realLS.setItem(row.key, row.value);
+                        _realLS.setItem('trainee_data_sync_time', row.updated_at || new Date().toISOString());
+                        return;
                     }
                     // 推送记录/考试历史：比较本地和云端，数据多的为准，少的同步到多的
                     var syncKeys = ['trainingPushRecords','learnPlanPushRecords','examHistoryData','reportedQuestions','reportedTraining','questionBankData'];
@@ -19729,7 +19782,7 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
                 });
             }
             return rows ? rows.length : 0;
-        }).then(function(n){ var s=document.getElementById("syncStatus"); if(s){ s.textContent="☁️ 已同步"; s.style.color="#27ae60"; s.style.borderColor="rgba(39,174,96,0.3)"; } return n || 0; }).catch(function(){ var s=document.getElementById("syncStatus"); if(s){ s.textContent="☁️ 拉取中"; s.style.color="#f39c12"; s.style.borderColor="rgba(243,156,18,0.3)"; } return 0; });
+        }).then(function(n){ _updateSyncBadge(); return n || 0; }).catch(function(){ _updateSyncBadge(); return 0; });
     }
 
     function _syncRemoveItem(key) {
@@ -20496,14 +20549,7 @@ updateAdminUI();
                     method:'POST',
                     headers:{ 'apikey':key,'Authorization':'Bearer '+key,'Content-Type':'application/json','Prefer':'resolution=merge-duplicates' },
                     body:JSON.stringify([{ key:'trainee_full_admin_backup', value:data, updated_at:new Date().toISOString() }])
-                }).then(function(r){
-                    var s = document.getElementById('syncStatus');
-                    if(s) s.textContent = r.ok ? '☁️ 已同步' : '☁️ 同步失败';
-                    if(s) s.style.color = r.ok ? '#27ae60' : '#c0392b';
-                }).catch(function(){
-                    var s = document.getElementById('syncStatus');
-                    if(s){ s.textContent='☁️ 同步失败'; s.style.color='#c0392b'; }
-                });
+                }).then(function(){ _updateSyncBadge(); }).catch(function(){ _updateSyncBadge(); });
             })();
             editOverlay.remove();
             if (parentOverlay) parentOverlay.remove();
