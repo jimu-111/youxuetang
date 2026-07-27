@@ -635,8 +635,11 @@
                 let t = WEEK_TARGETS[Math.min(i-1, WEEK_TARGETS.length-1)];
                 let eff = s.stageProgress.weeklyEff?.[i] ?? (i===s.stageProgress.formalWeek ? s.stageProgress.currentEfficiency : (i<s.stageProgress.formalWeek ? (s.stageProgress.historicalEff?.[i] ?? 0) : null));
                 let mis = s.stageProgress.weeklyMis?.[i] ?? (i===s.stageProgress.formalWeek ? s.stageProgress.currentMistakes : (i<s.stageProgress.formalWeek ? (s.stageProgress.historicalMis?.[i] ?? 0) : null));
-                let met = (eff !== null && mis !== null && eff >= t.minEff && mis <= t.maxError);
-                rows.push({week:i, standardEff:`≥${t.minEff}`, standardErr:`≤${t.maxError}`, effValue: eff, misValue: mis, passed: met});
+                let isCurrent = (i === s.stageProgress.formalWeek);
+                let isFuture = (i > s.stageProgress.formalWeek);
+                let met = (!isCurrent && !isFuture && eff !== null && mis !== null && eff >= t.minEff && mis <= t.maxError);
+                let status = isCurrent ? 'current' : (isFuture ? 'future' : (met ? 'pass' : 'fail'));
+                rows.push({week:i, standardEff:`≥${t.minEff}`, standardErr:`≤${t.maxError}`, effValue: eff, misValue: mis, status: status, isCurrent: isCurrent});
             }
             return rows;
         }, checkCompletion:s=>s.stageProgress.graduatedFormal===true, getScore:s=>{ if(s.stageProgress.graduatedFormal) return 100; let total=0, count=0; for(let i=1;i<=6;i++){ let eff=s.stageProgress.weeklyEff?.[i]??(i===s.stageProgress.formalWeek?s.stageProgress.currentEfficiency:null); let mis=s.stageProgress.weeklyMis?.[i]??(i===s.stageProgress.formalWeek?s.stageProgress.currentMistakes:null); if(eff!==null && mis!==null){ let effScore=Math.min(100, (eff/WEEK_TARGETS[i-1].minEff)*50); let misScore=Math.max(0, 50-(mis/WEEK_TARGETS[i-1].maxError)*50); total+=Math.min(100, effScore+misScore); count++; } } return count>0?Math.round(total/count):0; }
@@ -697,7 +700,7 @@
                 if(s.stageProgress.consecutiveFailWeeks>=2){ s.stage=3; s.stageProgress.returnFlag=true; s.returnReason="连续两周未达标，退回模拟判责"; s.stageProgress.mockPassed=false; s.stageProgress.fullCheckPassed=true; s.stageProgress.consecutiveFailWeeks=0; s.stageProgress.formalWeek=1; s.stageProgress.currentEfficiency=0; s.stageProgress.currentMistakes=0; return; }
             }
             if(wk >= maxWeek && s.stageProgress.currentEfficiency>=WEEK_TARGETS[maxWeek-1]?.minEff && s.stageProgress.currentMistakes<=WEEK_TARGETS[maxWeek-1]?.maxError) s.stageProgress.graduatedFormal=true;
-            else if(wk < maxWeek && s.stageProgress.currentEfficiency>=WEEK_TARGETS[wk-1]?.minEff && s.stageProgress.currentMistakes<=WEEK_TARGETS[wk-1]?.maxError && wk < maxWeek) s.stageProgress.formalWeek++;
+            else if(wk < maxWeek && s.stageProgress.currentEfficiency>=WEEK_TARGETS[wk-1]?.minEff && s.stageProgress.currentMistakes<=WEEK_TARGETS[wk-1]?.maxError && wk < maxWeek) { s.stageProgress.formalWeek++; s.stageProgress.currentEfficiency=null; s.stageProgress.currentMistakes=null; }
         }
         if(s.checkAllStagesComplete() && !s.graduatedToArchive){ s.graduatedToArchive=true; s.graduatedDate=new Date().toISOString().slice(0,10); }
     }
@@ -793,12 +796,15 @@
         } else if(stageId===4){
             const rows=stage.getRows(student);
             rows.forEach(row=>{
-                let effDisplay=(row.effValue===null||row.effValue===undefined)?'未进行':row.effValue;
-                let misDisplay=(row.misValue===null||row.misValue===undefined)?'未进行':row.misValue;
-                tableHtml+=`<tr><td style="text-align:center;">第${row.week}周</div><td>${row.standardEff}</div><td>${row.standardErr}</div>
-                        <td>${isReadOnly?effDisplay:`<input type="number" class="edit-eff" data-week="${row.week}" value="${row.effValue!==null?row.effValue:''}" placeholder="未进行" style="width:70px;">`}</div>
-                        <td>${isReadOnly?misDisplay:`<input type="number" class="edit-mis" data-week="${row.week}" value="${row.misValue!==null?row.misValue:''}" placeholder="未进行" style="width:70px;">`}</div>
-                        <td>${row.passed?'✅达标':'❌未达标'}</div>
+                let naText = row.isCurrent ? '进行中' : '';
+                let effDisplay=(row.effValue===null||row.effValue===undefined)?naText:row.effValue;
+                let misDisplay=(row.misValue===null||row.misValue===undefined)?naText:row.misValue;
+                var bg = row.status==='pass'?'background:#e6f7e6;':(row.status==='current'?'background:#fffbe6;':'');
+                var statusText = row.status==='pass'?'✅达标':(row.status==='current'?'🔄进行中':(row.status==='future'?'':'❌未达标'));
+                tableHtml+=`<tr style="${bg}"><td style="text-align:center;">第${row.week}周</div><td>${row.standardEff}</div><td>${row.standardErr}</div>
+                        <td>${isReadOnly?effDisplay:`<input type="number" class="edit-eff" data-week="${row.week}" value="${row.effValue!==null?row.effValue:''}" placeholder="${naText}" style="width:70px;">`}</div>
+                        <td>${isReadOnly?misDisplay:`<input type="number" class="edit-mis" data-week="${row.week}" value="${row.misValue!==null?row.misValue:''}" placeholder="${naText}" style="width:70px;">`}</div>
+                        <td>${statusText}</div>
                   <tr>`;
             });
             if(!isReadOnly && student.stage===4 && !student.stageProgress.graduatedFormal){
@@ -4728,7 +4734,10 @@
                 const topIssueText = cat.topIssue ? `📌 ${cat.topIssue.text} (${cat.topIssue.count}次)` : '—';
                 const pct = cat.percentage.toFixed(2);
                 const barW = cat.percentage;
-                catTableRows += `<tr><td style="text-align:left;">🏷️ ${escapeHtml(cat.name)}</td><td>${cat.count}</td><td>${pct}%<div style="background:#e2e8f0;border-radius:4px;height:6px;margin-top:2px;"><div style="background:linear-gradient(90deg,#667eea,#764ba2);height:100%;border-radius:4px;width:${barW}%;"></div></div></td><td style="text-align:left;font-size:0.85rem;">${topIssueText}</td></tr>`;
+                var cbg = '';
+                if (cat.name === '低级/投诉失误' || cat.name === '低级失误' || cat.name === '投诉失误') cbg = ' style="background:#f5c6cb;"';
+                else if (cat.name === '明显失误' || cat.name === '扣错项·明显失误') cbg = ' style="background:#fde8e8;"';
+                catTableRows += `<tr${cbg}><td style="text-align:left;">🏷️ ${escapeHtml(cat.name)}</td><td>${cat.count}</td><td>${pct}%<div style="background:#e2e8f0;border-radius:4px;height:6px;margin-top:2px;"><div style="background:linear-gradient(90deg,#667eea,#764ba2);height:100%;border-radius:4px;width:${barW}%;"></div></div></td><td style="text-align:left;font-size:0.85rem;">${topIssueText}</td></tr>`;
             });
         }
         const categoryTable = `<table><thead><tr><th>失误类别</th><th>个数</th><th>占比</th><th>频发问题点</th></tr></thead><tbody>${catTableRows}</tbody></table>`;
@@ -5263,7 +5272,10 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
             const isMerged = cat.name === "扣错项·明显失误";
             const displayName = isMerged ? `🔴 ${cat.name}` : `🏷️ ${cat.name}`;
             const topIssueText = cat.topIssue ? `<span class="clickable-issue" data-category="${escapeHtml(cat.name)}" data-issues='${JSON.stringify(cat.topIssue.allIssues)}' style="cursor:pointer;color:#2a5298;text-decoration:underline;">📌 ${cat.topIssue.text} (${cat.topIssue.count}次)</span>` : '—';
-            categoryRows += `<tr><td style="text-align:center;"><span class="clickable-category" data-category-name="${escapeHtml(cat.name)}" data-issues='${JSON.stringify(cat.topIssue?.allIssues || {})}'>${displayName}</span></td><td style="text-align:center;">${renderRankedValue(cat.count, catCountMin, catCountMax)}</td><td style="text-align:center;">${renderPercentBar(cat.percentage, catPctMin3, catPctMax3)}</td><td style="text-align:center;">${topIssueText}</td></tr>`;
+            var rowBg = '';
+            if (cat.name === '低级/投诉失误' || cat.name === '低级失误' || cat.name === '投诉失误') rowBg = 'background:#f5c6cb;';
+            else if (cat.name === '明显失误' || cat.name === '扣错项·明显失误') rowBg = 'background:#fde8e8;';
+            categoryRows += `<tr style="${rowBg}"><td style="text-align:center;"><span class="clickable-category" data-category-name="${escapeHtml(cat.name)}" data-issues='${JSON.stringify(cat.topIssue?.allIssues || {})}'>${displayName}</span></td><td style="text-align:center;">${renderRankedValue(cat.count, catCountMin, catCountMax)}</td><td style="text-align:center;">${renderPercentBar(cat.percentage, catPctMin3, catPctMax3)}</td><td style="text-align:center;">${topIssueText}</td></tr>`;
         });
         
         const reviewerStats = {};
@@ -15062,7 +15074,10 @@ async function importQBFromFeishu() {
             var rows = pageData.length === 0 ? '<tr><td colspan="5" style="padding:20px;color:#94a3b8;">暂无记录</td></tr>' :
                 pageData.map(function(e) {
                     var srcTag = e.source === '初审' ? 'cs' : (e.source === '抽检' ? 'cj' : 'qa');
-                    return '<tr><td style="text-align:center;">' + formatShortDate(e.date) + '</td><td style="text-align:center;"><span class="source-tag ' + srcTag + '">' + e.source + '</span></td><td style="text-align:center;">' + escapeHtml(e.reviewer) + ' (' + escapeHtml(e.site) + ')</td><td style="text-align:center;max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="' + escapeHtml(e.note) + '">' + truncateText(e.note, 35) + '</td><td style="text-align:center;font-size:0.7rem;">' + escapeHtml(e.qcCode) + '</td></tr>';
+                    var rbg = '';
+                    if (e.category === '低级/投诉失误' || e.category === '低级失误' || e.category === '投诉失误') rbg = ' style="background:#f5c6cb;"';
+                    else if (e.category === '明显失误' || e.category === '扣错项·明显失误') rbg = ' style="background:#fde8e8;"';
+                    return '<tr' + rbg + '><td style="text-align:center;">' + formatShortDate(e.date) + '</td><td style="text-align:center;"><span class="source-tag ' + srcTag + '">' + e.source + '</span></td><td style="text-align:center;">' + escapeHtml(e.reviewer) + ' (' + escapeHtml(e.site) + ')</td><td style="text-align:center;max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="' + escapeHtml(e.note) + '">' + truncateText(e.note, 35) + '</td><td style="text-align:center;font-size:0.7rem;">' + escapeHtml(e.qcCode) + '</td></tr>';
                 }).join('');
             var pag = totalPages > 1 ? '<div class="pagination"><button ' + (pg <= 1 ? 'disabled' : '') + ' onclick="window._popupGoPage(' + (pg - 1) + ')">上一页</button><span>' + pg + '/' + totalPages + '</span><button ' + (pg >= totalPages ? 'disabled' : '') + ' onclick="window._popupGoPage(' + (pg + 1) + ')">下一页</button></div>' : '';
             return '<table class="error-table" style="width:100%;"><thead><tr><th>日期</th><th>来源</th><th>初审人（站点）</th><th>失误备注</th><th>质检码</th></tr></thead><tbody>' + rows + '</tbody></table>' + pag;
@@ -15297,6 +15312,9 @@ async function importQBFromFeishu() {
                     noteRowCount++;
                     if (!showAllNotes && noteRowCount > 20) return;
                     var row = [];
+                    var rBg = '';
+                    if (cg.cat === '低级/投诉失误' || cg.cat === '低级失误' || cg.cat === '投诉失误') rBg = ' style="background:#f5c6cb;"';
+                    else if (cg.cat === '明显失误' || cg.cat === '扣错项·明显失误') rBg = ' style="background:#fde8e8;"';
                     if (di === 0) {
                         row.push('<td rowspan="' + rowspan + '" style="text-align:center;vertical-align:middle;">' + escapeHtml(cg.cat) + '</td>');
                         row.push('<td rowspan="' + rowspan + '" style="text-align:center;vertical-align:middle;">' + cg.total + '</td>');
@@ -15304,7 +15322,7 @@ async function importQBFromFeishu() {
                     }
                     row.push('<td style="text-align:center;">' + escapeHtml(d.note) + (d.count > 1 ? ' <b style="color:#c0392b;">×' + d.count + '</b>' : '') + '</td>');
                     row.push('<td style="text-align:center;font-size:0.7rem;">' + d.qcCodes.join(', ') + '</td>');
-                    rows_arr.push('<tr>' + row.join('') + '</tr>');
+                    rows_arr.push('<tr' + rBg + '>' + row.join('') + '</tr>');
                 });
             });
             var html = '<table class="error-table" style="width:100%;table-layout:fixed;"><thead><tr><th style="width:18%;">失误类别</th><th style="width:8%;">个数</th><th style="width:18%;">占比</th><th style="width:40%;">失误详细</th><th style="width:16%;">质检码</th></tr></thead><tbody>';
@@ -15502,6 +15520,9 @@ async function importQBFromFeishu() {
                     noteRowCount++;
                     if (noteRowCount > 20) return;
                     var row = [];
+                    var rBg2 = '';
+                    if (cg2.cat === '低级/投诉失误' || cg2.cat === '低级失误' || cg2.cat === '投诉失误') rBg2 = ' style="background:#f5c6cb;"';
+                    else if (cg2.cat === '明显失误' || cg2.cat === '扣错项·明显失误') rBg2 = ' style="background:#fde8e8;"';
                     if (di === 0) {
                         row.push('<td rowspan=\"'+details.length+'\" style=\"text-align:center;vertical-align:middle;\">'+escapeHtml(cg2.cat)+'</td>');
                         row.push('<td rowspan=\"'+details.length+'\" style=\"text-align:center;vertical-align:middle;\">'+cg2.total+'</td>');
@@ -15509,7 +15530,7 @@ async function importQBFromFeishu() {
                     }
                     row.push('<td style=\"text-align:center;\">'+escapeHtml(d.note)+(d.count>1?' <b style=\"color:#c0392b;\">&times;'+d.count+'</b>':'')+'</td>');
                     row.push('<td style=\"text-align:center;font-size:0.7rem;\">'+d.qcCodes.join(', ')+'</td>');
-                    rows_arr.push('<tr>'+row.join('')+'</tr>');
+                    rows_arr.push('<tr'+rBg2+'>'+row.join('')+'</tr>');
                 });
             });
             var html = '<table class=\"error-table\" style=\"width:100%;table-layout:fixed;\"><thead><tr><th style=\"width:18%;\">失误类别</th><th style=\"width:8%;\">个数</th><th style=\"width:18%;\">占比</th><th style=\"width:40%;\">失误详细</th><th style=\"width:16%;\">质检码</th></tr></thead><tbody>';
@@ -16198,7 +16219,10 @@ async function importQBFromFeishu() {
             for (var ri = start; ri < end; ri++) {
                 var e = filtered[ri];
                 var srcTag = e.source === '初审' ? 'cs' : (e.source === '抽检' ? 'cj' : 'qa');
-                html += '<tr><td>' + e.dateStr + '</td><td><span class="site-tag ' + ({'深圳':'sz','青岛':'qd','成都':'cd'}[e.site]||'') + '">' + escapeHtml(e.site) + '</span></td><td><span class="product-tag" style="' + getProductStyle(e.product) + '">' + escapeHtml(e.product || '-') + '</span></td><td><span class="source-tag ' + srcTag + '">' + e.source + '</span></td><td>' + escapeHtml(e.category) + '</td><td>' + escapeHtml(e.reviewer) + '</td><td style="max-width:300px;font-size:0.78rem;">' + escapeHtml(e.note) + '</td><td style="font-size:0.7rem;">' + escapeHtml(e.qcCode) + '</td></tr>';
+                var rbg = '';
+                if (e.category === '低级/投诉失误' || e.category === '低级失误' || e.category === '投诉失误') rbg = ' style="background:#f5c6cb;"';
+                else if (e.category === '明显失误' || e.category === '扣错项·明显失误') rbg = ' style="background:#fde8e8;"';
+                html += '<tr' + rbg + '><td>' + e.dateStr + '</td><td><span class="site-tag ' + ({'深圳':'sz','青岛':'qd','成都':'cd'}[e.site]||'') + '">' + escapeHtml(e.site) + '</span></td><td><span class="product-tag" style="' + getProductStyle(e.product) + '">' + escapeHtml(e.product || '-') + '</span></td><td><span class="source-tag ' + srcTag + '">' + e.source + '</span></td><td>' + escapeHtml(e.category) + '</td><td>' + escapeHtml(e.reviewer) + '</td><td style="max-width:300px;font-size:0.78rem;">' + escapeHtml(e.note) + '</td><td style="font-size:0.7rem;">' + escapeHtml(e.qcCode) + '</td></tr>';
             }
             if (!html) html = '<tr><td colspan="8" style="padding:30px;color:#94a3b8;">暂无匹配的失误记录</td></tr>';
             tbody.innerHTML = html;
@@ -16971,7 +16995,10 @@ async function importQBFromFeishu() {
         } else {
             pageData.forEach(function(e) {
                 var srcTag = e.source === '初审' ? 'cs' : (e.source === '抽检' ? 'cj' : 'qa');
-                tableRows += '<tr><td>' + e.dateStr + '</td><td>' + '<span class="site-tag ' + ({'深圳':'sz','青岛':'qd','成都':'cd'}[e.site]||'') + '">' + escapeHtml(e.site) + '</span></td><td>' + '' + '<span class="product-tag" style="' + getProductStyle(e.product) + '">' + escapeHtml(e.product || '-') + '</span></td><td><span class="source-tag ' + srcTag + '">' + e.source + '</span></td><td>' + escapeHtml(e.category) + '</td><td>' + escapeHtml(e.reviewer) + '</td><td style="text-align:center;max-width:300px;font-size:0.78rem;">' + escapeHtml(e.note) + '</td><td style="font-size:0.7rem;">' + escapeHtml(e.qcCode) + '</td></tr>';
+                var rbg = '';
+                if (e.category === '低级/投诉失误' || e.category === '低级失误' || e.category === '投诉失误') rbg = ' style="background:#f5c6cb;"';
+                else if (e.category === '明显失误' || e.category === '扣错项·明显失误') rbg = ' style="background:#fde8e8;"';
+                tableRows += '<tr' + rbg + '><td>' + e.dateStr + '</td><td>' + '<span class="site-tag ' + ({'深圳':'sz','青岛':'qd','成都':'cd'}[e.site]||'') + '">' + escapeHtml(e.site) + '</span></td><td>' + '' + '<span class="product-tag" style="' + getProductStyle(e.product) + '">' + escapeHtml(e.product || '-') + '</span></td><td><span class="source-tag ' + srcTag + '">' + e.source + '</span></td><td>' + escapeHtml(e.category) + '</td><td>' + escapeHtml(e.reviewer) + '</td><td style="text-align:center;max-width:300px;font-size:0.78rem;">' + escapeHtml(e.note) + '</td><td style="font-size:0.7rem;">' + escapeHtml(e.qcCode) + '</td></tr>';
             });
         }
 
@@ -17337,7 +17364,10 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
                     var pgRows = '';
                     pgData.forEach(function(e) {
                         var srcTag = e.source === '初审' ? 'cs' : (e.source === '抽检' ? 'cj' : 'qa');
-                        pgRows += '<tr><td>' + e.dateStr + '</td><td>' + '<span class="site-tag ' + ({'深圳':'sz','青岛':'qd','成都':'cd'}[e.site]||'') + '">' + escapeHtml(e.site) + '</span></td><td>' + '' + '<span class="product-tag" style="' + getProductStyle(e.product) + '">' + escapeHtml(e.product || '-') + '</span></td><td><span class="source-tag ' + srcTag + '">' + e.source + '</span></td><td>' + escapeHtml(e.category) + '</td><td>' + escapeHtml(e.reviewer) + '</td><td style="text-align:center;max-width:300px;font-size:0.78rem;">' + escapeHtml(e.note) + '</td><td style="font-size:0.7rem;">' + escapeHtml(e.qcCode) + '</td></tr>';
+                        var rbg3 = '';
+                        if (e.category === '低级/投诉失误' || e.category === '低级失误' || e.category === '投诉失误') rbg3 = ' style="background:#f5c6cb;"';
+                        else if (e.category === '明显失误' || e.category === '扣错项·明显失误') rbg3 = ' style="background:#fde8e8;"';
+                        pgRows += '<tr' + rbg3 + '><td>' + e.dateStr + '</td><td>' + '<span class="site-tag ' + ({'深圳':'sz','青岛':'qd','成都':'cd'}[e.site]||'') + '">' + escapeHtml(e.site) + '</span></td><td>' + '' + '<span class="product-tag" style="' + getProductStyle(e.product) + '">' + escapeHtml(e.product || '-') + '</span></td><td><span class="source-tag ' + srcTag + '">' + e.source + '</span></td><td>' + escapeHtml(e.category) + '</td><td>' + escapeHtml(e.reviewer) + '</td><td style="text-align:center;max-width:300px;font-size:0.78rem;">' + escapeHtml(e.note) + '</td><td style="font-size:0.7rem;">' + escapeHtml(e.qcCode) + '</td></tr>';
                     });
                     var pgHtml = '<div class="pagination"><button ' + (pg <= 1 ? 'disabled' : '') + ' onclick="window._tablePage=' + (pg - 1) + ';_refreshErrorTableBody()">上一页</button><span style="font-size:0.8rem;">' + pg + '/' + totalPages + '（共' + totalFiltered + '条）</span><button ' + (pg >= totalPages ? 'disabled' : '') + ' onclick="window._tablePage=' + (pg + 1) + ';_refreshErrorTableBody()">下一页</button></div>';
                     tableBlock = '<div style="flex:1;overflow:auto;min-height:0;"><div class="error-table-wrapper"><table class="error-table"><thead><tr><th>日期</th><th>站点</th><th>品类</th><th>来源</th><th>失误类别</th><th>初审人</th><th>失误备注</th><th>质检码</th></tr></thead><tbody>' + pgRows + '</tbody></table>' + pgHtml + '</div></div>';
