@@ -492,7 +492,7 @@
                 '<div class="custom-dialog-icon">🔑</div>' +
                 '<div class="custom-dialog-msg" style="font-weight:700;">找回管理员密码</div>' +
                 '<p style="font-size:0.78rem;color:#5e6f8d;margin-bottom:10px;">请输入找回密钥</p>' +
-                '<input id="recoveryInput" type="password" placeholder="找回密钥" style="width:100%;padding:10px 14px;border:1px solid #cbd5e1;border-radius:10px;font-size:0.9rem;margin-bottom:8px;text-align:center;">' +
+                '<input id="recoveryInput" type="password" placeholder="找回密钥" onkeydown="if(event.key===\'Enter\')this.parentElement.querySelector(\'.dialog-ok-btn\').click()" style="width:100%;padding:10px 14px;border:1px solid #cbd5e1;border-radius:10px;font-size:0.9rem;margin-bottom:8px;text-align:center;">' +
                 '<div id="recoveryMsg" style="color:#c0392b;font-size:0.75rem;margin-bottom:8px;display:none;"></div>' +
                 '<div id="recoveryResult" style="display:none;background:#f0fdf4;border-radius:10px;padding:12px;margin-bottom:10px;">' +
                     '<div style="font-weight:600;color:#166534;margin-bottom:4px;">✅ 管理员凭据：</div>' +
@@ -528,8 +528,8 @@
             ov.innerHTML = '<div class="custom-dialog-card" style="max-width:380px;">' +
                 '<div class="custom-dialog-icon">🔐</div>' +
                 '<div class="custom-dialog-msg" style="font-weight:700;font-size:1rem;">管理员登录</div>' +
-                '<input id="loginUserInput" type="text" placeholder="账号" style="width:100%;padding:10px 14px;border:1px solid #cbd5e1;border-radius:10px;font-size:0.9rem;margin-bottom:8px;text-align:center;">' +
-                '<input id="loginPassInput" type="password" placeholder="密码" style="width:100%;padding:10px 14px;border:1px solid #cbd5e1;border-radius:10px;font-size:0.9rem;margin-bottom:12px;text-align:center;">' +
+                '<input id="loginUserInput" type="text" placeholder="账号" onkeydown="if(event.key===\'Enter\')this.parentElement.querySelector(\'.dialog-ok-btn\').click()" style="width:100%;padding:10px 14px;border:1px solid #cbd5e1;border-radius:10px;font-size:0.9rem;margin-bottom:8px;text-align:center;">' +
+                '<input id="loginPassInput" type="password" placeholder="密码" onkeydown="if(event.key===\'Enter\')this.parentElement.querySelector(\'.dialog-ok-btn\').click()" style="width:100%;padding:10px 14px;border:1px solid #cbd5e1;border-radius:10px;font-size:0.9rem;margin-bottom:12px;text-align:center;">' +
                 '<div id="loginMsg" style="color:#c0392b;font-size:0.75rem;margin-bottom:6px;display:none;"></div>' +
                 '<div style="font-size:0.7rem;color:#94a3b8;margin-bottom:12px;"><span id="forgotPwdLink" style="color:#2a5298;cursor:pointer;text-decoration:underline;">忘记密码？</span></div>' +
                 '<div class="custom-dialog-btns"><button class="custom-dialog-btn cancel dialog-cancel-btn">取消</button><button class="custom-dialog-btn primary dialog-ok-btn">登录</button></div></div>';
@@ -565,7 +565,7 @@
             ov.innerHTML = '<div class="custom-dialog-card" style="max-width:380px;">' +
                 '<div class="custom-dialog-icon">🔒</div>' +
                 '<div class="custom-dialog-msg">' + msg.replace(/\n/g, '<br>') + '</div>' +
-                '<input id="promptInput" type="' + (type === 'password' ? 'password' : 'text') + '" style="width:100%;padding:10px 14px;border:1px solid #cbd5e1;border-radius:10px;font-size:0.9rem;margin-bottom:16px;text-align:center;">' +
+                '<input id="promptInput" type="' + (type === 'password' ? 'password' : 'text') + '" onkeydown="if(event.key===\'Enter\')this.parentElement.querySelector(\'.dialog-ok-btn\').click()" style="width:100%;padding:10px 14px;border:1px solid #cbd5e1;border-radius:10px;font-size:0.9rem;margin-bottom:16px;text-align:center;">' +
                 '<div class="custom-dialog-btns"><button class="custom-dialog-btn cancel dialog-cancel-btn">取消</button><button class="custom-dialog-btn primary dialog-ok-btn">确定</button></div></div>';
             document.body.appendChild(ov);
             ov.querySelector('.dialog-ok-btn').onclick = function() { var v = document.getElementById('promptInput').value; ov.remove(); resolve(v); };
@@ -707,7 +707,7 @@
 
     function getFilteredStudents(){ return currentCity==="all"?students:students.filter(s=>s.site===currentCity); }
     function downloadFile(fileData, fileName) { const link = document.createElement('a'); link.href = fileData; link.download = fileName; link.click(); }
-    function verifyAdminPassword(callback){ const pwd = prompt("请输入管理员密码进行修改："); if(pwd === ADMIN_PASSWORD) { callback(); } else if(pwd !== null) { alert("密码错误，修改失败！"); } }
+    function verifyAdminPassword(callback){ showPrompt("请输入管理员密码进行修改：", 'password').then(function(pwd){ if(pwd === ADMIN_PASSWORD) { callback(); } else if(pwd !== null) { showAlert("密码错误，修改失败！", '❌'); } }); }
 
     function generateStageIssues(student, stageId) {
         if(stageId===0){
@@ -913,6 +913,19 @@
                         effInputs.forEach(inp=>{let w=parseInt(inp.dataset.week),v=parseInt(inp.value);if(!isNaN(v))student.stageProgress.weeklyEff[w]=v;if(w===student.stageProgress.formalWeek)student.stageProgress.currentEfficiency=v;});
                         misInputs.forEach(inp=>{let w=parseInt(inp.dataset.week),v=parseInt(inp.value);if(!isNaN(v))student.stageProgress.weeklyMis[w]=v;if(w===student.stageProgress.formalWeek)student.stageProgress.currentMistakes=v;});
                     }
+                    // 同时保存链接（实操全检/模拟判责）
+                    if(stageId===2 || stageId===3){
+                        var linkInputs = modalElement.querySelectorAll('.link-input');
+                        linkInputs.forEach(function(inp){
+                            var attemptIdx = parseInt(inp.dataset.attempt);
+                            var url = inp.value.trim();
+                            if(url && (url.startsWith('http://')||url.startsWith('https://'))){
+                                var fileObj = {name:url.length>30?url.substring(0,30)+'…':url, url:url, type:'link'};
+                                if(stageId===2) student.stageProgress.fullCheckFiles[attemptIdx] = fileObj;
+                                else student.stageProgress.mockFiles[attemptIdx] = fileObj;
+                            }
+                        });
+                    }
                     tryAdvanceStudent(student);
                     if(student.graduatedToArchive&&student.stage!==4)student.graduatedToArchive=true;
                     saveToLocal();
@@ -1086,9 +1099,10 @@
         }
         // 新人进度右上角管理按钮
         document.getElementById('frontendAdminBtn')?.addEventListener('click',()=>{
-            const pwd = prompt('请输入管理密码：');
-            if(pwd !== ADMIN_PASSWORD) { if(pwd !== null) alert('密码错误！'); return; }
-            showFrontendAdminModal();
+            showPrompt('请输入管理密码：', 'password').then(function(pwd){
+                if(pwd !== ADMIN_PASSWORD) { if(pwd !== null) showAlert('密码错误！', '❌'); return; }
+                showFrontendAdminModal();
+            });
         });
     }
 
@@ -10357,7 +10371,7 @@ URL.revokeObjectURL(url);
     }
 
     // 处理上传后的去重合并
-    function processUploadedQuestions(qb, newQuestions, onSuccess) {
+    async function processUploadedQuestions(qb, newQuestions, onSuccess) {
         const existing = qb.questions || [];
         const { unique, duplicates } = findDuplicates(newQuestions, existing);
 
@@ -10370,15 +10384,12 @@ URL.revokeObjectURL(url);
             ).join('\n');
             const moreMsg = duplicates.length > 10 ? '\n... 及其他 ' + (duplicates.length - 10) + ' 道重复题' : '';
 
-            const choice = prompt(
+            const choice = (await showPrompt(
                 '⚠️ 发现 ' + duplicates.length + ' 道重复题目：\n\n' +
                 dupList + moreMsg +
-                '\n\n请选择处理方式：' +
-                '\n  输入 1 = 覆盖旧题（用新数据替换）' +
-                '\n  输入 2 = 跳过重复（保留旧题，默认）' +
-                '\n  输入 3 = 保留全部（新旧都保留）',
-                '2'
-            );
+                '\n\n请选择处理方式：\n  1 = 覆盖旧题\n  2 = 跳过重复（默认）\n  3 = 保留全部',
+                'text'
+            )) || '2';
 
             if (choice === '1') {
                 duplicates.forEach(d => {
@@ -10422,7 +10433,7 @@ URL.revokeObjectURL(url);
         if (total === 0) { alert('题库已为空，无需清空'); return; }
         if (!await showConfirm('⚠️ 确定要清空全部题库吗？\n\n当前共有 ' + total + ' 道题目、' + Object.keys(qb.categories).length + ' 个分类。\n\n此操作不可撤销！', '🗑️', true)) return;
         if (!await showConfirm('⚠️ 再次确认：所有题目和分类数据将被永久删除！', '🗑️', true)) return;
-        const pwd = prompt('🔐 请输入管理密码以确认清空操作：');
+        const pwd = await showPrompt('🔐 请输入管理密码以确认清空操作：', 'password');
         if (pwd === null) return;
         if (pwd !== ADMIN_PASSWORD) { alert('❌ 密码错误，操作已取消'); return; }
         // 执行清空
@@ -10664,7 +10675,7 @@ async function importQBFromFeishu() {
         if (count === 0) { alert('该分类下无题目'); return; }
         if (!await showConfirm('⚠️ 确定清空分类「' + catName + '」下的全部 ' + count + ' 道题目吗？\n\n此操作不可撤销！', '🗑️', true)) return;
         if (!await showConfirm('⚠️ 再次确认：此操作将永久删除该分类下的所有题目！', '🗑️', true)) return;
-        const pwd = prompt('🔐 请输入管理密码以确认操作：');
+        const pwd = await showPrompt('🔐 请输入管理密码以确认操作：', 'password');
         if (pwd === null) return;
         if (pwd !== ADMIN_PASSWORD) { alert('❌ 密码错误，操作已取消'); return; }
         qb.questions = (qb.questions || []).filter(q => q.category !== catName);
@@ -16070,7 +16081,7 @@ async function importQBFromFeishu() {
                         e.stopPropagation();
                         if (btn.dataset.reported === '1') return;
                         var reason = prompt('请简要描述案例问题（可选）：', '');
-                        if (reason === null) return;
+                        if (!reason) return;
                         // 用 qcCode 作为 ID
                         var qcMatch = text.match(/🔖\s*([^\s|]+)/);
                         var id = qcMatch ? qcMatch[1] : ('report_' + Date.now());
@@ -19759,29 +19770,39 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
                             } catch(e) {}
                         }
                     }
-                    // 学员数据：按时间戳同步，哪边新用哪边
+                    // 学员数据：时间戳同步，老数据无时间戳时推本地到云端兜底
                     if (row.key === 'trainee_full_admin_backup') {
                         var localStu = _realLS.getItem('trainee_full_admin_backup');
+                        if (!localStu) return; // 本地无数据，不拉云端（等首保存）
                         var cloudTime = row.updated_at ? new Date(row.updated_at).getTime() : 0;
-                        if (localStu) {
-                            var localTime = _realLS.getItem('trainee_data_sync_time');
-                            localTime = localTime ? new Date(localTime).getTime() : 0;
-                            if (!localTime && !cloudTime) return; // 都没时间戳，不动
-                            if (localTime >= cloudTime) {
-                                // 本地更新 → 推本地到云端
-                                fetch(SUPABASE_URL + '/rest/v1/app_data', {
-                                    method: 'POST',
-                                    headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY, 'Content-Type': 'application/json', 'Prefer': 'resolution=merge-duplicates' },
-                                    body: JSON.stringify([{ key: 'trainee_full_admin_backup', value: localStu, updated_at: new Date().toISOString() }])
-                                }).catch(function() {});
-                                _realLS.setItem('trainee_data_sync_time', new Date().toISOString());
-                                return;
-                            }
+                        var localTime = _realLS.getItem('trainee_data_sync_time');
+                        localTime = localTime ? new Date(localTime).getTime() : 0;
+                        // 本地无时间戳 → 推本地到云端（初始化）
+                        if (!localTime) {
+                            fetch(SUPABASE_URL + '/rest/v1/app_data', {
+                                method: 'POST',
+                                headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY, 'Content-Type': 'application/json', 'Prefer': 'resolution=merge-duplicates' },
+                                body: JSON.stringify([{ key: 'trainee_full_admin_backup', value: localStu, updated_at: new Date().toISOString() }])
+                            }).catch(function() {});
+                            _realLS.setItem('trainee_data_sync_time', new Date().toISOString());
+                            return;
                         }
-                        // 云端更新或无本地数据 → 拉云端到本地
-                        _realLS.setItem(row.key, row.value);
-                        _realLS.setItem('trainee_data_sync_time', row.updated_at || new Date().toISOString());
-                        return;
+                        // 云端更新 → 拉云端到本地
+                        if (cloudTime > localTime) {
+                            _realLS.setItem(row.key, row.value);
+                            _realLS.setItem('trainee_data_sync_time', row.updated_at || new Date().toISOString());
+                            return;
+                        }
+                        // 本地更新 → 推本地到云端
+                        if (localTime > cloudTime) {
+                            fetch(SUPABASE_URL + '/rest/v1/app_data', {
+                                method: 'POST',
+                                headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY, 'Content-Type': 'application/json', 'Prefer': 'resolution=merge-duplicates' },
+                                body: JSON.stringify([{ key: 'trainee_full_admin_backup', value: localStu, updated_at: new Date().toISOString() }])
+                            }).catch(function() {});
+                            _realLS.setItem('trainee_data_sync_time', new Date().toISOString());
+                            return;
+                        }
                     }
                     // 推送记录/考试历史：比较本地和云端，数据多的为准，少的同步到多的
                     var syncKeys = ['trainingPushRecords','learnPlanPushRecords','examHistoryData','reportedQuestions','reportedTraining','questionBankData'];
