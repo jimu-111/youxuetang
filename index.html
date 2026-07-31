@@ -1960,7 +1960,7 @@
         });
     }
 
-    const DATA_VERSION = 2;
+    const DATA_VERSION = 3;
     function saveToLocal(){
         localStorage.setItem("trainee_full_admin_backup",JSON.stringify(students.map(s=>({...s,stageProgress:s.stageProgress,returnReason:s.returnReason,graduatedDate:s.graduatedDate}))));
         localStorage.setItem("trainee_data_version",DATA_VERSION);
@@ -1974,9 +1974,8 @@
             if(parsed.length>0){ 
                 students=parsed.map(s=>{let stu=new Student(s.id,s.name,s.avatar,s.joinDate,s.site); Object.assign(stu.stageProgress,s.stageProgress); stu.stage=s.stage; stu.graduatedToArchive=s.graduatedToArchive; stu.returnReason=s.returnReason||null; stu.graduatedDate=s.graduatedDate||null; return stu;}); 
                 nextId=Math.max(...students.map(s=>s.id),400)+1; 
-            }else{ initDefault(); saveToLocal(); }(function(){var ch=false;var sts=["陈远航","王若曦","张敏仪"];var avs=["men/32","women/45","men/90"];var ss=["青岛","深圳","成都"];for(var i=1;i<4;i++){if(!students.some(function(x){return x.stage===i;})){var mid=Math.max(400,students.reduce(function(m,x){return Math.max(m,x.id)},0));var t=new Student(mid+1,sts[i-1],"https://randomuser.me/api/portraits/"+avs[i-1]+".jpg","2026-07-08",ss[i-1]);t.stage=i;t.stageProgress.theoryPassed=true;t.stageProgress.onlinePassed=true;t.stageProgress.practicalPassed=true;if(i>1){t.stageProgress.mentorComplete=true;t.stageProgress.fullCheckPassed=true;t.stageProgress.fullCheckRate=80;t.stageProgress.fullCheckScores=[80];t.stageProgress.fullCheckAttempts=1}if(i>2){t.stageProgress.mockRate=85;t.stageProgress.mockScores=[85];t.stageProgress.mockAttempts=1}students.push(t);ch=true}}if(ch)saveToLocal();})(); 
-        }else{ initDefault(); saveToLocal(); }(function(){var ch=false;var sts=["陈远航","王若曦","张敏仪"];var avs=["men/32","women/45","men/90"];var ss=["青岛","深圳","成都"];for(var i=1;i<4;i++){if(!students.some(function(x){return x.stage===i;})){var mid=Math.max(400,students.reduce(function(m,x){return Math.max(m,x.id)},0));var t=new Student(mid+1,sts[i-1],"https://randomuser.me/api/portraits/"+avs[i-1]+".jpg","2026-07-08",ss[i-1]);t.stage=i;t.stageProgress.theoryPassed=true;t.stageProgress.onlinePassed=true;t.stageProgress.practicalPassed=true;if(i>1){t.stageProgress.mentorComplete=true;t.stageProgress.fullCheckPassed=true;t.stageProgress.fullCheckRate=80;t.stageProgress.fullCheckScores=[80];t.stageProgress.fullCheckAttempts=1}if(i>2){t.stageProgress.mockRate=85;t.stageProgress.mockScores=[85];t.stageProgress.mockAttempts=1}students.push(t);ch=true}}if(ch)saveToLocal();})();
-
+            }else{ initDefault(); }
+        }else{ initDefault(); }
     // 回收站功能
     const RECYCLE_KEY = "studentRecycleBin";
     function getRecycleBin(){try{return JSON.parse(localStorage.getItem(RECYCLE_KEY)||"[]");}catch(e){return[];}}
@@ -1986,21 +1985,10 @@
     function restoreFromRecycle(sid){var bin=getRecycleBin();var idx=bin.findIndex(function(s){return s.id===sid;});if(idx<0)return null;var stu=bin[idx];bin.splice(idx,1);saveRecycleBin(bin);delete stu._deletedAt;return stu;}
     cleanExpiredRecycle();    }
     
-    function initDefault(){ 
-        students=[]; 
-        const avatars=["https://randomuser.me/api/portraits/women/68.jpg","https://randomuser.me/api/portraits/men/32.jpg","https://randomuser.me/api/portraits/women/45.jpg","https://randomuser.me/api/portraits/men/90.jpg","https://randomuser.me/api/portraits/women/89.jpg","https://randomuser.me/api/portraits/men/52.jpg","https://randomuser.me/api/portraits/women/33.jpg","https://randomuser.me/api/portraits/men/75.jpg","https://randomuser.me/api/portraits/women/12.jpg","https://randomuser.me/api/portraits/men/88.jpg","https://randomuser.me/api/portraits/women/55.jpg","https://randomuser.me/api/portraits/men/41.jpg"]; 
-        const names=["李思源","陈远航","王若曦","张敏仪","赵一航","林小夕","周子墨","吴俊杰","郑雨晴","孙浩然","刘思琪","何志强"]; 
-        const sites=["成都","青岛","深圳","成都","青岛","深圳","成都","青岛","深圳","成都","青岛","深圳"]; 
-        
-        // 每阶段1个模拟学员
-        let s0=new Student(1,"李思源",avatars[0],"2025-05-20","成都"); s0.stage=0;
-        let s1=new Student(2,"陈远航",avatars[1],"2025-05-15","青岛"); s1.stage=1; s1.stageProgress.theoryPassed=true; s1.stageProgress.onlinePassed=true; s1.stageProgress.practicalPassed=true;
-        let s2=new Student(3,"王若曦",avatars[2],"2025-05-10","深圳"); s2.stage=2; s2.stageProgress.theoryPassed=true; s2.stageProgress.onlinePassed=true; s2.stageProgress.practicalPassed=true; s2.stageProgress.mentorComplete=true; s2.stageProgress.fullCheckRate=80; s2.stageProgress.fullCheckAttempts=1; s2.stageProgress.fullCheckScores=[80]; s2.stageProgress.fullCheckPassed=true;
-        let s3=new Student(4,"张敏仪",avatars[3],"2025-05-05","成都"); s3.stage=3; s3.stageProgress.theoryPassed=true; s3.stageProgress.onlinePassed=true; s3.stageProgress.practicalPassed=true; s3.stageProgress.mentorComplete=true; s3.stageProgress.fullCheckPassed=true; s3.stageProgress.mockRate=85; s3.stageProgress.mockAttempts=1; s3.stageProgress.mockScores=[85]; s3.stageProgress.mockPassed=true;
-        let s4=new Student(5,"赵一航",avatars[4],"2025-04-20","青岛"); s4.stage=4; s4.stageProgress.theoryPassed=true; s4.stageProgress.onlinePassed=true; s4.stageProgress.practicalPassed=true; s4.stageProgress.mentorComplete=true; s4.stageProgress.fullCheckPassed=true; s4.stageProgress.mockPassed=true; s4.stageProgress.formalWeek=2; s4.stageProgress.currentEfficiency=65; s4.stageProgress.currentMistakes=8;
-        let s5=new Student(6,"林小夕",avatars[5],"2025-04-01","深圳"); s5.stage=4; s5.stageProgress.theoryPassed=true; s5.stageProgress.onlinePassed=true; s5.stageProgress.practicalPassed=true; s5.stageProgress.mentorComplete=true; s5.stageProgress.fullCheckPassed=true; s5.stageProgress.mockPassed=true; s5.stageProgress.graduatedFormal=true; s5.graduatedToArchive=true; s5.graduatedDate="2025-06-09";
-        
-        students.push(s0,s1,s2,s3,s4,s5); nextId=13; currentPanoramaStudentId=students[0].id;
+    function initDefault(){
+        students=[];
+        nextId=400;
+        currentPanoramaStudentId=null;
     }
 
     // ==================== 数据分析模块 ====================
@@ -19773,7 +19761,12 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
                     // 学员数据：时间戳同步，老数据无时间戳时推本地到云端兜底
                     if (row.key === 'trainee_full_admin_backup') {
                         var localStu = _realLS.getItem('trainee_full_admin_backup');
-                        if (!localStu) return; // 本地无数据，不拉云端（等首保存）
+                        // 本地无数据 → 从云端拉取（而非跳过）
+                        if (!localStu) {
+                            _realLS.setItem(row.key, row.value);
+                            _realLS.setItem('trainee_data_sync_time', row.updated_at || new Date().toISOString());
+                            return;
+                        }
                         var cloudTime = row.updated_at ? new Date(row.updated_at).getTime() : 0;
                         var localTime = _realLS.getItem('trainee_data_sync_time');
                         localTime = localTime ? new Date(localTime).getTime() : 0;
