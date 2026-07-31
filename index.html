@@ -1966,16 +1966,22 @@
         localStorage.setItem("trainee_data_version",DATA_VERSION);
         localStorage.setItem("trainee_data_sync_time", new Date().toISOString());
     }
-    function loadData(){ 
-        const saved=localStorage.getItem("trainee_full_admin_backup"); 
-        const savedVersion=localStorage.getItem("trainee_data_version"); 
-        if(saved && savedVersion==DATA_VERSION){ 
-            const parsed=JSON.parse(saved); 
-            if(parsed.length>0){ 
-                students=parsed.map(s=>{let stu=new Student(s.id,s.name,s.avatar,s.joinDate,s.site); Object.assign(stu.stageProgress,s.stageProgress); stu.stage=s.stage; stu.graduatedToArchive=s.graduatedToArchive; stu.returnReason=s.returnReason||null; stu.graduatedDate=s.graduatedDate||null; return stu;}); 
-                nextId=Math.max(...students.map(s=>s.id),400)+1; 
+    function loadData(){
+        const saved=_realLS.getItem("trainee_full_admin_backup");
+        const savedVersion=_realLS.getItem("trainee_data_version");
+        if(saved && savedVersion==DATA_VERSION){
+            const parsed=JSON.parse(saved);
+            if(parsed.length>0){
+                students=parsed.map(s=>{let stu=new Student(s.id,s.name,s.avatar,s.joinDate,s.site); Object.assign(stu.stageProgress,s.stageProgress); stu.stage=s.stage; stu.graduatedToArchive=s.graduatedToArchive; stu.returnReason=s.returnReason||null; stu.graduatedDate=s.graduatedDate||null; return stu;});
+                nextId=Math.max(...students.map(s=>s.id),400)+1;
             }else{ initDefault(); }
-        }else{ initDefault(); }
+        }else{
+            // 版本不匹配，清除旧缓存，等云端同步
+            _realLS.removeItem("trainee_full_admin_backup");
+            _realLS.removeItem("trainee_data_version");
+            _realLS.removeItem("trainee_data_sync_time");
+            initDefault();
+        }
     // 回收站功能
     const RECYCLE_KEY = "studentRecycleBin";
     function getRecycleBin(){try{return JSON.parse(localStorage.getItem(RECYCLE_KEY)||"[]");}catch(e){return[];}}
@@ -19827,8 +19833,8 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
                         if (!_realLS.getItem(row.key)) _realLS.setItem(row.key, row.value);
                         return;
                     }
-                    // 跳过旧格式的整条学员备份（已拆分为 student_* 独立存储）
-                    if (row.key === 'trainee_full_admin_backup' || row.key === 'trainee_data_version') return;
+                    // 跳过已由上方同步逻辑处理的 key，以及仅本地管理的同步时间
+                    if (row.key === 'trainee_full_admin_backup' || row.key === 'trainee_data_sync_time') return;
                     if (row.key && row.value !== null) _realLS.setItem(row.key, row.value);
                 });
             }
