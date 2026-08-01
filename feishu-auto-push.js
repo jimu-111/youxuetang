@@ -1,13 +1,14 @@
 /**
- * 飞书周一自动推送 — GitHub Actions 云端全自动
- * 从 Supabase 读取已生成的考试/培训/学习，发送真实链接
+ * 飞书周一自动推送
+ * PHASE=analyze : 周一11:00 分析上周失误，生成考试/学习/培训，存入队列（不发、不标记）
+ * PHASE=send    : 周一14:00 读队列发出飞书卡片，标记已推送
+ * 其他时间手动跑不标记
  */
-const fs = require('fs');
+const PHASE = process.env.PHASE || 'full';
 const FEISHU_APP_ID = 'cli_aab1fa4e87bbdbd3';
 const FEISHU_APP_SECRET = '1uLKmOkzQpoac6Ixw3Qhsb6KR1gCrcTn';
 const SUPABASE_URL = (process.env.SUPABASE_URL || 'https://zfxwnixlvdxawoylhgxj.supabase.co').replace(/\/$/, '').replace(/\s/g, '');
 const SUPABASE_KEY = (process.env.SUPABASE_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InpmeHduaXhsdmR4YXdveWxoZ3hqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODIyMDEyNzIsImV4cCI6MjA5Nzc3NzI3Mn0.aPfO4Ry_LzoOColCVx64JQPF-BWga-_J2fX9hg-E4G8').replace(/\s/g, '');
-const PROXY_URL = 'https://zfxwnixlvdxawoylhgxj.supabase.co/functions/v1/feishu-proxy';
 const SITE_URL = 'https://jimu-111.github.io/youxuetang/';
 
 // ===== 工具 =====
@@ -56,8 +57,11 @@ async function supabaseGet(key) {
 
 async function sendCard(email, card, token) {
     const body = JSON.stringify({ receive_id: email, msg_type: 'interactive', content: JSON.stringify(card) });
-    const h = { 'Authorization': 'Bearer ' + SUPABASE_KEY, 'x-target-url': 'https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=email', 'x-target-method': 'POST', 'x-target-auth': 'Bearer ' + token, 'Content-Type': 'application/json' };
-    const r = await fetch(PROXY_URL, { method: 'POST', headers: h, body: body });
+    const r = await fetch('https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=email', {
+        method: 'POST',
+        headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
+        body: body
+    });
     const d = await r.json();
     if (d.code !== 0) throw new Error(d.msg || 'send fail');
     return d;
@@ -75,19 +79,73 @@ function trainCard(name, count) {
 
 // ===== 主流程 =====
 async function main() {
-    console.log('=== 飞书周一自动推送 ' + new Date().toISOString() + ' ===');
+    console.log('=== 飞书周一自动推送 ' + new Date().toISOString() + ' [阶段:' + PHASE + '] ===');
     const wk = lastWeek();
     console.log('上周: ' + wk.key + ' ~ ' + fmt(wk.end));
 
     const doneKey = 'auto_push_done_' + wk.key;
-    if (process.env.FORCE_RUN !== 'true' && await supabaseGet(doneKey)) { console.log('已推送，跳过'); return; }
-    if (process.env.FORCE_RUN === 'true') console.log('⚠️ 强制运行模式（已忽略推送标记）');
+    const queueKey = 'auto_push_queue_' + wk.key;
+
+    // send 阶段：无视已推送标记，直接读队列发
+    if (PHASE === 'send') {
+        console.log('📤 发送模式（无视已推送标记，以本次为准）');
+        const queue = await supabaseGet(queueKey);
+        if (!queue || !queue.entries || queue.entries.length === 0) { console.log('队列为空，无待推送人员'); return; }
+        const appToken = await getAppToken();
+        let sent = 0, fail = 0;
+        let pushRecords = []; // 推送记录，写回 Supabase 供网页查看
+        for (const entry of queue.entries) {
+            if (entry.type === 'exam') {
+                var card = { config: { wide_screen_mode: true }, header: { title: { tag: 'plain_text', content: '📝 ' + entry.name + ' 精准考试' }, template: 'orange' }, elements: [{ tag: 'div', text: { tag: 'lark_md', content: '**' + entry.name + '** 上周失误 **' + entry.count + ' 次**，已达出卷阈值\n考试码：**' + entry.code + '**' } }, { tag: 'action', actions: [{ tag: 'button', text: { tag: 'plain_text', content: '📝 开始考试' }, type: 'primary', url: SITE_URL + '?exam=' + entry.code }] }] };
+                try { await sendCard(entry.email, card, appToken); console.log('  📝 考试 → ' + entry.name + '(' + entry.count + ') [' + entry.code + ']'); sent++; pushRecords.push({ type: 'exam', reviewerName: entry.name, examCode: entry.code, email: entry.email, pushedAt: new Date().toISOString() }); }
+                catch(e) { console.log('  ❌ ' + entry.name + ': ' + e.message); fail++; }
+            } else if (entry.type === 'learn') {
+                var lcard = { config: { wide_screen_mode: true }, header: { title: { tag: 'plain_text', content: '🗺️ ' + entry.name + ' 学习地图' }, template: 'blue' }, elements: [{ tag: 'div', text: { tag: 'lark_md', content: '**' + entry.name + '** 上周失误 **' + entry.count + ' 次**，已达学习阈值\n课程：' + entry.courseCount + ' 节' } }, { tag: 'action', actions: [{ tag: 'button', text: { tag: 'plain_text', content: '🗺️ 学习地图' }, type: 'primary', url: SITE_URL + '?learnPlan=' + entry.code }] }] };
+                try { await sendCard(entry.email, lcard, appToken); console.log('  🗺️ 学习 → ' + entry.name + ' [' + entry.code + '] ' + entry.courseCount + '课'); sent++; pushRecords.push({ type: 'learn', reviewerName: entry.name, planCode: entry.code, email: entry.email, pushedAt: new Date().toISOString() }); }
+                catch(e) { console.log('  ❌ ' + entry.name + ': ' + e.message); fail++; }
+            } else if (entry.type === 'train') {
+                var tcard = { config: { wide_screen_mode: true }, header: { title: { tag: 'plain_text', content: '📖 ' + entry.name + ' 精准培训' }, template: 'purple' }, elements: [{ tag: 'div', text: { tag: 'lark_md', content: '**' + entry.name + '** 上周失误 **' + entry.count + ' 次**，已达培训阈值\n匹配案例：' + entry.caseCount + ' 条' } }, { tag: 'action', actions: [{ tag: 'button', text: { tag: 'plain_text', content: '📖 查看培训' }, type: 'primary', url: SITE_URL + '?report=' + encodeURIComponent(entry.reportName) }] }] };
+                try { await sendCard(entry.email, tcard, appToken); console.log('  📖 培训 → ' + entry.name + ' (' + entry.caseCount + '条)'); sent++; pushRecords.push({ type: 'train', reviewerName: entry.name, reportName: entry.reportName, email: entry.email, pushedAt: new Date().toISOString() }); }
+                catch(e) { console.log('  ❌ ' + entry.name + ': ' + e.message); fail++; }
+            }
+        }
+        // 写入推送记录到 Supabase
+        if (pushRecords.length > 0) {
+            var examRecords = pushRecords.filter(function(r){ return r.type === 'exam'; });
+            var learnRecords = pushRecords.filter(function(r){ return r.type === 'learn'; });
+            var trainRecords = pushRecords.filter(function(r){ return r.type === 'train'; });
+            var existingTraining = (await supabaseGet('trainingPushRecords')) || [];
+            var existingLearn = (await supabaseGet('learnPlanPushRecords')) || [];
+            var newTraining = existingTraining.concat(examRecords.concat(trainRecords).map(function(r){ return { key: r.type+'_'+r.reviewerName+'_'+Date.now(), type: r.type, title: r.reviewerName+' 精准'+(r.type==='exam'?'考试':'培训'), reviewerName: r.reviewerName, users: [{name: r.email}], site: '', time: r.pushedAt }; }));
+            var newLearn = existingLearn.concat(learnRecords.map(function(r){ return { key: 'learn_'+r.reviewerName+'_'+Date.now(), type: 'learn', title: r.reviewerName+' 学习地图', reviewerName: r.reviewerName, users: [{name: r.email}], site: '', time: r.pushedAt }; }));
+            await fetch(SUPABASE_URL + '/rest/v1/app_data', {
+                method: 'POST',
+                headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY, 'Content-Type': 'application/json', 'Prefer': 'resolution=merge-duplicates' },
+                body: JSON.stringify([{ key: 'trainingPushRecords', value: JSON.stringify(newTraining), updated_at: new Date().toISOString() }, { key: 'learnPlanPushRecords', value: JSON.stringify(newLearn), updated_at: new Date().toISOString() }])
+            }).catch(function(){});
+        }
+        // 标记已推送（以此为准）
+        await fetch(SUPABASE_URL + '/rest/v1/app_data', {
+            method: 'POST',
+            headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY, 'Content-Type': 'application/json', 'Prefer': 'resolution=merge-duplicates' },
+            body: JSON.stringify([{ key: doneKey, value: JSON.stringify({ date: new Date().toISOString(), week: wk.key, sent, fail, phase: 'send' }), updated_at: new Date().toISOString() }])
+        });
+        console.log('=== 发送完成: ' + sent + '成功 ' + fail + '失败 ===');
+        return;
+    }
+
+    // analyze/full 阶段：正常检查已推送标记
+    if (PHASE !== 'analyze' && await supabaseGet(doneKey)) { console.log('已推送，跳过'); return; }
+    if (PHASE === 'analyze') console.log('🔍 分析模式（不发送、不标记）');
+    if (PHASE === 'full') console.log('📤 完整模式（分析+发送+标记）');
 
     const appToken = await getAppToken();
     const emails = (await supabaseGet('personnelEmails')) || {};
     console.log('Token OK, 邮箱: ' + Object.keys(emails).length + '人');
 
     let sent = 0, fail = 0;
+    let pushQueue = []; // 推送队列
+    let generatedExamCodes = {}; // 记录本次生成的考试码，供发送时直接使用
 
     // 从飞书获取用户的 token 读表格（优先 refresh，失败才降级 appToken）
     const stored = await supabaseGet('feishu_token');
@@ -132,7 +190,7 @@ async function main() {
     ];
     for (const sh of FEISHU_SHEETS) {
         try {
-            const r2 = await fetch(PROXY_URL, { method: 'POST', headers: { 'Authorization': 'Bearer ' + SUPABASE_KEY, 'x-target-url': 'https://open.feishu.cn/open-apis/sheets/v2/spreadsheets/EdI0sn3qkh7H6wtkhcpcxrTnnDf/values/' + sh.id + '?majorDimension=ROWS', 'x-target-method': 'GET', 'x-target-auth': 'Bearer ' + userToken } });
+            const r2 = await fetch('https://open.feishu.cn/open-apis/sheets/v2/spreadsheets/EdI0sn3qkh7H6wtkhcpcxrTnnDf/values/' + sh.id + '?majorDimension=ROWS', { headers: { 'Authorization': 'Bearer ' + userToken } });
             const d2 = await r2.json();
             if (d2.code && d2.code !== 0) { console.warn('  ⚠️ Sheet ' + sh.id + ' 返回错误: ' + (d2.msg||d2.code)); continue; }
             const vals = (d2.data && d2.data.valueRange && d2.data.valueRange.values) || [];
@@ -154,8 +212,8 @@ async function main() {
     var allRows = [];
     for (const sh of FEISHU_SHEETS) {
         try {
-            var r3 = await fetch(PROXY_URL, {method:'POST',
-                headers:{'Authorization':'Bearer '+SUPABASE_KEY,'x-target-url':'https://open.feishu.cn/open-apis/sheets/v2/spreadsheets/EdI0sn3qkh7H6wtkhcpcxrTnnDf/values/'+sh.id+'?majorDimension=ROWS','x-target-method':'GET','x-target-auth':'Bearer '+userToken,'Content-Type':'application/json'}
+            var r3 = await fetch('https://open.feishu.cn/open-apis/sheets/v2/spreadsheets/EdI0sn3qkh7H6wtkhcpcxrTnnDf/values/'+sh.id+'?majorDimension=ROWS', {
+                headers:{'Authorization':'Bearer '+userToken}
             });
             var d3 = await r3.json();
             if (d3.code && d3.code !== 0) { console.warn('  ⚠️ 全量Sheet ' + sh.id + ' 返回错误: ' + (d3.msg||d3.code)); continue; }
@@ -356,12 +414,13 @@ async function main() {
                 examCode: examCode,
                 reviewerName: name,
                 questions: selected,
-                generatedAt: wk.end.toISOString(),
+                generatedAt: new Date().toISOString(),
                 source: '周一自动推送',
                 status: 'pending', attempts: 0, records: [],
                 timeLimit: 40, maxAttempts: 2, wrongAnswers: []
             };
             examHistory[examRecord.id] = examRecord;
+            generatedExamCodes[name] = examCode;
             console.log('  📝 自动出卷 → ' + name + ' [' + examCode + '] ' + selected.length + '题');
         }
     }
@@ -425,18 +484,26 @@ async function main() {
         const email = emails[name];
         if (!email) continue;
         if (count >= TH.examMin) {
-            var examCode = null;
-            var exams = Object.values(examHistory).filter(function(e) {
-                if (e.reviewerName !== name) return false;
-                var t = new Date(e.generatedAt || e.time || 0);
-                return t >= wk.start && t <= wk.end;
-            });
-            if (exams.length > 0) examCode = exams[exams.length - 1].examCode;
+            var examCode = generatedExamCodes[name] || null;
+            // fallback: 从 examHistory 查找（analyze 阶段预先出卷的场景）
+            if (!examCode) {
+                var exams = Object.values(examHistory).filter(function(e) {
+                    if (e.reviewerName !== name) return false;
+                    var t = new Date(e.generatedAt || e.time || 0);
+                    return t >= wk.start && t <= wk.end;
+                });
+                if (exams.length > 0) examCode = exams[exams.length - 1].examCode;
+            }
 
             if (!examCode) { console.log('  ⏭ ' + name + ' 无考试码，跳过'); continue; }
-            var card = { config: { wide_screen_mode: true }, header: { title: { tag: 'plain_text', content: '📝 ' + name + ' 精准考试' }, template: 'orange' }, elements: [{ tag: 'div', text: { tag: 'lark_md', content: '**' + name + '** 上周失误 **' + count + ' 次**，已达出卷阈值\n考试码：**' + examCode + '**' } }, { tag: 'action', actions: [{ tag: 'button', text: { tag: 'plain_text', content: '📝 开始考试' }, type: 'primary', url: SITE_URL + '?exam=' + examCode }] }] };
-            try { await sendCard(email, card, appToken); console.log('  📝 考试 → ' + name+'('+count+') [' + examCode + ']'); sent++; }
-            catch(e) { console.log('  ❌ ' + name + ': ' + e.message); fail++; }
+            if (PHASE === 'analyze') {
+                pushQueue.push({ type: 'exam', name: name, email: email, count: count, code: examCode });
+                console.log('  📝 加入队列 → ' + name + '(' + count + ') [' + examCode + ']');
+            } else {
+                var card = { config: { wide_screen_mode: true }, header: { title: { tag: 'plain_text', content: '📝 ' + name + ' 精准考试' }, template: 'orange' }, elements: [{ tag: 'div', text: { tag: 'lark_md', content: '**' + name + '** 上周失误 **' + count + ' 次**，已达出卷阈值\n考试码：**' + examCode + '**' } }, { tag: 'action', actions: [{ tag: 'button', text: { tag: 'plain_text', content: '📝 开始考试' }, type: 'primary', url: SITE_URL + '?exam=' + examCode }] }] };
+                try { await sendCard(email, card, appToken); console.log('  📝 考试 → ' + name+'('+count+') [' + examCode + ']'); sent++; }
+                catch(e) { console.log('  ❌ ' + name + ': ' + e.message); fail++; }
+            }
         }
         if (count >= TH.learnMin && lmCategories.length > 0) {
             // ===== 从看板一字不改搬过来的学习地图生成逻辑 =====
@@ -514,9 +581,14 @@ async function main() {
                     body:JSON.stringify([{key:'learningPlanData',value:JSON.stringify(allPlans),updated_at:new Date().toISOString()}])
                 }).catch(function(){});
                 var areaNames = sortedAreas.slice(0,3).map(function(a){return a.name+'('+a.items.length+'课)';}).join('、');
-                var lcard = {config:{wide_screen_mode:true},header:{title:{tag:'plain_text',content:'🗺️ '+name+' 学习地图'},template:'blue'},elements:[{tag:'div',text:{tag:'lark_md',content:'**'+name+'** 上周失误 **'+count+' 次**，已达学习阈值\n课程：'+allItems.length+' 节\n涉及：'+areaNames}},{tag:'action',actions:[{tag:'button',text:{tag:'plain_text',content:'🗺️ 学习地图'},type:'primary',url:SITE_URL+'?learnPlan='+planCode}]}]};
-                try { await sendCard(email, lcard, appToken); console.log('  🗺️ 学习 → '+name+' ['+planCode+'] '+allItems.length+'课'); sent++; }
-                catch(e) { console.log('  ❌ '+name+': '+e.message); fail++; }
+                if (PHASE === 'analyze') {
+                    pushQueue.push({ type: 'learn', name: name, email: email, count: count, code: planCode, courseCount: allItems.length });
+                    console.log('  🗺️ 加入队列 → ' + name + ' [' + planCode + '] ' + allItems.length + '课');
+                } else {
+                    var lcard = {config:{wide_screen_mode:true},header:{title:{tag:'plain_text',content:'🗺️ '+name+' 学习地图'},template:'blue'},elements:[{tag:'div',text:{tag:'lark_md',content:'**'+name+'** 上周失误 **'+count+' 次**，已达学习阈值\n课程：'+allItems.length+' 节\n涉及：'+areaNames}},{tag:'action',actions:[{tag:'button',text:{tag:'plain_text',content:'🗺️ 学习地图'},type:'primary',url:SITE_URL+'?learnPlan='+planCode}]}]};
+                    try { await sendCard(email, lcard, appToken); console.log('  🗺️ 学习 → '+name+' ['+planCode+'] '+allItems.length+'课'); sent++; }
+                    catch(e) { console.log('  ❌ '+name+': '+e.message); fail++; }
+                }
             } else { console.log('  ⏭ '+name+' 未匹配到课程'); }
         }
         if (count >= TH.trainMin) {
@@ -595,22 +667,41 @@ async function main() {
                     method: 'POST', headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY, 'Content-Type': 'application/json', 'Prefer': 'resolution=merge-duplicates' },
                     body: JSON.stringify([{ key: 'generatedReports', value: JSON.stringify(reports), updated_at: new Date().toISOString() }])
                 }).catch(function(){});
-                var tcard = { config: { wide_screen_mode: true }, header: { title: { tag: 'plain_text', content: '📖 ' + name + ' 精准培训' }, template: 'purple' }, elements: [{ tag: 'div', text: { tag: 'lark_md', content: '**' + name + '** 上周失误 **' + count + ' 次**，已达培训阈值\n匹配案例：' + matched.length + ' 条' } }, { tag: 'action', actions: [{ tag: 'button', text: { tag: 'plain_text', content: '📖 查看培训' }, type: 'primary', url: SITE_URL + '?report=' + encodeURIComponent(reportName) }] }] };
-                try { await sendCard(email, tcard, appToken); console.log('  📖 培训 → ' + name+' (' + matched.length + '条)'); sent++; }
-                catch(e) { console.log('  ❌ ' + name + ': ' + e.message); fail++; }
+                if (PHASE === 'analyze') {
+                    pushQueue.push({ type: 'train', name: name, email: email, count: count, code: planCode, caseCount: matched.length, reportName: reportName });
+                    console.log('  📖 加入队列 → ' + name + ' (' + matched.length + '条)');
+                } else {
+                    var tcard = { config: { wide_screen_mode: true }, header: { title: { tag: 'plain_text', content: '📖 ' + name + ' 精准培训' }, template: 'purple' }, elements: [{ tag: 'div', text: { tag: 'lark_md', content: '**' + name + '** 上周失误 **' + count + ' 次**，已达培训阈值\n匹配案例：' + matched.length + ' 条' } }, { tag: 'action', actions: [{ tag: 'button', text: { tag: 'plain_text', content: '📖 查看培训' }, type: 'primary', url: SITE_URL + '?report=' + encodeURIComponent(reportName) }] }] };
+                    try { await sendCard(email, tcard, appToken); console.log('  📖 培训 → ' + name+' (' + matched.length + '条)'); sent++; }
+                    catch(e) { console.log('  ❌ ' + name + ': ' + e.message); fail++; }
+                }
             } else {
                 console.log('  ⏭ ' + name + ' 案例库无匹配，跳过');
             }
         }
     }
 
-    // 标记已完成
-    await fetch(SUPABASE_URL + '/rest/v1/app_data', {
-        method: 'POST',
-        headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY, 'Content-Type': 'application/json', 'Prefer': 'resolution=merge-duplicates' },
-        body: JSON.stringify([{ key: doneKey, value: JSON.stringify({ date: new Date().toISOString(), week: wk.key, sent, fail }), updated_at: new Date().toISOString() }])
-    });
-    console.log('=== 完成: ' + sent + '成功 ' + fail + '失败 ===');
+    if (PHASE === 'analyze') {
+        // 分析模式：保存队列到 Supabase，不发、不标记
+        if (pushQueue.length > 0) {
+            await fetch(SUPABASE_URL + '/rest/v1/app_data', {
+                method: 'POST',
+                headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY, 'Content-Type': 'application/json', 'Prefer': 'resolution=merge-duplicates' },
+                body: JSON.stringify([{ key: queueKey, value: JSON.stringify({ entries: pushQueue, week: wk.key, time: new Date().toISOString() }), updated_at: new Date().toISOString() }])
+            });
+            console.log('=== 分析完成: ' + pushQueue.length + ' 人已加入推送队列 ===');
+        } else {
+            console.log('=== 分析完成: 无人达到推送阈值 ===');
+        }
+    } else if (PHASE === 'full') {
+        // 标记已推送（防止下周重复发送）
+        await fetch(SUPABASE_URL + '/rest/v1/app_data', {
+            method: 'POST',
+            headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY, 'Content-Type': 'application/json', 'Prefer': 'resolution=merge-duplicates' },
+            body: JSON.stringify([{ key: doneKey, value: JSON.stringify({ date: new Date().toISOString(), week: wk.key, sent, fail, phase: 'full' }), updated_at: new Date().toISOString() }])
+        });
+        console.log('=== 完成: ' + sent + '成功 ' + fail + '失败 ===');
+    }
 }
 
 main().catch(e => { console.error(e.message); process.exit(1); });
