@@ -857,7 +857,7 @@
         const suggestions = generateStageSuggestions(student, stageId);
         
         const modalId = 'stageModal_' + Date.now() + '_' + Math.random().toString(36).substr(2, 6);
-        const modalHtml=`<div class="modal-overlay" id="${modalId}"><div class="modal-container"><div class="modal-header"><span>📋 ${stage.name} · ${student.name} (${student.site})${isReadOnly?' · 档案查看':''}</span><button class="modal-close-btn">✕</button></div><div class="modal-body"><div class="rule-hint"><span>📌 考评标准：${stage.standards}</span></div><div class="rule-hint"><span>🔄 退回机制：${stage.returnRule}</span></div>${tableHtml}<div class="advice-split"><div class="advice-box"><label>⚠️ 问题点（可编辑）</label><textarea id="issuesTextarea" rows="2">${issues}</textarea></div><div class="advice-box"><label>💡 改善建议（可编辑）</label><textarea id="suggestionsTextarea" rows="2">${suggestions}</textarea></div></div>${!isReadOnly?`<div style="margin-top:12px; text-align:right;"><button id="saveModalBtn" class="primary">💾 保存修改</button></div>`:''}</div></div></div>`;
+        const modalHtml=`<div class="modal-overlay" id="${modalId}"><div class="modal-container"><div class="modal-header"><span>📋 ${stage.name} · ${student.name} (${student.site})${isReadOnly?' · 档案查看':''}</span><div style="display:flex;gap:8px;"><button class="modal-close-btn">✕</button></div></div><div class="modal-body"><div class="rule-hint"><span>📌 考评标准：${stage.standards}</span></div><div class="rule-hint"><span>🔄 退回机制：${stage.returnRule}</span></div>${tableHtml}<div class="advice-split"><div class="advice-box"><label>⚠️ 问题点（可编辑）</label><textarea id="issuesTextarea" rows="2">${issues}</textarea></div><div class="advice-box"><label>💡 改善建议（可编辑）</label><textarea id="suggestionsTextarea" rows="2">${suggestions}</textarea></div></div>${!isReadOnly?`<div style="margin-top:12px; text-align:right;"><button id="saveModalBtn" class="primary">💾 保存修改</button></div>`:''}</div></div></div>`;
         document.body.insertAdjacentHTML('beforeend',modalHtml);
         const modalElement = document.getElementById(modalId);
         modalElement.querySelector('.modal-close-btn').onclick = () => modalElement.remove();
@@ -10190,7 +10190,7 @@ URL.revokeObjectURL(url);
             }
             
             // 截图前隐藏所有截图按钮和毛玻璃遮罩
-            const screenshotBtns = element.querySelectorAll('.screenshot-btn, .modal-screenshot-btn, .sampling-card-screenshot-btn, .nc-person-screenshot-btn, #screenshotMainBtn, #btnShowAllCats, #btnHideEmptyCats, #samplingSummary');
+            const screenshotBtns = element.querySelectorAll('.screenshot-btn, .modal-screenshot-btn, .sampling-card-screenshot-btn, .nc-person-screenshot-btn, .stage-screenshot-btn, .modal-close-btn, #screenshotMainBtn, #btnShowAllCats, #btnHideEmptyCats, #samplingSummary');
             const btnDisplayList = [];
             screenshotBtns.forEach(btn => { btnDisplayList.push(btn.style.display); btn.style.display = 'none'; });
             // 隐藏毛玻璃遮罩（html2canvas不支持backdrop-filter会导致截图失败）
