@@ -628,7 +628,7 @@
         { id:3, name:"四、模拟判责", sub:"50单·通过率≥90%", weight:0.2, standards:"通过率≥90%方可晋级", returnRule:"未通过需重考，连续三次未通过自动退回实操全检阶段", tableHeaders:["考试次数","项目","标准","通过率(%)","是否通过","附件"], getRows:s=>{ return s.stageProgress.mockScores.map((score,idx)=>({attempt:idx+1,item:`第${idx+1}次考试`,standard:"≥90%",value:score,unit:"%",passed:score>=90})); }, extraFile:true,
           checkCompletion:s=>s.stageProgress.mockPassed, getScore:s=>Math.min(100, s.stageProgress.mockRate||0)
         },
-        { id:4, name:"五、正式判责", sub:"周人效&失误", weight:0.25, standards:"周人效/失误阶梯考核", returnRule:"前3周连续两周未达标，自动退回模拟判责阶段", tableHeaders:["周次","人效要求","失误要求","学员人效","学员失误","达标"], getRows:s=>{
+        { id:4, name:"五、正式判责", sub:"周人效&失误", weight:0.25, standards:"周人效/失误阶梯考核", returnRule:"前3周连续两周未达标，自动退回模拟判责阶段", tableHeaders:["周次","人效要求","失误要求","出勤天数","学员人效","学员失误","准确率","达标"], getRows:s=>{
             const maxWeek = Math.max(s.stageProgress.maxWeek || 6, s.stageProgress.formalWeek);
             let rows = [];
             for(let i=1;i<=maxWeek;i++){
@@ -639,7 +639,10 @@
                 let isFuture = (i > s.stageProgress.formalWeek);
                 let met = (!isCurrent && !isFuture && eff !== null && mis !== null && eff >= t.minEff && mis <= t.maxError);
                 let status = isCurrent ? 'current' : (isFuture ? 'future' : (met ? 'pass' : 'fail'));
-                rows.push({week:i, standardEff:`≥${t.minEff}`, standardErr:`≤${t.maxError}`, effValue: eff, misValue: mis, status: status, isCurrent: isCurrent});
+                let att = s.stageProgress.weeklyAttendance?.[i] ?? (i===s.stageProgress.formalWeek ? (s.stageProgress.currentAttendance ?? null) : (i<s.stageProgress.formalWeek ? (s.stageProgress.historicalAttendance?.[i] ?? null) : null));
+                let total = (att !== null && eff !== null && att > 0 && eff > 0) ? att * eff : 0;
+                let acc = (total > 0 && mis !== null) ? Math.round((total - mis) / total * 10000) / 100 : null;
+                rows.push({week:i, standardEff:`≥${t.minEff}`, standardErr:`≤${t.maxError}`, attValue: att, effValue: eff, misValue: mis, accuracy: acc, status: status, isCurrent: isCurrent});
             }
             return rows;
         }, checkCompletion:s=>s.stageProgress.graduatedFormal===true, getScore:s=>{ if(s.stageProgress.graduatedFormal) return 100; let total=0, count=0; for(let i=1;i<=6;i++){ let eff=s.stageProgress.weeklyEff?.[i]??(i===s.stageProgress.formalWeek?s.stageProgress.currentEfficiency:null); let mis=s.stageProgress.weeklyMis?.[i]??(i===s.stageProgress.formalWeek?s.stageProgress.currentMistakes:null); if(eff!==null && mis!==null){ let effScore=Math.min(100, (eff/WEEK_TARGETS[i-1].minEff)*50); let misScore=Math.max(0, 50-(mis/WEEK_TARGETS[i-1].maxError)*50); total+=Math.min(100, effScore+misScore); count++; } } return count>0?Math.round(total/count):0; }
@@ -679,7 +682,7 @@
         }
         checkAllStagesComplete(){ return STAGES_DETAIL[0].checkCompletion(this) && STAGES_DETAIL[1].checkCompletion(this) && STAGES_DETAIL[2].checkCompletion(this) && STAGES_DETAIL[3].checkCompletion(this) && this.stageProgress.graduatedFormal; }
         manualArchiveToGraduation() { if(!this.graduatedToArchive){ this.graduatedToArchive=true; this.graduatedDate=new Date().toISOString().slice(0,10); return true; } return false; }
-        extendWeeks(weeks){ this.stageProgress.maxWeek = (this.stageProgress.maxWeek || 6) + weeks; for(let i=1;i<=this.stageProgress.maxWeek;i++){ if(this.stageProgress.weeklyEff[i] === undefined) this.stageProgress.weeklyEff[i] = null; if(this.stageProgress.weeklyMis[i] === undefined) this.stageProgress.weeklyMis[i] = null; } return true; }
+        extendWeeks(weeks){ let newMax = (this.stageProgress.maxWeek || 6) + weeks; if (newMax > 7) { alert('最多7周'); return false; } this.stageProgress.maxWeek = newMax; for(let i=1;i<=this.stageProgress.maxWeek;i++){ if(this.stageProgress.weeklyEff[i] === undefined) this.stageProgress.weeklyEff[i] = null; if(this.stageProgress.weeklyMis[i] === undefined) this.stageProgress.weeklyMis[i] = null; } return true; }
         reduceWeeks(weeks){ let newMax = Math.max(1, (this.stageProgress.maxWeek || 6) - weeks); if(newMax >= this.stageProgress.formalWeek){ this.stageProgress.maxWeek = newMax; return true; } return false; }
     }
 
@@ -694,11 +697,7 @@
         if(s.stage===4 && !s.stageProgress.graduatedFormal){
             const wk=s.stageProgress.formalWeek;
             const maxWeek = s.stageProgress.maxWeek || 6;
-            if(wk<=3){
-                const met=(s.stageProgress.currentEfficiency>=(WEEK_TARGETS[wk-1]?.minEff||0) && s.stageProgress.currentMistakes<=(WEEK_TARGETS[wk-1]?.maxError||0));
-                if(!met) s.stageProgress.consecutiveFailWeeks++; else s.stageProgress.consecutiveFailWeeks=0;
-                if(s.stageProgress.consecutiveFailWeeks>=2){ s.stage=3; s.stageProgress.returnFlag=true; s.returnReason="连续两周未达标，退回模拟判责"; s.stageProgress.mockPassed=false; s.stageProgress.fullCheckPassed=true; s.stageProgress.consecutiveFailWeeks=0; s.stageProgress.formalWeek=1; s.stageProgress.currentEfficiency=0; s.stageProgress.currentMistakes=0; return; }
-            }
+            if(wk<=3 && s.stageProgress.consecutiveFailWeeks>=2 && s.stageProgress.returnFlag){ s.stage=3; s.stageProgress.mockPassed=false; s.stageProgress.fullCheckPassed=true; s.stageProgress.consecutiveFailWeeks=0; s.stageProgress.formalWeek=1; s.stageProgress.currentEfficiency=0; s.stageProgress.currentMistakes=0; return; }
             if(wk >= maxWeek && s.stageProgress.currentEfficiency>=WEEK_TARGETS[maxWeek-1]?.minEff && s.stageProgress.currentMistakes<=WEEK_TARGETS[maxWeek-1]?.maxError) s.stageProgress.graduatedFormal=true;
             else if(wk < maxWeek && s.stageProgress.currentEfficiency>=WEEK_TARGETS[wk-1]?.minEff && s.stageProgress.currentMistakes<=WEEK_TARGETS[wk-1]?.maxError && wk < maxWeek) { s.stageProgress.formalWeek++; s.stageProgress.currentEfficiency=null; s.stageProgress.currentMistakes=null; }
         }
@@ -737,7 +736,18 @@
             if(student.stageProgress.graduatedFormal) return "无";
             const wk = student.stageProgress.formalWeek;
             if(student.stageProgress.returnFlag) return `已退回模拟判责阶段，原因：${student.returnReason||'连续两周未达标'}`;
-            if(wk<=3 && student.stageProgress.consecutiveFailWeeks>=1) return `第${wk}周未达标，已连续${student.stageProgress.consecutiveFailWeeks}周`;
+            if(wk<=3 && student.stageProgress.consecutiveFailWeeks>=1) {
+                var t2 = WEEK_TARGETS[Math.min(wk-2, WEEK_TARGETS.length-1)];
+                var lastEff = student.stageProgress.weeklyEff?.[wk-1] ?? student.stageProgress.historicalEff?.[wk-1] ?? 0;
+                var lastMis = student.stageProgress.weeklyMis?.[wk-1] ?? student.stageProgress.historicalMis?.[wk-1] ?? 0;
+                var effFail = lastEff < t2.minEff ? `人效：${lastEff}<${t2.minEff}` : '';
+                var misFail = lastMis > t2.maxError ? `失误：${lastMis}>${t2.maxError}` : '';
+                var detail = [effFail, misFail].filter(Boolean).join('，');
+                var failType = effFail ? '人效未达标' : '';
+                failType += (effFail && misFail) ? '且' : '';
+                failType += misFail ? '失误超标' : '';
+                return `第${wk-1}周${failType}（${detail}），已连续${student.stageProgress.consecutiveFailWeeks}周`;
+            }
             return `第${wk}周考核中，请关注人效与失误目标`;
         }
         return "无";
@@ -795,23 +805,38 @@
             }
         } else if(stageId===4){
             const rows=stage.getRows(student);
-            rows.forEach(row=>{
+            let prevAcc = null;
+            rows.forEach((row, rowIdx)=>{
                 let naText = row.isCurrent ? '进行中' : '';
+                let attDisplay=(row.attValue===null||row.attValue===undefined)?naText:row.attValue;
                 let effDisplay=(row.effValue===null||row.effValue===undefined)?naText:row.effValue;
                 let misDisplay=(row.misValue===null||row.misValue===undefined)?naText:row.misValue;
                 var bg = row.status==='pass'?'background:#e6f7e6;':(row.status==='current'?'background:#fffbe6;':'');
                 var statusText = row.status==='pass'?'✅达标':(row.status==='current'?'🔄进行中':(row.status==='future'?'':'❌未达标'));
+                // 准确率及趋势
+                let accDisplay = (row.accuracy !== null && row.accuracy !== undefined) ? row.accuracy + '%' : naText;
+                let trend = '';
+                if (!row.isCurrent && row.accuracy !== null && prevAcc !== null && prevAcc !== undefined && row.accuracy !== prevAcc) {
+                    let diff = Math.round((row.accuracy - prevAcc) * 10) / 10;
+                    let up = row.accuracy > prevAcc;
+                    let sign = up ? '+' : '';
+                    let color = up ? '#27ae60' : '#c0392b';
+                    trend = ` <span style="color:${color};font-size:0.7rem;">${up ? '↑' : '↓'}${sign}${diff}%</span>`;
+                }
+                prevAcc = row.accuracy;
                 tableHtml+=`<tr style="${bg}"><td style="text-align:center;">第${row.week}周</div><td>${row.standardEff}</div><td>${row.standardErr}</div>
+                        <td>${isReadOnly?attDisplay:`<input type="number" class="edit-att" data-week="${row.week}" value="${row.attValue!==null?row.attValue:''}" placeholder="${naText}" style="width:50px;" step="0.5" min="0" max="7">`}</div>
                         <td>${isReadOnly?effDisplay:`<input type="number" class="edit-eff" data-week="${row.week}" value="${row.effValue!==null?row.effValue:''}" placeholder="${naText}" style="width:70px;">`}</div>
                         <td>${isReadOnly?misDisplay:`<input type="number" class="edit-mis" data-week="${row.week}" value="${row.misValue!==null?row.misValue:''}" placeholder="${naText}" style="width:70px;">`}</div>
+                        <td><div style="display:flex;justify-content:space-between;align-items:center;"><span>${accDisplay}</span>${trend}</div></td>
                         <td>${statusText}</div>
                   <tr>`;
             });
             if(!isReadOnly && student.stage===4 && !student.stageProgress.graduatedFormal){
-                tableHtml+=`<tr><td colspan="6" style="text-align:center;"><div class="action-group"><button id="extendWeekBtn" class="small-outline">⏰ 延长考评周期(+1周)</button><button id="reduceWeekBtn" class="small-outline">📉 减少考评周期(-1周)</button><button id="manualArchiveBtn" class="small-outline" style="background:#2a5298;color:white;">📦 手动归档</button></div> </div></tr>`;
+                tableHtml+=`<tr><td colspan="8" style="text-align:center;"><div class="action-group"><button id="advanceWeekBtn" class="small-outline" style="background:#27ae60;color:white;">▶️ 推进到下一周</button><button id="extendWeekBtn" class="small-outline">⏰ 延长(+1周)</button><button id="reduceWeekBtn" class="small-outline">📉 减少(-1周)</button><button id="manualArchiveBtn" class="small-outline" style="background:#2a5298;color:white;">📦 手动归档</button></div> </div></tr>`;
             }
             if(!isReadOnly && student.stageProgress.returnFlag && student.stage<4){
-                tableHtml+=`<tr><td colspan="6" style="text-align:center;"><div class="action-group"><button id="cancelReturnBtn" class="small-outline" style="background:#c0392b;color:white;">🔓 取消退回（恢复至正式判责）</button></div></tr>`;
+                tableHtml+=`<tr><td colspan="8" style="text-align:center;"><div class="action-group"><button id="cancelReturnBtn" class="small-outline" style="background:#c0392b;color:white;">🔓 取消退回（恢复至正式判责）</button></div></tr>`;
             }
         } else {
             const rows=stage.getRows(student);
@@ -847,6 +872,64 @@
         window.deleteAttachment = function(sid,sidStage,attempt){ verifyAdminPassword(()=>{ const stu = students.find(s=>s.id===sid); if(stu){ if(sidStage===2) stu.stageProgress.fullCheckFiles[attempt] = null; else stu.stageProgress.mockFiles[attempt] = null; saveToLocal(); modalElement.remove(); showStageDetailModal(stu, sidStage, isReadOnly); alert("附件已删除"); } }); };
         
         if(!isReadOnly && stageId===4 && student.stage===4 && !student.stageProgress.graduatedFormal){
+            const advanceBtn = modalElement.querySelector('#advanceWeekBtn');
+            if(advanceBtn) advanceBtn.onclick = async () => {
+                if(student.stageProgress.formalWeek >= student.stageProgress.maxWeek){
+                    alert('已是最后一周，无法推进'); return;
+                }
+                // 保存当前周数据到历史记录
+                var wk = student.stageProgress.formalWeek;
+                student.stageProgress.historicalEff = student.stageProgress.historicalEff || {};
+                student.stageProgress.historicalMis = student.stageProgress.historicalMis || {};
+                student.stageProgress.historicalAttendance = student.stageProgress.historicalAttendance || {};
+                student.stageProgress.historicalEff[wk] = student.stageProgress.currentEfficiency ?? student.stageProgress.weeklyEff?.[wk] ?? 0;
+                student.stageProgress.historicalMis[wk] = student.stageProgress.currentMistakes ?? student.stageProgress.weeklyMis?.[wk] ?? 0;
+                student.stageProgress.historicalAttendance[wk] = student.stageProgress.currentAttendance ?? student.stageProgress.weeklyAttendance?.[wk] ?? 0;
+                student.stageProgress.weeklyEff[wk] = student.stageProgress.historicalEff[wk];
+                student.stageProgress.weeklyMis[wk] = student.stageProgress.historicalMis[wk];
+                student.stageProgress.weeklyAttendance = student.stageProgress.weeklyAttendance || {};
+                student.stageProgress.weeklyAttendance[wk] = student.stageProgress.historicalAttendance[wk];
+                // 判定当前周是否达标
+                var t = WEEK_TARGETS[Math.min(wk-1, WEEK_TARGETS.length-1)];
+                var met = (student.stageProgress.historicalEff[wk] >= t.minEff && student.stageProgress.historicalMis[wk] <= t.maxError);
+                // 重新计算连续未达标周数（仅看已完成的历史周）
+                var cfw = 0;
+                for (var ci = wk; ci >= 1; ci--) {
+                    var tt = WEEK_TARGETS[Math.min(ci-1, WEEK_TARGETS.length-1)];
+                    var heff = student.stageProgress.historicalEff[ci] ?? student.stageProgress.weeklyEff?.[ci] ?? 0;
+                    var hmis = student.stageProgress.historicalMis[ci] ?? student.stageProgress.weeklyMis?.[ci] ?? 0;
+                    if (heff >= tt.minEff && hmis <= tt.maxError) break;
+                    cfw++;
+                }
+                student.stageProgress.consecutiveFailWeeks = cfw;
+                // 前三周内连续两周未达标时弹窗确认
+                if (cfw >= 2 && wk <= 3) {
+                    modalElement.remove();
+                    var confirmed = await showConfirm('⚠️ 已连续' + cfw + '周未达标，确定要退回模拟判责阶段吗？\n\n点击「确定」退回，点击「取消」继续推进。', '⚠️', true);
+                    if (confirmed) {
+                        student.stage = 3;
+                        student.stageProgress.returnFlag = true;
+                        student.stageProgress.returnReason = '连续' + cfw + '周未达标，退回模拟判责';
+                        student.stageProgress.mockPassed = false;
+                        student.stageProgress.consecutiveFailWeeks = 0;
+                        student.stageProgress.formalWeek = 1;
+                        student.stageProgress.currentEfficiency = 0;
+                        student.stageProgress.currentMistakes = 0;
+                        saveToLocal();
+                        renderFrontend();
+                        return;
+                    }
+                    // 取消退回，保留计数继续推进
+                }
+                // 推进
+                student.stageProgress.formalWeek++;
+                student.stageProgress.currentEfficiency = null;
+                student.stageProgress.currentMistakes = null;
+                student.stageProgress.currentAttendance = null;
+                saveToLocal();
+                modalElement.remove();
+                renderFrontend();
+            };
             const extendBtn = modalElement.querySelector('#extendWeekBtn');
             if(extendBtn) extendBtn.onclick = () => { student.extendWeeks(1); saveToLocal(); modalElement.remove(); renderFrontend(); };
             const reduceBtn = modalElement.querySelector('#reduceWeekBtn');
@@ -878,7 +961,7 @@
         if(!isReadOnly){
             const saveBtn = modalElement.querySelector('#saveModalBtn');
             if(saveBtn) saveBtn.onclick = ()=>{
-                verifyAdminPassword(()=>{
+                verifyAdminPassword(async ()=>{
                     if(stageId===2 || stageId===3){
                         const inputs = modalElement.querySelectorAll('.attempt-score');
                         const newScores = [];
@@ -912,6 +995,9 @@
                         const misInputs = modalElement.querySelectorAll('.edit-mis');
                         effInputs.forEach(inp=>{let w=parseInt(inp.dataset.week),v=parseInt(inp.value);if(!isNaN(v))student.stageProgress.weeklyEff[w]=v;if(w===student.stageProgress.formalWeek)student.stageProgress.currentEfficiency=v;});
                         misInputs.forEach(inp=>{let w=parseInt(inp.dataset.week),v=parseInt(inp.value);if(!isNaN(v))student.stageProgress.weeklyMis[w]=v;if(w===student.stageProgress.formalWeek)student.stageProgress.currentMistakes=v;});
+                        const attInputs = modalElement.querySelectorAll('.edit-att');
+                        student.stageProgress.weeklyAttendance = student.stageProgress.weeklyAttendance || {};
+                        attInputs.forEach(inp=>{let w=parseInt(inp.dataset.week),v=parseFloat(inp.value);if(!isNaN(v))student.stageProgress.weeklyAttendance[w]=v;if(w===student.stageProgress.formalWeek)student.stageProgress.currentAttendance=v;});
                     }
                     // 同时保存链接（实操全检/模拟判责）
                     if(stageId===2 || stageId===3){
@@ -928,6 +1014,24 @@
                     }
                     tryAdvanceStudent(student);
                     if(student.graduatedToArchive&&student.stage!==4)student.graduatedToArchive=true;
+                    // 正式判责最后一周保存时，提示是否归档
+                    if (stageId === 4 && student.stage === 4 && !student.stageProgress.graduatedFormal) {
+                        var maxWk = student.stageProgress.maxWeek || 6;
+                        var curWk = student.stageProgress.formalWeek;
+                        if (curWk >= maxWk) {
+                            modalElement.remove();
+                            var confirmed = await showConfirm('📦 这是最后一周（第' + curWk + '周），是否归档到档案馆？\n\n归档后该学员将标记为已毕业。', '📦');
+                            if (confirmed) {
+                                student.stageProgress.graduatedFormal = true;
+                                student.graduatedToArchive = true;
+                                student.graduatedDate = new Date().toISOString().slice(0, 10);
+                            }
+                            // 无论是否归档都保存
+                            saveToLocal();
+                            renderFrontend();
+                            return;
+                        }
+                    }
                     saveToLocal();
                     // 立即同步到云端
                     try {
