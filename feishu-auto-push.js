@@ -83,7 +83,7 @@ async function main() {
     const wk = lastWeek();
     console.log('上周: ' + wk.key + ' ~ ' + fmt(wk.end));
 
-    const doneKey = 'auto_push_done_' + wk.key;
+    const doneKey = 'auto_push_done_' + fmt(new Date());
     const queueKey = 'auto_push_queue_' + wk.key;
 
     // send 阶段：无视已推送标记，直接读队列发
@@ -134,8 +134,9 @@ async function main() {
         return;
     }
 
-    // analyze/full 阶段：正常检查已推送标记
-    if (PHASE !== 'analyze' && await supabaseGet(doneKey)) { console.log('已推送，跳过'); return; }
+    // analyze/full 阶段：检查推送标记（仅认脚本写的JSON对象，忽略浏览器端的"1"）
+    var doneVal = await supabaseGet(doneKey);
+    if (PHASE !== 'analyze' && doneVal && typeof doneVal === 'object' && doneVal.phase) { console.log('已推送（' + doneVal.phase + '），跳过'); return; }
     if (PHASE === 'analyze') console.log('🔍 分析模式（不发送、不标记）');
     if (PHASE === 'full') console.log('📤 完整模式（分析+发送+标记）');
 
@@ -305,12 +306,6 @@ async function main() {
 
     for (const [name, count] of Object.entries(rc).sort((a,b) => b[1]-a[1])) {
         if (count >= TH.examMin) {
-            var hasExam = Object.values(examHistory).some(function(e) {
-                if (e.reviewerName !== name) return false;
-                var t = new Date(e.generatedAt || e.time || 0);
-                return t >= wk.start && t <= wk.end;
-            });
-            if (hasExam) continue;
             if (allQuestions.length < 5) continue;
 
             var cats = rCat[name] || {};
