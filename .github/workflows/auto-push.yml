@@ -9,7 +9,6 @@ on:
         default: 'false'
   schedule:
     - cron: "30 2 * * 1"
-    - cron: "20 5 3 8 *"
 
 jobs:
   push:
