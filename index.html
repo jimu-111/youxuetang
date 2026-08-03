@@ -3371,6 +3371,13 @@
 // 自动从飞书表格获取抽检量：根据选定周期动态匹配sheet，读取G列（初审）名字计数
     async function autoFetchChouJianFromFeishu(periodKey, dateRange) {
         if (_feishuFetching) return;
+        // 已有该周期抽检量数据则跳过（除非手动点了刷新）
+        var existingPeriod = getModule3PeriodData(periodKey);
+        if (existingPeriod.chouJianMap && Object.keys(existingPeriod.chouJianMap).length > 0 && !window._forceRefreshChouJian) {
+            console.log('[飞书抽检量] 周期 ' + periodKey + ' 已有 ' + Object.keys(existingPeriod.chouJianMap).length + ' 人数据，跳过拉取');
+            return;
+        }
+        window._forceRefreshChouJian = false;
         _feishuFetching = true;
         try {
             var token = getErrorDashboardToken();
@@ -3448,7 +3455,8 @@
             saveModule3PeriodData(pk, periodData);
             console.log('[飞书抽检量] 已自动获取 ' + Object.keys(map).length + ' 人抽检量数据，写入周期 ' + pk);
         } catch (err) {
-            console.log('[飞书抽检量] 获取失败: ' + err.message);
+            console.log('[飞书抽检量] 获取失败:', err);
+            console.log('[飞书抽检量] 错误详情:', JSON.stringify(err, Object.getOwnPropertyNames(err), 2));
         } finally {
             _feishuFetching = false;
         }
@@ -14551,7 +14559,11 @@ async function importQBFromFeishu() {
             throw new Error('代理请求失败: ' + resp.status + ' ' + errText);
         }
         var data = await resp.json();
-        if (data.error) throw new Error(data.error + (data.stack ? '\n' + data.stack : ''));
+        if (data.error) {
+            console.log('[代理错误] URL:', url);
+            console.log('[代理错误] 完整响应:', JSON.stringify(data));
+            throw new Error(JSON.stringify(data.error));
+        }
         return { ok: true, json: function() { return Promise.resolve(data); } };
     }
 
