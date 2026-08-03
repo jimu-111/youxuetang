@@ -322,6 +322,66 @@
         .error-dashboard .sheet-dot .dot.err { background:#c0392b; }
         .error-dashboard .pagination { display:flex; gap:6px; align-items:center; justify-content:center; padding:12px; }
         .error-dashboard .pagination button { background:#f1f5f9; border:1px solid #cbd5e1; padding:6px 14px; border-radius:8px; cursor:pointer; font-size:0.8rem; }
+
+        /* 反馈中心样式 */
+        .feedback-form-card { background:white; border-radius:20px; padding:20px 24px; margin-bottom:24px; box-shadow:0 4px 12px rgba(0,0,0,0.05); border:1px solid #eef2f6; }
+        .feedback-form-card .fb-input, .feedback-form-card .fb-textarea, .feedback-form-card .fb-select { width:100%; padding:10px 14px; border:1px solid #cbd5e1; border-radius:12px; font-size:0.85rem; margin-bottom:12px; background:#fafcfd; transition:border-color 0.2s; }
+        .feedback-form-card .fb-input:focus, .feedback-form-card .fb-textarea:focus, .feedback-form-card .fb-select:focus { border-color:#2a5298; outline:none; background:white; }
+        .feedback-form-card .fb-textarea { min-height:100px; resize:vertical; }
+        .feedback-form-card .fb-submit { background:#1f3a6b; color:white; border:none; padding:10px 28px; border-radius:30px; cursor:pointer; font-size:0.85rem; font-weight:600; transition:0.2s; }
+        .feedback-form-card .fb-submit:hover { background:#2a5298; }
+        .feedback-tabs { display:flex; gap:8px; margin-bottom:20px; flex-wrap:wrap; }
+        .feedback-tab { background:#f1f5f9; border:none; padding:8px 18px; border-radius:30px; font-weight:500; cursor:pointer; font-size:0.8rem; transition:0.2s; }
+        .feedback-tab.active { background:#1f3a6b; color:white; }
+        .fb-card-grid { display:grid; grid-template-columns:1fr 1fr; gap:14px; }
+        @media (max-width:800px) { .fb-card-grid { grid-template-columns:1fr; } }
+        .feedback-card { background:white; border-radius:20px; padding:18px 22px; box-shadow:0 2px 8px rgba(0,0,0,0.04); border:1px solid #eef2f6; transition:0.2s; display:flex; flex-direction:column; }
+        .fb-card-suggestion { background:linear-gradient(135deg, #f0faf0 0%, #e8f5e9 100%); border-color:#c8e6c9; }
+        .fb-card-problem { background:linear-gradient(135deg, #fff5f5 0%, #ffebee 100%); border-color:#ffcdd2; }
+        .feedback-card:hover { box-shadow:0 4px 16px rgba(0,0,0,0.08); }
+        .feedback-card .fb-header { display:flex; justify-content:space-between; align-items:flex-start; gap:12px; margin-bottom:10px; flex-wrap:wrap; }
+        .feedback-card .fb-title { font-weight:700; font-size:0.95rem; color:#1f3a6b; }
+        .feedback-card .fb-cat-tag { display:inline-block; padding:2px 10px; border-radius:20px; font-size:0.65rem; font-weight:500; }
+        .fb-cat-tag.problem { background:#ffedea; color:#c0392b; }
+        .fb-cat-tag.suggestion { background:#e8f5e9; color:#2e7d32; }
+        .feedback-card .fb-body { font-size:0.85rem; color:#4b556b; line-height:1.6; margin-bottom:10px; white-space:pre-wrap; word-break:break-word; }
+        .feedback-card .fb-meta { font-size:0.7rem; color:#94a3b8; display:flex; align-items:center; gap:12px; flex-wrap:wrap; }
+        .feedback-card .fb-like-btn { background:#f8fafc; border:1px solid #eef2f6; padding:4px 14px; border-radius:30px; cursor:pointer; font-size:0.72rem; transition:0.2s; display:inline-flex; align-items:center; gap:4px; color:#5e6f8d; }
+        .feedback-card .fb-like-btn:hover { background:#eef2ff; border-color:#2a5298; color:#2a5298; }
+        .feedback-card .fb-like-btn.liked { background:#eef2ff; border-color:#2a5298; color:#2a5298; cursor:default; }
+        .feedback-card .fb-reply-toggle { background:transparent; border:none; color:#2a5298; cursor:pointer; font-size:0.72rem; padding:4px 8px; border-radius:12px; transition:0.2s; }
+        .feedback-card .fb-reply-toggle:hover { background:#eef2ff; }
+        .feedback-card .fb-replies { margin-top:12px; padding-top:12px; border-top:1px dashed #eef2f6; }
+        .feedback-card .fb-reply-item { background:#f8fafd; border-radius:12px; padding:10px 14px; margin-bottom:8px; border-left:3px solid #2a5298; }
+        .feedback-card .fb-reply-item .reply-author { font-size:0.7rem; color:#2a5298; font-weight:600; margin-bottom:4px; }
+        .feedback-card .fb-reply-item .reply-content { font-size:0.82rem; color:#4b556b; line-height:1.5; }
+        .feedback-card .fb-reply-item .reply-time { font-size:0.65rem; color:#94a3b8; margin-top:4px; }
+        .feedback-card .fb-reply-form { display:flex; gap:8px; margin-top:10px; align-items:flex-end; }
+        .feedback-card .fb-reply-input { flex:1; border:1px solid #cbd5e1; border-radius:12px; padding:8px 12px; font-size:0.8rem; resize:none; min-height:38px; background:#fafcfd; }
+        .feedback-card .fb-reply-submit { background:#2a5298; color:white; border:none; padding:6px 16px; border-radius:20px; cursor:pointer; font-size:0.75rem; white-space:nowrap; }
+        .feedback-stat-bar { display:flex; gap:16px; margin-bottom:20px; flex-wrap:wrap; }
+        .feedback-stat-item { background:white; border-radius:16px; padding:14px 20px; box-shadow:0 2px 8px rgba(0,0,0,0.04); border:1px solid #eef2f6; flex:1; min-width:120px; text-align:center; }
+        .feedback-stat-item .stat-num { font-size:1.6rem; font-weight:700; color:#1f3a6b; }
+        .feedback-stat-item .stat-label { font-size:0.72rem; color:#94a3b8; margin-top:2px; }
+        /* 反馈图片上传 */
+        .fb-img-upload-area { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:10px; align-items:flex-end; }
+        .fb-img-upload-btn { display:inline-flex; align-items:center; gap:4px; background:#f1f5f9; border:2px dashed #cbd5e1; border-radius:12px; padding:10px 16px; cursor:pointer; font-size:0.75rem; color:#5e6f8d; transition:0.2s; }
+        .fb-img-upload-btn:hover { border-color:#2a5298; color:#2a5298; background:#eef2ff; }
+        .fb-img-preview-wrap { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:4px; }
+        .fb-img-preview { position:relative; width:80px; height:80px; border-radius:10px; overflow:hidden; border:1px solid #eef2f6; flex-shrink:0; }
+        .fb-img-preview img { width:100%; height:100%; object-fit:cover; }
+        .fb-img-preview .fb-img-remove { position:absolute; top:2px; right:2px; width:20px; height:20px; background:rgba(0,0,0,0.6); color:white; border:none; border-radius:50%; cursor:pointer; font-size:0.6rem; display:flex; align-items:center; justify-content:center; line-height:1; }
+        .fb-img-gallery { display:flex; gap:6px; flex-wrap:wrap; margin-top:10px; }
+        .fb-img-thumb { width:100px; height:100px; border-radius:10px; overflow:hidden; border:1px solid #eef2f6; cursor:pointer; transition:0.2s; flex-shrink:0; }
+        .fb-img-thumb:hover { transform:scale(1.03); box-shadow:0 4px 12px rgba(0,0,0,0.15); }
+        .fb-img-thumb img { width:100%; height:100%; object-fit:cover; }
+        /* 图片灯箱 */
+        .fb-lightbox { position:fixed; top:0;left:0;right:0;bottom:0; background:rgba(0,0,0,0.85); z-index:9999; display:flex; align-items:center; justify-content:center; cursor:pointer; }
+        .fb-lightbox img { max-width:90vw; max-height:90vh; border-radius:12px; box-shadow:0 20px 50px rgba(0,0,0,0.5); }
+        .fb-lightbox-close { position:absolute; top:20px; right:30px; color:white; font-size:2rem; cursor:pointer; background:none; border:none; opacity:0.7; }
+        .fb-lightbox-close:hover { opacity:1; }
+        .fb-delete-btn { background:transparent; border:none; color:#94a3b8; cursor:pointer; font-size:0.7rem; padding:2px 6px; border-radius:8px; transition:0.2s; }
+        .fb-delete-btn:hover { background:#ffedea; color:#c0392b; }
     </style>
 </head>
 <body>
@@ -10056,6 +10116,9 @@ URL.revokeObjectURL(url);
         { id: 'examBank', name: '📝 考试题库', subs: [
             { nav: 'questionBank', label: '📝 题库', guestHidden: false },
             { nav: 'examSystem', label: '📋 考试系统', guestHidden: true }
+        ]},
+        { id: 'feedbackCenter', name: '💬 反馈中心', subs: [
+            { nav: 'feedback', label: '💡 问题/建议反馈', guestHidden: false }
         ]}
     ];
 
@@ -10166,8 +10229,9 @@ URL.revokeObjectURL(url);
         else if (nav === 'examSystem') renderExamSystem();
         else if (nav === 'errorAnalysis') renderErrorAnalysis();
         else if (nav === 'learningMapView') renderLearningMapView();
+        else if (nav === 'feedback') renderFeedback();
     }
-    
+
     // ==================== 截图功能通用函数 ====================
     // Canvas圆角矩形辅助函数
     function roundRect(ctx, x, y, w, h, r) {
@@ -19996,6 +20060,525 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
         key: function(i) { return _realLS.key(i); }
     };
     try { Object.defineProperty(window, 'localStorage', { value: _lsProxy, writable: false, configurable: false }); } catch(e) {}
+
+    // ==================== 反馈中心 ====================
+    const FEEDBACK_KEY = 'app_feedback_entries';
+    const FEEDBACK_VOTER_KEY = 'app_feedback_voter_id';
+
+    function getVoterId() {
+        var vid = sessionStorage.getItem(FEEDBACK_VOTER_KEY);
+        if (!vid) { vid = 'v_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8); sessionStorage.setItem(FEEDBACK_VOTER_KEY, vid); }
+        return vid;
+    }
+
+    function getFeedbackEntries() {
+        try { return JSON.parse(localStorage.getItem(FEEDBACK_KEY) || '[]'); } catch(e) { return []; }
+    }
+
+    function saveFeedbackEntries(entries) {
+        // 检查存储大小，超过4MB时清理旧图片
+        var json = JSON.stringify(entries);
+        if (json.length > 4 * 1024 * 1024) {
+            // 从最旧的条目开始移除图片以腾出空间
+            for (var i = entries.length - 1; i >= 0 && json.length > 3.5 * 1024 * 1024; i--) {
+                if (entries[i].images && entries[i].images.length > 0) {
+                    entries[i].images = [];
+                    entries[i]._imagesCleaned = true;
+                }
+                json = JSON.stringify(entries);
+            }
+        }
+        localStorage.setItem(FEEDBACK_KEY, json);
+    }
+
+    function addFeedbackEntry(title, content, category, author, images) {
+        var entries = getFeedbackEntries();
+        var entry = {
+            id: 'fb_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
+            title: title,
+            content: content,
+            category: category,
+            author: author || '匿名用户',
+            createdAt: new Date().toISOString(),
+            likes: 0,
+            likedBy: [],
+            replies: [],
+            images: images || []
+        };
+        entries.unshift(entry);
+        saveFeedbackEntries(entries);
+        return entry;
+    }
+
+    function toggleLike(entryId) {
+        var entries = getFeedbackEntries();
+        var entry = entries.find(function(e) { return e.id === entryId; });
+        if (!entry) return;
+        var vid = getVoterId();
+        var idx = entry.likedBy.indexOf(vid);
+        if (idx >= 0) {
+            // 已赞，取消
+            entry.likes = Math.max(0, entry.likes - 1);
+            entry.likedBy.splice(idx, 1);
+        } else {
+            entry.likes += 1;
+            entry.likedBy.push(vid);
+        }
+        saveFeedbackEntries(entries);
+        return entry;
+    }
+
+    function addReply(entryId, content, author, images) {
+        var entries = getFeedbackEntries();
+        var entry = entries.find(function(e) { return e.id === entryId; });
+        if (!entry) return;
+        entry.replies.push({
+            id: 'rp_' + Date.now(),
+            content: content,
+            author: author || '管理员',
+            createdAt: new Date().toISOString(),
+            images: images || []
+        });
+        saveFeedbackEntries(entries);
+        return entry;
+    }
+
+    function deleteFeedbackEntry(entryId) {
+        var entries = getFeedbackEntries();
+        var idx = entries.findIndex(function(e) { return e.id === entryId; });
+        if (idx < 0) return;
+        var title = entries[idx].title;
+        entries.splice(idx, 1);
+        saveFeedbackEntries(entries);
+        logAdminAction('反馈', '删除反馈', '标题：' + title);
+        return true;
+    }
+
+    function deleteReply(entryId, replyId) {
+        var entries = getFeedbackEntries();
+        var entry = entries.find(function(e) { return e.id === entryId; });
+        if (!entry) return;
+        var rpIdx = entry.replies.findIndex(function(r) { return r.id === replyId; });
+        if (rpIdx < 0) return;
+        entry.replies.splice(rpIdx, 1);
+        saveFeedbackEntries(entries);
+        logAdminAction('反馈', '删除回复', '反馈ID：' + entryId + ' 回复ID：' + replyId);
+        return true;
+    }
+
+    // 图片压缩：限制最大宽度800px，JPEG质量0.6，保持合理大小
+    function compressImage(file) {
+        return new Promise(function(resolve, reject) {
+            if (!file || !file.type.match(/^image\//)) { reject(new Error('非图片文件')); return; }
+            var reader = new FileReader();
+            reader.onload = function(e) {
+                var img = new Image();
+                img.onload = function() {
+                    var maxW = 800, maxH = 800;
+                    var w = img.width, h = img.height;
+                    if (w > maxW || h > maxH) {
+                        var ratio = Math.min(maxW / w, maxH / h);
+                        w = Math.round(w * ratio);
+                        h = Math.round(h * ratio);
+                    }
+                    var canvas = document.createElement('canvas');
+                    canvas.width = w;
+                    canvas.height = h;
+                    var ctx = canvas.getContext('2d');
+                    ctx.drawImage(img, 0, 0, w, h);
+                    var dataUrl = canvas.toDataURL('image/jpeg', 0.6);
+                    resolve({ data: dataUrl, name: file.name, width: w, height: h });
+                };
+                img.onerror = function() { reject(new Error('图片加载失败')); };
+                img.src = e.target.result;
+            };
+            reader.onerror = function() { reject(new Error('读取失败')); };
+            reader.readAsDataURL(file);
+        });
+    }
+
+    // 全局存储当前编辑中的图片预览（表单级）
+    window._fbPendingImages = window._fbPendingImages || [];
+
+    function renderFeedback() {
+        var container = document.getElementById('mainContent');
+        var entries = getFeedbackEntries();
+        var voterId = getVoterId();
+        var admin = isAdminMode();
+
+        // 统计
+        var totalCount = entries.length;
+        var problemCount = entries.filter(function(e) { return e.category === 'problem'; }).length;
+        var suggestionCount = entries.filter(function(e) { return e.category === 'suggestion'; }).length;
+        var repliedCount = entries.filter(function(e) { return e.replies && e.replies.length > 0; }).length;
+
+        // 当前筛选
+        if (!window._feedbackFilter) window._feedbackFilter = 'all';
+        var filter = window._feedbackFilter;
+
+        var html = '';
+        // 标题区
+        html += '<div class="report-box" style="margin-bottom:16px;">';
+        html += '<div class="report-title" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;">';
+        html += '<span>💬 反馈中心</span>';
+        html += '<button class="primary" id="fbNewBtn" style="font-size:0.8rem;">✏️ 提交反馈</button>';
+        html += '</div>';
+        html += '<div style="font-size:0.8rem;color:#5e6f8d;">有问题或建议？欢迎留言，管理员会尽快回复</div></div>';
+
+        // 统计条
+        html += '<div class="feedback-stat-bar">';
+        html += '<div class="feedback-stat-item"><div class="stat-num">' + totalCount + '</div><div class="stat-label">📝 全部反馈</div></div>';
+        html += '<div class="feedback-stat-item"><div class="stat-num">' + problemCount + '</div><div class="stat-label">🐛 问题</div></div>';
+        html += '<div class="feedback-stat-item"><div class="stat-num">' + suggestionCount + '</div><div class="stat-label">💡 建议</div></div>';
+        html += '<div class="feedback-stat-item"><div class="stat-num">' + repliedCount + '</div><div class="stat-label">✅ 已回复</div></div>';
+        html += '</div>';
+
+        // 表单区（默认隐藏）
+        html += '<div class="feedback-form-card" id="fbFormCard" style="display:none;">';
+        html += '<div style="font-weight:700;font-size:0.95rem;color:#1f3a6b;margin-bottom:14px;">📝 提交反馈</div>';
+        html += '<select class="fb-select" id="fbCatSelect"><option value="suggestion">💡 建议</option><option value="problem">🐛 问题</option></select>';
+        html += '<input class="fb-input" id="fbTitleInput" placeholder="一句话概括你的反馈（必填）" maxlength="100">';
+        html += '<textarea class="fb-textarea" id="fbContentInput" placeholder="详细描述你的建议或遇到的问题...(必填)"></textarea>';
+        html += '<div class="fb-img-preview-wrap" id="fbImgPreviewWrap"></div>';
+        html += '<div class="fb-img-upload-area">';
+        html += '<label class="fb-img-upload-btn" id="fbImgUploadLabel">📷 添加图片（最多3张）<input type="file" id="fbImgInput" accept="image/*" multiple style="display:none;"></label>';
+        html += '<span style="font-size:0.65rem;color:#94a3b8;">支持 JPG/PNG/GIF，自动压缩</span>';
+        html += '</div>';
+        html += '<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">';
+        html += '<input class="fb-input" id="fbAuthorInput" placeholder="你的昵称（选填，默认匿名）" style="flex:1;min-width:160px;margin-bottom:0;" maxlength="20">';
+        html += '<button class="fb-submit" id="fbSubmitBtn">🚀 提交反馈</button>';
+        html += '<button class="small-outline" id="fbCancelBtn">取消</button>';
+        html += '</div></div>';
+
+        // 筛选标签
+        html += '<div class="feedback-tabs">';
+        html += '<button class="feedback-tab' + (filter === 'all' ? ' active' : '') + '" data-filter="all">📝 全部</button>';
+        html += '<button class="feedback-tab' + (filter === 'problem' ? ' active' : '') + '" data-filter="problem">🐛 问题</button>';
+        html += '<button class="feedback-tab' + (filter === 'suggestion' ? ' active' : '') + '" data-filter="suggestion">💡 建议</button>';
+        html += '<button class="feedback-tab' + (filter === 'replied' ? ' active' : '') + '" data-filter="replied">✅ 已回复</button>';
+        if (admin) html += '<button class="feedback-tab' + (filter === 'unreplied' ? ' active' : '') + '" data-filter="unreplied">⏳ 待回复</button>';
+        html += '</div>';
+
+        // 列表
+        var filtered = entries.filter(function(e) {
+            if (filter === 'all') return true;
+            if (filter === 'problem') return e.category === 'problem';
+            if (filter === 'suggestion') return e.category === 'suggestion';
+            if (filter === 'replied') return e.replies && e.replies.length > 0;
+            if (filter === 'unreplied') return !e.replies || e.replies.length === 0;
+            return true;
+        });
+
+        if (filtered.length === 0) {
+            html += '<div class="empty-placeholder" style="padding:40px;">暂无反馈，来做第一个留言的人吧 ✨</div>';
+        } else {
+            html += '<div class="fb-card-grid">';
+            filtered.forEach(function(entry) {
+                var isLiked = entry.likedBy && entry.likedBy.indexOf(voterId) >= 0;
+                var catLabel = entry.category === 'problem' ? '🐛 问题' : '💡 建议';
+                var catClass = entry.category === 'problem' ? 'problem' : 'suggestion';
+                var time = new Date(entry.createdAt);
+                var timeStr = time.getFullYear() + '-' + String(time.getMonth()+1).padStart(2,'0') + '-' + String(time.getDate()).padStart(2,'0') + ' ' + String(time.getHours()).padStart(2,'0') + ':' + String(time.getMinutes()).padStart(2,'0');
+
+                html += '<div class="feedback-card' + (entry.category === 'suggestion' ? ' fb-card-suggestion' : ' fb-card-problem') + '">';
+                html += '<div class="fb-header">';
+                html += '<div style="flex:1;min-width:0;">';
+                html += '<span class="fb-cat-tag ' + catClass + '">' + catLabel + '</span> ';
+                html += '<span class="fb-title">' + escapeHtml(entry.title) + '</span>';
+                html += '</div>';
+                if (admin) html += '<button class="fb-delete-btn" data-del-fb="' + entry.id + '" title="删除此反馈">🗑️</button>';
+                html += '</div>';
+                html += '<div class="fb-body">' + escapeHtml(entry.content) + '</div>';
+                // 图片展示
+                if (entry.images && entry.images.length > 0) {
+                    html += '<div class="fb-img-gallery">';
+                    entry.images.forEach(function(img, imgIdx) {
+                        html += '<div class="fb-img-thumb" onclick="window._fbLightbox(\'' + entry.id + '_' + imgIdx + '\')">';
+                        html += '<img src="' + img.data + '" alt="图片' + (imgIdx + 1) + '" loading="lazy">';
+                        html += '</div>';
+                    });
+                    html += '</div>';
+                }
+                html += '<div class="fb-meta">';
+                html += '<span>👤 ' + escapeHtml(entry.author) + '</span>';
+                html += '<span>🕐 ' + timeStr + '</span>';
+                html += '<button class="fb-like-btn' + (isLiked ? ' liked' : '') + '" data-like="' + entry.id + '">' + (isLiked ? '❤️ ' : '🤍 ') + (entry.likes || 0) + '</button>';
+                html += '<button class="fb-reply-toggle" data-toggle="' + entry.id + '">💬 回复 (' + (entry.replies ? entry.replies.length : 0) + ')</button>';
+                html += '</div>';
+
+                // 回复区
+                html += '<div class="fb-replies" id="fbReplies_' + entry.id + '" style="display:none;">';
+                if (entry.replies && entry.replies.length > 0) {
+                    entry.replies.forEach(function(rp) {
+                        var rpTime = new Date(rp.createdAt);
+                        var rpTimeStr = rpTime.getFullYear() + '-' + String(rpTime.getMonth()+1).padStart(2,'0') + '-' + String(rpTime.getDate()).padStart(2,'0') + ' ' + String(rpTime.getHours()).padStart(2,'0') + ':' + String(rpTime.getMinutes()).padStart(2,'0');
+                        html += '<div class="fb-reply-item">';
+                        html += '<div class="reply-author" style="display:flex;justify-content:space-between;align-items:center;">';
+                        html += '<span>👤 ' + escapeHtml(rp.author) + '</span>';
+                        if (admin) html += '<button class="fb-delete-btn" data-del-rp="' + entry.id + '" data-rp-id="' + rp.id + '" title="删除此回复">🗑️</button>';
+                        html += '</div>';
+                        html += '<div class="reply-content">' + escapeHtml(rp.content) + '</div>';
+                        if (rp.images && rp.images.length > 0) {
+                            html += '<div class="fb-img-gallery">';
+                            rp.images.forEach(function(rimg, ridx) {
+                                html += '<div class="fb-img-thumb" onclick="window._fbLightbox(\'' + entry.id + '_rp' + rp.id + '_' + ridx + '\')">';
+                                html += '<img src="' + rimg.data + '" alt="回复图片" loading="lazy">';
+                                html += '</div>';
+                            });
+                            html += '</div>';
+                        }
+                        html += '<div class="reply-time">' + rpTimeStr + '</div>';
+                        html += '</div>';
+                    });
+                } else {
+                    html += '<div style="font-size:0.75rem;color:#94a3b8;padding:8px 0;">暂无回复</div>';
+                }
+                // 管理员回复表单
+                if (admin) {
+                    html += '<div class="fb-reply-form" style="flex-direction:column;align-items:stretch;">';
+                    html += '<div style="display:flex;gap:8px;align-items:flex-end;">';
+                    html += '<textarea class="fb-reply-input" id="fbReplyInput_' + entry.id + '" placeholder="输入回复..." rows="1" style="flex:1;"></textarea>';
+                    html += '<button class="fb-reply-submit" data-reply="' + entry.id + '">回复</button>';
+                    html += '</div>';
+                    html += '<div class="fb-img-preview-wrap" id="fbReplyImgPreview_' + entry.id + '"></div>';
+                    html += '<label class="fb-img-upload-btn" style="margin-top:6px;font-size:0.7rem;padding:6px 12px;">📷 添加图片（最多3张）<input type="file" class="fb-reply-img-input" data-reply-img="' + entry.id + '" accept="image/*" multiple style="display:none;"></label>';
+                    html += '</div>';
+                }
+                html += '</div>';
+                html += '</div>';
+            });
+            html += '</div>';
+        }
+
+        container.innerHTML = html;
+
+        // 绑定事件
+        setTimeout(function() {
+            var newBtn = document.getElementById('fbNewBtn');
+            var formCard = document.getElementById('fbFormCard');
+            var cancelBtn = document.getElementById('fbCancelBtn');
+            var submitBtn = document.getElementById('fbSubmitBtn');
+            var imgInput = document.getElementById('fbImgInput');
+            var imgPreviewWrap = document.getElementById('fbImgPreviewWrap');
+
+            if (newBtn) newBtn.onclick = function() {
+                formCard.style.display = 'block';
+                newBtn.style.display = 'none';
+                window._fbPendingImages = [];
+                renderImgPreviews(imgPreviewWrap, window._fbPendingImages);
+                formCard.scrollIntoView({ behavior: 'smooth' });
+            };
+            if (cancelBtn) cancelBtn.onclick = function() {
+                formCard.style.display = 'none';
+                newBtn.style.display = '';
+                document.getElementById('fbTitleInput').value = '';
+                document.getElementById('fbContentInput').value = '';
+                document.getElementById('fbAuthorInput').value = '';
+                window._fbPendingImages = [];
+                renderImgPreviews(imgPreviewWrap, []);
+            };
+            if (submitBtn) submitBtn.onclick = function() {
+                var title = (document.getElementById('fbTitleInput').value || '').trim();
+                var content = (document.getElementById('fbContentInput').value || '').trim();
+                var category = document.getElementById('fbCatSelect').value;
+                var author = (document.getElementById('fbAuthorInput').value || '').trim();
+                if (!title) { showToast('请输入标题', 'warning'); return; }
+                if (!content) { showToast('请输入反馈内容', 'warning'); return; }
+                addFeedbackEntry(title, content, category, author, window._fbPendingImages.slice());
+                showToast('✅ 反馈已提交，感谢你的建议！', 'success');
+                window._fbPendingImages = [];
+                window._feedbackFilter = 'all';
+                renderFeedback();
+            };
+
+            // 表单图片上传
+            if (imgInput) {
+                imgInput.onchange = function() {
+                    handleImageSelect(imgInput.files, window._fbPendingImages, imgPreviewWrap, 3);
+                    imgInput.value = '';
+                };
+            }
+
+            // 筛选标签
+            document.querySelectorAll('.feedback-tab').forEach(function(tab) {
+                tab.onclick = function() {
+                    window._feedbackFilter = tab.dataset.filter;
+                    renderFeedback();
+                };
+            });
+
+            // 点赞
+            document.querySelectorAll('.fb-like-btn').forEach(function(btn) {
+                btn.onclick = function() {
+                    var entryId = btn.dataset.like;
+                    toggleLike(entryId);
+                    renderFeedback();
+                };
+            });
+
+            // 管理员删除反馈
+            if (admin) {
+                document.querySelectorAll('.fb-delete-btn[data-del-fb]').forEach(function(btn) {
+                    btn.onclick = function(e) { e.stopPropagation();
+                        var entryId = btn.dataset.delFb;
+                        confirmDelete('确定要删除这条反馈吗？').then(function(ok) {
+                            if (ok) { deleteFeedbackEntry(entryId); renderFeedback(); }
+                        });
+                    };
+                });
+                document.querySelectorAll('.fb-delete-btn[data-del-rp]').forEach(function(btn) {
+                    btn.onclick = function(e) { e.stopPropagation();
+                        var entryId = btn.dataset.delRp;
+                        var rpId = btn.dataset.rpId;
+                        confirmDelete('确定要删除这条回复吗？').then(function(ok) {
+                            if (ok) { deleteReply(entryId, rpId); renderFeedback(); }
+                        });
+                    };
+                });
+            }
+
+            // 展开/收起回复
+            document.querySelectorAll('.fb-reply-toggle').forEach(function(btn) {
+                btn.onclick = function() {
+                    var entryId = btn.dataset.toggle;
+                    var repliesDiv = document.getElementById('fbReplies_' + entryId);
+                    if (repliesDiv) {
+                        repliesDiv.style.display = repliesDiv.style.display === 'none' ? 'block' : 'none';
+                    }
+                };
+            });
+
+            // 管理员回复（含图片）
+            if (admin) {
+                // 回复中的图片暂存
+                window._fbReplyPendingImages = window._fbReplyPendingImages || {};
+                document.querySelectorAll('.fb-reply-submit').forEach(function(btn) {
+                    btn.onclick = function() {
+                        var entryId = btn.dataset.reply;
+                        var input = document.getElementById('fbReplyInput_' + entryId);
+                        var replyContent = (input.value || '').trim();
+                        if (!replyContent) { showToast('请输入回复内容', 'warning'); return; }
+                        var rpImages = window._fbReplyPendingImages[entryId] || [];
+                        addReply(entryId, replyContent, '管理员', rpImages);
+                        delete window._fbReplyPendingImages[entryId];
+                        showToast('✅ 回复已发送', 'success');
+                        renderFeedback();
+                    };
+                });
+                // 回复图片上传
+                document.querySelectorAll('.fb-reply-img-input').forEach(function(inp) {
+                    var entryId = inp.dataset.replyImg;
+                    if (!window._fbReplyPendingImages[entryId]) window._fbReplyPendingImages[entryId] = [];
+                    inp.onchange = function() {
+                        var previewWrap = document.getElementById('fbReplyImgPreview_' + entryId);
+                        handleImageSelect(inp.files, window._fbReplyPendingImages[entryId], previewWrap, 3);
+                        inp.value = '';
+                    };
+                });
+            }
+
+            // 自动展开已回复的条目（或管理员模式下展开所有待回复的）
+            if (filter === 'replied' || (admin && filter === 'unreplied')) {
+                document.querySelectorAll('.fb-replies').forEach(function(div) {
+                    div.style.display = 'block';
+                });
+            }
+        }, 50);
+    }
+
+    // 渲染图片预览缩略图
+    function renderImgPreviews(wrap, images) {
+        if (!wrap) return;
+        var html = '';
+        images.forEach(function(img, i) {
+            html += '<div class="fb-img-preview">';
+            html += '<img src="' + img.data + '" alt="预览">';
+            html += '<button class="fb-img-remove" data-rmidx="' + i + '">✕</button>';
+            html += '</div>';
+        });
+        wrap.innerHTML = html;
+        wrap.querySelectorAll('.fb-img-remove').forEach(function(btn) {
+            btn.onclick = function() {
+                var idx = parseInt(btn.dataset.rmidx);
+                images.splice(idx, 1);
+                renderImgPreviews(wrap, images);
+            };
+        });
+    }
+
+    // 处理图片选择
+    function handleImageSelect(files, targetArray, previewWrap, maxCount) {
+        var remaining = maxCount - targetArray.length;
+        if (remaining <= 0) { showToast('最多只能上传' + maxCount + '张图片', 'warning'); return; }
+        var toProcess = [];
+        for (var i = 0; i < Math.min(files.length, remaining); i++) {
+            toProcess.push(files[i]);
+        }
+        if (files.length > remaining) { showToast('最多' + maxCount + '张，超出部分已忽略', 'warning'); }
+        var promises = toProcess.map(function(f) { return compressImage(f).catch(function() { return null; }); });
+        Promise.all(promises).then(function(results) {
+            results.forEach(function(r) { if (r) targetArray.push(r); });
+            renderImgPreviews(previewWrap, targetArray);
+        });
+    }
+
+    // 图片灯箱
+    window._fbLightbox = function(key) {
+        var parts = key.split('_rp');
+        var entryId = parts[0];
+        var replyInfo = parts.length > 1 ? parts[1] : null;
+        var entries = getFeedbackEntries();
+        var entry = entries.find(function(e) { return e.id === entryId; });
+        if (!entry) return;
+
+        var images = [];
+        if (replyInfo) {
+            // 回复图片
+            var rpParts = replyInfo.split('_');
+            var rpId = rpParts[0];
+            var reply = entry.replies.find(function(r) { return r.id === 'rp_' + rpId; });
+            if (reply && reply.images) images = reply.images;
+        } else {
+            if (entry.images) images = entry.images;
+        }
+
+        if (images.length === 0) return;
+        var idx = 0;
+        if (replyInfo) {
+            var rpParts2 = replyInfo.split('_');
+            idx = parseInt(rpParts2[rpParts2.length - 1]) || 0;
+        } else {
+            var entryParts = key.split('_');
+            idx = parseInt(entryParts[entryParts.length - 1]) || 0;
+        }
+        idx = Math.min(Math.max(0, idx), images.length - 1);
+
+        showLightbox(images, idx);
+    };
+
+    function showLightbox(images, startIdx) {
+        var existing = document.querySelector('.fb-lightbox');
+        if (existing) existing.remove();
+        var idx = startIdx || 0;
+        var overlay = document.createElement('div');
+        overlay.className = 'fb-lightbox';
+        overlay.innerHTML = '<button class="fb-lightbox-close">✕</button><img src="' + images[idx].data + '" alt="图片">';
+        overlay.onclick = function(e) {
+            if (e.target === overlay || e.target.className === 'fb-lightbox-close') {
+                overlay.remove();
+            }
+        };
+        // 左右键切换
+        overlay.onkeydown = function(e) {
+            if (e.key === 'ArrowRight') { idx = (idx + 1) % images.length; overlay.querySelector('img').src = images[idx].data; }
+            if (e.key === 'ArrowLeft') { idx = (idx - 1 + images.length) % images.length; overlay.querySelector('img').src = images[idx].data; }
+            if (e.key === 'Escape') { overlay.remove(); }
+        };
+        document.body.appendChild(overlay);
+        overlay.focus();
+        overlay.setAttribute('tabindex', '0');
+        overlay.focus();
+    }
 
     // 启动：处理飞书OAuth回调 + 云端拉数据 + 初始化
     var _initOauthDone = false;
