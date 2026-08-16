@@ -3517,17 +3517,43 @@
         return (bestDist <= 1 && bestName) ? bestName : name;
     }
 
-    // 解析飞书表格中的日期值（兼容字符串、数字、Date对象）
+    // 解析飞书表格中的日期值（兼容字符串、数字、Date对象、中文年月日、无年份简写）
     function parseFeishuDate(val) {
         if (!val) return null;
-        if (val instanceof Date) return val;
+        if (val instanceof Date) {
+            if (isNaN(val.getTime())) return null;
+            return new Date(val.getFullYear(), val.getMonth(), val.getDate());
+        }
         var str = String(val).trim();
-        // Excel序列号
-        var num = parseFloat(str);
-        if (!isNaN(num) && num > 40000 && num < 100000) return excelSerialToDate(num);
-        // 常见日期格式：2026/7/12, 2026-07-12, 2026.7.12
-        var m = str.match(/(\d{4})[\/\-\.](\d{1,2})[\/\-\.](\d{1,2})/);
-        if (m) return new Date(parseInt(m[1]), parseInt(m[2])-1, parseInt(m[3]));
+        if (!str || str === '日期' || str === '时间') return null;
+        // 纯数字：Excel序列号（40000-100000 对应 2009~2173 年，含浮点误差如 46188.99999）或 8位 YYYYMMDD
+        if (/^\d+(\.\d+)?$/.test(str)) {
+            var num = parseFloat(str);
+            if (num > 40000 && num < 100000) return excelSerialToDate(num);
+            if (/^\d{8}$/.test(str)) {
+                var y8 = parseInt(str.substring(0, 4)), m8 = parseInt(str.substring(4, 6)), d8 = parseInt(str.substring(6, 8));
+                if (y8 >= 2000 && m8 >= 1 && m8 <= 12 && d8 >= 1 && d8 <= 31) return new Date(y8, m8 - 1, d8);
+            }
+            // 含小数但不在序列号范围（如 "7.12" 表示 7月12日）→ 继续尝试下方日期格式
+            if (str.indexOf('.') < 0) return null;
+        }
+        // 带年份：2026-07-12 / 2026/7/12 / 2026.7.12 / 2026年7月12日（可带时间后缀）
+        var m = str.match(/(\d{4})[年\/\-\.](\d{1,2})[月\/\-\.](\d{1,2})/);
+        if (m) {
+            var yy = parseInt(m[1]), mm = parseInt(m[2]), dd = parseInt(m[3]);
+            if (yy >= 2000 && mm >= 1 && mm <= 12 && dd >= 1 && dd <= 31) {
+                return new Date(yy, mm - 1, dd);
+            }
+        }
+        // 无年份：7月12日 / 7-12 / 7/12 / 7.12 → 补当年
+        var m2 = str.match(/^(\d{1,2})[月\/\-\.](\d{1,2})/);
+        if (m2) {
+            var mm2 = parseInt(m2[1]), dd2 = parseInt(m2[2]);
+            if (mm2 >= 1 && mm2 <= 12 && dd2 >= 1 && dd2 <= 31) {
+                var now = new Date();
+                return new Date(now.getFullYear(), mm2 - 1, dd2);
+            }
+        }
         return null;
     }
 
@@ -14736,8 +14762,9 @@ async function importQBFromFeishu() {
     }
 
     function excelSerialToDate(serial) {
-        var d = new Date((serial - 25569) * 86400 * 1000);
-        return new Date(d.getFullYear(), d.getMonth(), d.getDate());
+        // 用 UTC 取日期部分 + Math.round 消除 46188.99999999 类浮点误差（避免时区偏移导致日期+1天）
+        var d = new Date(Math.round((serial - 25569) * 86400) * 1000);
+        return new Date(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
     }
 
     function formatDate(d) {
@@ -15075,14 +15102,8 @@ async function importQBFromFeishu() {
                         var row = res.rows[r];
                         if (!row || row.length === 0) continue;
                         var dateVal = row[res.colDate];
-                        if (dateVal === null || dateVal === undefined || dateVal === '日期') continue;
-                        var dateObj;
-                        if (typeof dateVal === 'number') {
-                            dateObj = excelSerialToDate(dateVal);
-                        } else {
-                            dateObj = new Date(dateVal);
-                            if (isNaN(dateObj.getTime())) continue;
-                        }
+                        var dateObj = parseFeishuDate(dateVal);
+                        if (!dateObj) continue;
                         var category = (row[res.colCategory] || '').toString().trim();
                         var reviewer = (row[res.colReviewer] || '').toString().trim();
                         reviewer = reviewer.replace(/解答失误$/, '').replace(/解答$/, '').trim();
