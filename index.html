@@ -675,17 +675,17 @@
             {key:"practical",item:"实操考试",standard:"≥90分",value:s.stageProgress.practicalScore??(s.stageProgress.practicalPassed?95:0),unit:"分",passed:s.stageProgress.practicalPassed}],
           checkCompletion:s=>s.stageProgress.theoryPassed&&s.stageProgress.onlinePassed&&s.stageProgress.practicalPassed, getScore:s=>{ let sc=0; if(s.stageProgress.theoryPassed) sc+=40; if(s.stageProgress.onlinePassed) sc+=30; if(s.stageProgress.practicalPassed) sc+=30; return sc; }
         },
-        { id:1, name:"二、师傅带教", sub:"曼哈顿/雅典娜/责任方/判责", weight:0.15, standards:"完成曼哈顿、雅典娜、责任方、判责四大模块", returnRule:"无退回机制", tableHeaders:["模块","标准","状态","是否通过"], getRows:s=>[
-            {key:"manhattan",item:"曼哈顿系统",standard:"完成学习",value:s.stageProgress.manhattan?"已完成":"未进行",passed:s.stageProgress.manhattan||false},
-            {key:"athena",item:"雅典娜系统",standard:"完成学习",value:s.stageProgress.athena?"已完成":"未进行",passed:s.stageProgress.athena||false},
-            {key:"responsibility",item:"责任方详解",standard:"掌握",value:s.stageProgress.responsibility?"已完成":"未进行",passed:s.stageProgress.responsibility||false},
-            {key:"judgment",item:"判责详解",standard:"掌握",value:s.stageProgress.judgment?"已完成":"未进行",passed:s.stageProgress.judgment||false}],
+        { id:1, name:"二、师傅带教", sub:"曼哈顿/雅典娜/责任方/判责", weight:0.15, standards:"完成曼哈顿、雅典娜、责任方、判责四大模块", returnRule:"无退回机制", tableHeaders:["模块","文档内容","完成标准","状态","是否通过"], getRows:s=>[
+            {key:"manhattan",item:"曼哈顿系统",doc:{label:"📄 打开文档",url:"https://zhuanspirit.feishu.cn/docx/Av5CdYKQIozbqcxmIgCcbFqNn2c"},standard:"完成学习",value:s.stageProgress.manhattan?"已完成":"未进行",passed:s.stageProgress.manhattan||false},
+            {key:"athena",item:"雅典娜系统",doc:{label:"📄 打开文档",url:"https://zhuanspirit.feishu.cn/wiki/MRbowELQ5im3sok0l90cPtaNnkg"},standard:"完成学习",value:s.stageProgress.athena?"已完成":"未进行",passed:s.stageProgress.athena||false},
+            {key:"responsibility",item:"责任方详解",doc:{label:"📄 打开文档",url:"https://doc.weixin.qq.com/sheet/e3_AI0AcAZaAOoqjyaU3PFS2y7G30sC4?scode=AJ4AfQfgAAwVwnC6acAXsABgYYAJo&tab=59dcqp"},standard:"掌握",value:s.stageProgress.responsibility?"已完成":"未进行",passed:s.stageProgress.responsibility||false},
+            {key:"judgment",item:"判责详解",doc:{label:"带教人员讲解"},standard:"掌握",value:s.stageProgress.judgment?"已完成":"未进行",passed:s.stageProgress.judgment||false}],
           checkCompletion:s=>s.stageProgress.mentorComplete, getScore:s=>{ let sc=0; if(s.stageProgress.manhattan) sc+=25; if(s.stageProgress.athena) sc+=25; if(s.stageProgress.responsibility) sc+=25; if(s.stageProgress.judgment) sc+=25; return sc; }
         },
-        { id:2, name:"三、实操全检考试", sub:"50台·通过率≥90%", weight:0.2, standards:"通过率≥90%方可晋级", returnRule:"未通过需重考，连续三次未通过自动退回师傅带教阶段", tableHeaders:["考试次数","项目","标准","通过率(%)","是否通过","附件"], getRows:s=>{ return s.stageProgress.fullCheckScores.map((score,idx)=>({attempt:idx+1,item:`第${idx+1}次考试`,standard:"≥90%",value:score,unit:"%",passed:score>=90})); }, extraFile:true,
+        { id:2, name:"三、实操全检考试", sub:"50台·通过率≥90%", weight:0.2, standards:"通过率≥90%方可晋级", returnRule:"未通过需重考，连续三次未通过自动退回师傅带教阶段", tableHeaders:["考试次数","项目","模板链接","标准","通过率(%)","是否通过","附件"], getRows:s=>{ return s.stageProgress.fullCheckScores.map((score,idx)=>({attempt:idx+1,item:`第${idx+1}次考试`,standard:"≥90%",value:score,unit:"%",passed:score>=90})); }, extraFile:true,
           checkCompletion:s=>s.stageProgress.fullCheckPassed, getScore:s=>Math.min(100, s.stageProgress.fullCheckRate||0)
         },
-        { id:3, name:"四、模拟判责", sub:"50单·通过率≥90%", weight:0.2, standards:"通过率≥90%方可晋级", returnRule:"未通过需重考，连续三次未通过自动退回实操全检阶段", tableHeaders:["考试次数","项目","标准","通过率(%)","是否通过","附件"], getRows:s=>{ return s.stageProgress.mockScores.map((score,idx)=>({attempt:idx+1,item:`第${idx+1}次考试`,standard:"≥90%",value:score,unit:"%",passed:score>=90})); }, extraFile:true,
+        { id:3, name:"四、模拟判责", sub:"50单·通过率≥90%", weight:0.2, standards:"通过率≥90%方可晋级", returnRule:"未通过需重考，连续三次未通过自动退回实操全检阶段", tableHeaders:["考试次数","项目","模板链接","标准","通过率(%)","是否通过","附件"], getRows:s=>{ return s.stageProgress.mockScores.map((score,idx)=>({attempt:idx+1,item:`第${idx+1}次考试`,standard:"≥90%",value:score,unit:"%",passed:score>=90})); }, extraFile:true,
           checkCompletion:s=>s.stageProgress.mockPassed, getScore:s=>Math.min(100, s.stageProgress.mockRate||0)
         },
         { id:4, name:"五、正式判责", sub:"周人效&失误", weight:0.25, standards:"周人效/失误阶梯考核", returnRule:"前3周连续两周未达标，自动退回模拟判责阶段", tableHeaders:["周次","人效要求","失误要求","出勤天数","学员人效","学员失误","准确率","达标"], getRows:s=>{
@@ -850,11 +850,12 @@
         if(stageId===2 || stageId===3){
             const scores = stageId===2 ? student.stageProgress.fullCheckScores : student.stageProgress.mockScores;
             const files = stageId===2 ? student.stageProgress.fullCheckFiles : student.stageProgress.mockFiles;
+            const templateUrl = stageId===2 ? 'https://zhuanspirit.feishu.cn/file/K6TgbBUA9ou1tzxvUKuc2sNRnvd' : 'https://zhuanspirit.feishu.cn/file/GaPkb88oEoF83sx3D3Cc69nUndg';
             for(let i=0;i<3;i++){
                 const scoreValue = i < scores.length ? scores[i] : '';
                 const isPassed = i < scores.length ? scores[i] >= 90 : false;
                 const fileData = files && files[i];
-                tableHtml+=`<tr><td style="text-align:center;">第${i+1}次</div><td>${stageId===2?'全检考试':'模拟判责'}<td>≥90%</div>
+                tableHtml+=`<tr><td style="text-align:center;">第${i+1}次</div><td>${stageId===2?'全检考试':'模拟判责'}<td><a href="${templateUrl}" target="_blank" style="color:#2a5298;text-decoration:underline;">📄 打开模板</a></div><td>≥90%</div>
                         <td>${isReadOnly?(scoreValue?scoreValue+'%':'未考试'):`<input type="number" class="attempt-score" data-attempt="${i}" value="${scoreValue}" step="1" min="0" max="100" placeholder="0" style="width:70px;"> %`}</div>
                     <td class="pass-cell">${isPassed?'<span class="pass-badge">通过</span>':(scoreValue?'<span class="fail-badge">未通过</span>':'<span class="null-badge">未考试</span>')}</div>
                         <td>${isReadOnly?(fileData?`<span class="file-link" onclick="${fileData.type==='link'?`window.open('${fileData.url}','_blank')`: `window.downloadStoredFile(${student.id},${stageId},${i})`}">${fileData.type==='link'?'🔗':'📎'} ${fileData.name}</span>`:'无附件'):
@@ -901,13 +902,14 @@
         } else {
             const rows=stage.getRows(student);
             rows.forEach(row=>{
+                const docHtml = row.doc ? `<td>${row.doc.url?`<a href="${row.doc.url}" target="_blank" style="color:#2a5298;text-decoration:underline;">${row.doc.label}</a>`:row.doc.label}</div>` : '';
                 if(isReadOnly){
                     let valueDisplay = row.passed ? (row.value + (row.unit||'')) : (row.value===0||row.value==="未进行"?'未进行':(row.value + (row.unit||'')));
-                    tableHtml+=`<tr><td style="text-align:center;">${row.item}</div><td>${row.standard}</div><td>${valueDisplay}</div><td>${row.passed?'<span class="pass-badge">通过</span>':'<span class="fail-badge">未通过</span>'}</div></tr>`;
+                    tableHtml+=`<tr><td style="text-align:center;">${row.item}</div>${docHtml}<td>${row.standard}</div><td>${valueDisplay}</div><td>${row.passed?'<span class="pass-badge">通过</span>':'<span class="fail-badge">未通过</span>'}</div></tr>`;
                 } else {
                     let inputHtml = (stageId<=1) ? `<select class="edit-value" data-key="${row.key}"><option value="true" ${row.passed?'selected':''}>通过/已完成</option><option value="false" ${!row.passed?'selected':''}>未通过/未开始</option></select>` :
                         `<input type="number" class="edit-value" data-key="${row.key}" value="${row.value}" step="1" min="0" max="100" placeholder="0" style="width:70px;"> <span>${row.unit||''}</span>`;
-                    tableHtml+=`<tr><td style="text-align:center;">${row.item}</div><td>${row.standard}</div><td>${inputHtml}</div><td>${row.passed?'<span class="pass-badge">通过</span>':'<span class="fail-badge">未通过</span>'}</div></tr>`;
+                    tableHtml+=`<tr><td style="text-align:center;">${row.item}</div>${docHtml}<td>${row.standard}</div><td>${inputHtml}</div><td>${row.passed?'<span class="pass-badge">通过</span>':'<span class="fail-badge">未通过</span>'}</div></tr>`;
                 }
             });
         }
@@ -10372,10 +10374,44 @@ URL.revokeObjectURL(url);
     document.addEventListener('DOMContentLoaded', loadData);
     // ==================== 题库模块 ====================
     const QB_STORAGE_KEY = 'questionBankData';
+    // 按答案推断题型：答案只有1个选项=单选，多个选项=多选；判断；其余视为问答题
+    function inferQuestionType(typeColVal, answerStr) {
+        typeColVal = String(typeColVal || '').trim();
+        answerStr = String(answerStr || '').trim();
+        // 判断题：题型列标注判断，或答案为 正确/错误/对/错/√/✓/×/✗
+        if (/判断|judge/i.test(typeColVal) || /^(正确|错误|对|错|√|✓|×|✗|true|false)[。.]?$/i.test(answerStr)) return 'judge';
+        // 纯字母答案（A / AC / A、C / a,b）
+        if (/^[A-Fa-f\s,，、;；]+$/.test(answerStr)) {
+            var letters = (answerStr.match(/[A-Fa-f]/g) || []);
+            if (letters.length === 1) return 'choice';
+            if (letters.length >= 2) return 'multi';
+        }
+        // 字母+分隔符开头的答案（A. xxx / A、C. xxx）
+        if (/^[A-Fa-f][.．、，,:：]/.test(answerStr)) {
+            var tokens = (answerStr.match(/[A-Fa-f][.．、，,:：]/g) || []);
+            if (tokens.length === 1) return 'choice';
+            if (tokens.length >= 2) return 'multi';
+        }
+        return 'qa';
+    }
+    // 旧数据迁移：qa 题按答案重新推断题型（题库只保留单选/多选/判断）
+    function migrateQBTypes(data) {
+        var migrated = false;
+        (data.questions || []).forEach(function(q) {
+            if (q.type === 'qa') {
+                var nt = inferQuestionType('', q.answer || '');
+                if (nt !== 'qa') { q.type = nt; migrated = true; }
+            }
+        });
+        if (migrated) {
+            try { localStorage.setItem(QB_STORAGE_KEY, JSON.stringify(data)); } catch(e) {}
+        }
+        return data;
+    }
     function getQuestionBank() {
         try {
             var local = localStorage.getItem(QB_STORAGE_KEY);
-            if (local) return JSON.parse(local);
+            if (local) return migrateQBTypes(JSON.parse(local));
             // Supabase 兜底：本地没有则尝试从云端加载
             var key = QB_STORAGE_KEY;
             var xhr = new XMLHttpRequest();
@@ -10388,7 +10424,7 @@ URL.revokeObjectURL(url);
                 if (rows && rows.length > 0 && rows[0].value) {
                     var data = JSON.parse(rows[0].value);
                     localStorage.setItem(QB_STORAGE_KEY, rows[0].value);
-                    return data;
+                    return migrateQBTypes(data);
                 }
             }
             return {categories:{},questions:[]};
@@ -10568,6 +10604,9 @@ URL.revokeObjectURL(url);
 
     // 处理上传后的去重合并
     async function processUploadedQuestions(qb, newQuestions, onSuccess) {
+        // 过滤问答题（题库只保留单选/多选/判断）
+        const qaSkipped = (newQuestions || []).filter(q => q.type === 'qa').length;
+        newQuestions = (newQuestions || []).filter(q => q.type !== 'qa');
         const existing = qb.questions || [];
         const { unique, duplicates } = findDuplicates(newQuestions, existing);
 
@@ -10620,7 +10659,7 @@ URL.revokeObjectURL(url);
         });
 
         saveQuestionBank(qb);
-        if (onSuccess) onSuccess(totalAdded, duplicates.length);
+        if (onSuccess) onSuccess(totalAdded, duplicates.length, qaSkipped);
     }
 
     async function clearQuestionBank() {
@@ -10788,7 +10827,7 @@ async function importQBFromFeishu() {
             var btn = overlay.querySelector('#qbfConfirm'); btn.disabled = true; btn.textContent = '⏳ 导入中...';
             try {
                 function getImgs(v){if(!v)return[];if(Array.isArray(v))return v.map(function(a){return a.fileToken||'';}).filter(Boolean);if(v.fileToken)return[v.fileToken];return[];}
-                var qb = getQuestionBank(), imported = 0, duplicated = 0;
+                var qb = getQuestionBank(), imported = 0, duplicated = 0, dupTypeUpdated = 0, skippedQa = 0;
                 console.log('[诊断] 列映射:',JSON.stringify(col),' 总行:',rows.length-1,' 库中已有:',(qb.questions||[]).length,'题');
                 console.log('[诊断] 首行数据:',JSON.stringify(rows[1]).substring(0,200));
                 for(var r = 1; r < rows.length; r++){
@@ -10801,14 +10840,23 @@ async function importQBFromFeishu() {
                     if(typeof categoryRaw === 'string'){}else if(Array.isArray(categoryRaw)){categoryRaw=categoryRaw.join(',');}else if(categoryRaw===null||categoryRaw===undefined){categoryRaw='';}else{categoryRaw=String(categoryRaw);}
                     var categories = String(categoryRaw).split(/[,，、;；\n]+/).map(function(c){return c.trim();}).filter(function(c){return c;});
                     if(categories.length===0) continue;
-                    // 去重：题目+答案+解析 完全一致则跳过
+                    // 按答案推断题型：答案1个选项=单选，多个=多选；问答题直接跳过
                     var qAnswer = gc(row,'答案')||'';
+                    var newType = inferQuestionType(gc(row,'题型')||'', qAnswer);
+                    if (newType === 'qa') { skippedQa++; continue; }
+                    // 去重：题目+答案+解析 完全一致则跳过（但更新已有题目的题型）
                     var qExplanation = gc(row,'答案解析')||'';
-                    var isDup = qb.questions.some(function(eq) {
-                        return eq.question.trim().toLowerCase() === qText.trim().toLowerCase()
+                    var isDup = false;
+                    for(var di=0; di<qb.questions.length; di++){
+                        var eq = qb.questions[di];
+                        if(eq.question.trim().toLowerCase() === qText.trim().toLowerCase()
                             && (eq.answer||'').trim().toLowerCase() === qAnswer.trim().toLowerCase()
-                            && (eq.explanation||'').trim().toLowerCase() === qExplanation.trim().toLowerCase();
-                    });
+                            && (eq.explanation||'').trim().toLowerCase() === qExplanation.trim().toLowerCase()){
+                            isDup = true;
+                            if(eq.type !== newType){ eq.type = newType; dupTypeUpdated++; }
+                            break;
+                        }
+                    }
                     if(isDup){ duplicated++; continue; }
                     categories.forEach(function(cat){
                         if(cat&&!qb.categories[cat]){var mo=Math.max(0,...Object.values(qb.categories).map(function(c){return c.order||0;}));qb.categories[cat]={name:cat,createdAt:new Date().toISOString(),order:mo+1};}
@@ -10844,8 +10892,7 @@ async function importQBFromFeishu() {
                     }
                     // 去除尾部全 null（如果所有选项都没图则不存）
                     while (optionImages.length > 0 && optionImages[optionImages.length-1] === null) optionImages.pop();
-                    var typeMap={'单选':'choice','多选':'choice','判断':'judge','问答':'qa','QA':'qa'};
-                    var type=typeMap[gc(row,'题型')||'']||(options.length>0?'choice':'qa');
+                    var type = newType;
                     // 每个独立分类生成一条题目记录
                     categories.forEach(function(cat){
                         qb.questions.push({
@@ -10859,8 +10906,8 @@ async function importQBFromFeishu() {
                     });
                 }
                 saveQuestionBank(qb); renderQuestionBank(); overlay.remove();
-                console.log('[诊断] 导入完成: 共导入'+imported+'题, 重复跳过'+duplicated+'题, 库中总计'+(qb.questions||[]).length+'题');
-                showToast('✅ 从飞书导入 '+imported+' 题'+(duplicated>0?'（'+duplicated+' 题重复已跳过）':'')+'','success');
+                console.log('[诊断] 导入完成: 共导入'+imported+'题, 重复跳过'+duplicated+'题, 更新题型'+dupTypeUpdated+'题, 跳过问答题'+skippedQa+'题, 库中总计'+(qb.questions||[]).length+'题');
+                showToast('✅ 从飞书导入 '+imported+' 题'+(duplicated>0?'（'+duplicated+' 题重复已跳过）':'')+(dupTypeUpdated>0?'（'+dupTypeUpdated+' 题已更新题型）':'')+(skippedQa>0?'（跳过 '+skippedQa+' 道问答题）':'')+'','success');
             } catch(e){console.log('导入失败',e); showToast('❌ 导入失败：'+e.message,'error'); btn.disabled=false; btn.textContent='✅ 确认导入';}
         };
     }
@@ -10968,8 +11015,8 @@ async function importQBFromFeishu() {
             const shown = results.slice(0, maxShow);
             sr.innerHTML = '<div style="margin-bottom:8px;font-size:0.8rem;color:#5e6f8d;">🔍 找到 <strong>' + results.length + '</strong> 道匹配题目' + (results.length > maxShow ? '（仅显示前' + maxShow + '道）' : '') + '</div>' +
                 shown.map((q, i) => {
-                    const typeLabel = q.type === 'choice' ? '选择题' : (q.type === 'judge' ? '判断题' : '问答题');
-                    const typeCls = q.type === 'choice' ? 'qb-tag-choice' : (q.type === 'judge' ? 'qb-tag-judge' : 'qb-tag-qa');
+                    const typeLabel = q.type === 'choice' ? '选择题' : (q.type === 'multi' ? '多选题' : (q.type === 'judge' ? '判断题' : '问答题'));
+                    const typeCls = q.type === 'choice' ? 'qb-tag-choice' : (q.type === 'multi' ? 'qb-tag-choice' : (q.type === 'judge' ? 'qb-tag-judge' : 'qb-tag-qa'));
                     const qid = q.id.replace(/'/g, "\\'");
                     return '<div class="qb-modal-question" id="qcard-' + qid + '" style="cursor:pointer;" onclick="openQBDetailFromSearch(\'' + escapeHtml(q.category) + '\',\'' + qid + '\')">' +
                         '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;">' +
@@ -10991,11 +11038,11 @@ async function importQBFromFeishu() {
         var t = allQ.find(function(q){ return q.id === qid; });
         if (!t) { showToast('未找到该题目', 'error'); return; }
         var qi = (t.id||'').replace(/'/g,"\\'");
-        var tl = t.type==='choice'?'选择题':(t.type==='judge'?'判断题':'问答题');
+        var tl = t.type==='choice'?'选择题':(t.type==='multi'?'多选题':(t.type==='judge'?'判断题':'问答题'));
         var ov = document.createElement('div');
         ov.className = 'modal-overlay'; ov.style.zIndex = '3000';
         ov.innerHTML = '<div class="modal-container" style="max-width:650px;"><div class="modal-header"><span>📋 题目详情</span><button class="modal-close-btn" id="qbsClose">✕</button></div><div class="modal-body" style="max-height:70vh;overflow-y:auto;padding:20px;">' +
-            '<div style="margin-bottom:12px;"><span class="qb-tag '+(t.type==='choice'?'qb-tag-choice':(t.type==='judge'?'qb-tag-judge':'qb-tag-qa'))+'">'+tl+'</span><span class="qb-tag category" style="background:#f1f5f9;color:#5e6f8d;margin-left:6px;">'+escapeHtml(t.category||'未分类')+'</span></div>' +
+            '<div style="margin-bottom:12px;"><span class="qb-tag '+(t.type==='choice'?'qb-tag-choice':(t.type==='multi'?'qb-tag-choice':(t.type==='judge'?'qb-tag-judge':'qb-tag-qa')))+'">'+tl+'</span><span class="qb-tag category" style="background:#f1f5f9;color:#5e6f8d;margin-left:6px;">'+escapeHtml(t.category||'未分类')+'</span></div>' +
             '<div style="font-weight:700;font-size:1rem;color:#1f3a6b;margin-bottom:12px;line-height:1.6;">'+escapeHtml(t.question)+'</div>' +
             (t.options && t.options.length>0 ? '<div style="margin-bottom:10px;">' + t.options.map(function(o,i){ return '<div style="padding:6px 0;font-size:0.88rem;">'+String.fromCharCode(65+i)+'. '+escapeHtml(o)+'</div>'; }).join('') + '</div>' : '') +
             '<div style="background:#f0fdf4;border-radius:12px;padding:14px;border:1px solid #bbf7d0;margin-bottom:10px;"><div style="font-weight:600;color:#166534;margin-bottom:4px;">📌 答案</div><div style="font-size:0.88rem;color:#1a5c38;">'+escapeHtml(t.answer||'暂无')+'</div></div>' +
@@ -11030,8 +11077,8 @@ async function importQBFromFeishu() {
         var pq = qbDetailQuestions.slice(st, st + QB_DETAIL_PAGE_SIZE);
         var qh = pq.length === 0 ? '<div class="empty-placeholder" style="padding:30px;">该分类暂无题目</div>' :
             pq.map(function(q,idx){
-                var tl = q.type==='choice'?'选择题':(q.type==='judge'?'判断题':'问答题');
-                var tc = q.type==='choice'?'qb-tag-choice':(q.type==='judge'?'qb-tag-judge':'qb-tag-qa');
+                var tl = q.type==='choice'?'选择题':(q.type==='multi'?'多选题':(q.type==='judge'?'判断题':'问答题'));
+                var tc = q.type==='choice'?'qb-tag-choice':(q.type==='multi'?'qb-tag-choice':(q.type==='judge'?'qb-tag-judge':'qb-tag-qa'));
                 var af = q.answer||'暂无';
                 var ef = q.explanation||'';
                 var ap = af.length>50?af.substring(0,50)+'...':af;
@@ -11159,8 +11206,8 @@ async function importQBFromFeishu() {
                         ${categories.map(c => '<option value="' + escapeHtml(c) + '" ' + (c === q.category ? 'selected' : '') + '>' + escapeHtml(c) + '</option>').join('')}
                     </select>
                     <select id="editQType" style="padding:8px 12px;border:1px solid #cbd5e1;border-radius:8px;font-size:0.85rem;">
-                        <option value="qa" ${q.type==='qa'?'selected':''}>问答题</option>
                         <option value="choice" ${q.type==='choice'?'selected':''}>选择题</option>
+                        <option value="multi" ${q.type==='multi'?'selected':''}>多选题</option>
                         <option value="judge" ${q.type==='judge'?'selected':''}>判断题</option>
                     </select>
                     <select id="editQDifficulty" style="padding:8px 12px;border:1px solid #cbd5e1;border-radius:8px;font-size:0.85rem;">
@@ -11170,7 +11217,7 @@ async function importQBFromFeishu() {
                     </select>
                 </div>
                 <textarea id="editQQuestion" placeholder="题目内容..." style="width:100%;padding:10px;border:1px solid #cbd5e1;border-radius:12px;font-size:0.85rem;min-height:80px;resize:vertical;margin-bottom:10px;">${escapeHtml(q.question||'')}</textarea>
-                <div id="editQOptionsArea" style="${q.type==='choice'?'':'display:none;'}margin-bottom:10px;">
+                <div id="editQOptionsArea" style="${(q.type==='choice'||q.type==='multi')?'':'display:none;'}margin-bottom:10px;">
                     <div style="font-size:0.8rem;color:#5e6f8d;margin-bottom:4px;">选项（每行一个，正确答案前加 ✓）：</div>
                     <textarea id="editQOptions" style="width:100%;padding:10px;border:1px solid #cbd5e1;border-radius:12px;font-size:0.85rem;min-height:80px;resize:vertical;">${(q.options||[]).map(o => o).join('\n')}</textarea>
                 </div>
@@ -11186,7 +11233,7 @@ async function importQBFromFeishu() {
         overlay.onclick = (e) => { if (e.target === overlay) closeModal(); };
 
         overlay.querySelector('#editQType').onchange = function() {
-            overlay.querySelector('#editQOptionsArea').style.display = this.value === 'choice' ? 'block' : 'none';
+            overlay.querySelector('#editQOptionsArea').style.display = (this.value === 'choice' || this.value === 'multi') ? 'block' : 'none';
         };
         overlay.querySelector('#saveEditQBtn').onclick = () => saveEditQ(qid, overlay);
     }
@@ -11213,7 +11260,7 @@ async function importQBFromFeishu() {
         }
 
         let options = [];
-        if (type === 'choice') {
+        if (type === 'choice' || type === 'multi') {
             const optText = overlay.querySelector('#editQOptions').value.trim();
             if (optText) {
                 options = optText.split('\n').map(o => o.trim()).filter(o => o);
@@ -11305,8 +11352,8 @@ async function importQBFromFeishu() {
                     </select>
                     <input type="text" id="newQCategoryInput" placeholder="新分类名称" style="display:none;padding:8px 12px;border:1px solid #cbd5e1;border-radius:8px;font-size:0.85rem;flex:1;min-width:140px;">
                     <select id="newQType" style="padding:8px 12px;border:1px solid #cbd5e1;border-radius:8px;font-size:0.85rem;">
-                        <option value="qa">问答题</option>
                         <option value="choice">选择题</option>
+                        <option value="multi">多选题</option>
                         <option value="judge">判断题</option>
                     </select>
                     <select id="newQDifficulty" style="padding:8px 12px;border:1px solid #cbd5e1;border-radius:8px;font-size:0.85rem;">
@@ -11355,7 +11402,7 @@ async function importQBFromFeishu() {
         });
 
         overlay.querySelector('#newQType').onchange = function() {
-            overlay.querySelector('#newQOptionsArea').style.display = this.value === 'choice' ? 'block' : 'none';
+            overlay.querySelector('#newQOptionsArea').style.display = (this.value === 'choice' || this.value === 'multi') ? 'block' : 'none';
         };
         overlay.querySelector('#newQCategory').onchange = function() {
             overlay.querySelector('#newQCategoryInput').style.display = this.value === '__new__' ? 'inline-block' : 'none';
@@ -11427,7 +11474,7 @@ async function importQBFromFeishu() {
         const difficulty = overlay.querySelector('#newQDifficulty').value;
 
         let options = [];
-        if (type === 'choice') {
+        if (type === 'choice' || type === 'multi') {
             const optText = overlay.querySelector('#newQOptions').value.trim();
             if (optText) {
                 options = optText.split('\n').map(o => o.replace(/^✓\s*/, '').trim()).filter(o => o);
@@ -11499,13 +11546,16 @@ async function importQBFromFeishu() {
                     }
                 } else {
                     let curCat = '默认分类', curQ = null, buf = [], inQ = false;
-                    const TM = { '单选':'choice','多选':'choice','判断':'judge' };
+                    const TM = { '单选':'choice','多选':'multi','判断':'judge' };
                     const flush = () => {
                         if (!curQ) return;
+                        var ft = curQ.type || '';
+                        if (ft === 'qa' || !ft) ft = inferQuestionType('', curQ.answer || '');
+                        if (ft === 'qa') { curQ = null; buf = []; inQ = false; return; }
                         newQuestions.push({
                             id: Date.now().toString(36) + Math.random().toString(36).substr(2, 5),
                             category: curCat,
-                            type: curQ.type||'qa',
+                            type: ft,
                             difficulty: '中等',
                             question: curQ.qText,
                             answer: curQ.answer||'',
@@ -11566,11 +11616,10 @@ async function importQBFromFeishu() {
                     const row = rows[i]; if (!row||!row[qc]) continue;
                     var opts = [];
                     for (var oi = 0; oi < optCols.length; oi++) { var ov = row[optCols[oi]]; if (ov !== undefined && ov !== null && String(ov).trim()) opts.push(String(ov).trim()); }
-                    var typeMap = { '单选':'choice', '多选':'choice', '判断':'judge', '问答':'qa', 'choice':'choice', 'qa':'qa', 'judge':'judge' };
                     var qObj = {
                         id: Date.now().toString(36)+i,
                         category: (cc>=0&&row[cc])?String(row[cc]).trim():'默认分类',
-                        type: (tc>=0&&row[tc])?(typeMap[String(row[tc]).trim()]||'qa'):'qa',
+                        type: inferQuestionType((tc>=0&&row[tc])?String(row[tc]).trim():'', (ac>=0&&row[ac])?String(row[ac]).trim():''),
                         difficulty: '中等',
                         question: String(row[qc]).trim(),
                         answer: row[ac]?String(row[ac]).trim():'',
@@ -11589,9 +11638,10 @@ async function importQBFromFeishu() {
                 });
             }
 
-            processUploadedQuestions(qb, newQuestions, (totalAdded, dupCount) => {
+            processUploadedQuestions(qb, newQuestions, (totalAdded, dupCount, qaSkipped) => {
                 let msg = '✅ 成功导入 ' + totalAdded + ' 道题目';
                 if (dupCount > 0) msg += '（' + dupCount + ' 道重复题已处理）';
+                if (qaSkipped > 0) msg += '（跳过 ' + qaSkipped + ' 道问答题）';
                 statusDiv.innerHTML = '<span style="color:#2e7d32;">' + msg + '</span>';
                 overlay.querySelector('#fileInputQB').value = '';
             });
@@ -11617,7 +11667,7 @@ async function importQBFromFeishu() {
         const difficulty = document.getElementById('newQDifficulty').value;
 
         let options = [];
-        if (type === 'choice') {
+        if (type === 'choice' || type === 'multi') {
             const optText = document.getElementById('newQOptions').value.trim();
             if (optText) {
                 options = optText.split('\n').map(o => o.replace(/^✓\s*/, '').trim()).filter(o => o);
@@ -11697,16 +11747,19 @@ async function importQBFromFeishu() {
                 } else {
                     let currentCategory = '默认分类';
                     let currentQuestion = null;
-                    const TYPE_MAP = { '单选': 'choice', '多选': 'choice', '判断': 'judge' };
+                    const TYPE_MAP = { '单选': 'choice', '多选': 'multi', '判断': 'judge' };
                     let questionBuffer = [];
                     let inQuestion = false;
 
                     function flushQuestion() {
                         if (!currentQuestion) return;
+                        var ft = currentQuestion.type || '';
+                        if (ft === 'qa' || !ft) ft = inferQuestionType('', currentQuestion.answer || '');
+                        if (ft === 'qa') { currentQuestion = null; questionBuffer = []; inQuestion = false; return; }
                         newQuestions.push({
                             id: Date.now().toString(36) + Math.random().toString(36).substr(2, 5),
                             category: currentCategory,
-                            type: currentQuestion.type || 'qa',
+                            type: ft,
                             difficulty: '中等',
                             question: currentQuestion.questionText,
                             answer: currentQuestion.answer || '',
@@ -11792,7 +11845,6 @@ async function importQBFromFeishu() {
                         if (/^[A-Z]$/.test(oh2) && oci2 !== qCol && oci2 !== aCol && oci2 !== catCol && oci2 !== pCol && oci2 !== tCol && oci2 !== eCol) optCols2.push(oci2);
                     }
                 }
-                var typeMap2 = { '单选':'choice', '多选':'choice', '判断':'judge', '问答':'qa', 'choice':'choice', 'qa':'qa', 'judge':'judge' };
                 for (let i = (rows[0] && rows[0][qCol] && String(rows[0][qCol]).includes('题目') ? 1 : 0); i < rows.length; i++) {
                     const row = rows[i];
                     if (!row || !row[qCol]) continue;
@@ -11801,7 +11853,7 @@ async function importQBFromFeishu() {
                     var qObj2 = {
                         id: Date.now().toString(36) + i,
                         category: (catCol >= 0 && row[catCol]) ? String(row[catCol]).trim() : '默认分类',
-                        type: (tCol>=0&&row[tCol])?(typeMap2[String(row[tCol]).trim()]||'qa'):'qa',
+                        type: inferQuestionType((tCol>=0&&row[tCol])?String(row[tCol]).trim():'', (aCol>=0&&row[aCol])?String(row[aCol]).trim():''),
                         difficulty: '中等',
                         question: String(row[qCol]).trim(),
                         answer: row[aCol] ? String(row[aCol]).trim() : '',
@@ -11821,9 +11873,10 @@ async function importQBFromFeishu() {
                 });
             }
 
-            processUploadedQuestions(qb, newQuestions, (totalAdded, dupCount) => {
+            processUploadedQuestions(qb, newQuestions, (totalAdded, dupCount, qaSkipped) => {
                 let msg = '✅ 成功导入 ' + totalAdded + ' 道题目！';
                 if (dupCount > 0) msg += '\n（' + dupCount + ' 道重复题已根据您的选择处理）';
+                if (qaSkipped > 0) msg += '\n（跳过 ' + qaSkipped + ' 道问答题）';
                 alert(msg);
                 currentQBPage = 1;
                 renderQuestionBank();
@@ -13543,7 +13596,7 @@ async function importQBFromFeishu() {
         const examCode = generateExamCode();
         const examRecord = {
             id: examId, examCode, reviewerName,
-            questions: selectedQuestions, generatedAt: new Date().toISOString(),
+            questions: selectedQuestions.filter(function(q){ return q.type !== 'qa'; }), generatedAt: new Date().toISOString(),
             source: '失误前五警示画像',
             mistakeCategories: categoryKeys, status: 'pending', attempts: 0, records: [],
             timeLimit: 40, maxAttempts: 2, wrongAnswers: []
@@ -15928,7 +15981,7 @@ async function importQBFromFeishu() {
         var examCode = generateExamCode();
         var examRecord = {
             id: examId, examCode, reviewerName: '通用（按失误类别）',
-            questions: selectedQuestions, generatedAt: new Date().toISOString(),
+            questions: selectedQuestions.filter(function(q){ return q.type !== 'qa'; }), generatedAt: new Date().toISOString(),
             source: '失误分析看板',
             mistakeCategories: categories.map(function(e) { return e[0]; }),
             status: 'pending', attempts: 0, records: [],
@@ -16165,7 +16218,7 @@ async function importQBFromFeishu() {
         var examCode = generateExamCode();
         var examRecord = {
             id: examId, examCode, reviewerName: reviewerName,
-            questions: selected, generatedAt: new Date().toISOString(),
+            questions: selected.filter(function(q){ return q.type !== 'qa'; }), generatedAt: new Date().toISOString(),
             source: '失误画像精准匹配',
             mistakeCategories: categories.map(function(e) { return e[0]; }),
             status: 'pending', attempts: 0, records: [],
@@ -18960,6 +19013,75 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
         else if (currentExamTab === 'learnplan') renderLearnPlanPushesTab(content);
         else if (currentExamTab === 'reported') renderReportedQuestionsTab(content);
     }
+    // 合并本地与云端的考试历史：按考试ID逐条比较，取进度更新的一方（状态/次数/记录数），双方记录合并去重
+    function mergeExamHistories(localH, cloudH) {
+        var statusRank = { pending: 0, in_progress: 1, completed: 2 };
+        function isNewer(a, b) {
+            var ra = statusRank[a.status] || 0, rb = statusRank[b.status] || 0;
+            if (ra !== rb) return ra > rb;
+            var aa = a.attempts || 0, ab = b.attempts || 0;
+            if (aa !== ab) return aa > ab;
+            var ar = (a.records || []).length, br = (b.records || []).length;
+            if (ar !== br) return ar > br;
+            return false;
+        }
+        var out = {};
+        var ids = {};
+        Object.keys(localH).forEach(function(k) { ids[k] = true; });
+        Object.keys(cloudH).forEach(function(k) { ids[k] = true; });
+        Object.keys(ids).forEach(function(id) {
+            var l = localH[id], c = cloudH[id];
+            if (!l) { out[id] = c; return; }
+            if (!c) { out[id] = l; return; }
+            var base, other;
+            if (isNewer(c, l)) { base = JSON.parse(JSON.stringify(c)); other = l; }
+            else { base = JSON.parse(JSON.stringify(l)); other = c; }
+            var recs = [];
+            var seenAttempt = {};
+            [].concat(other.records || [], base.records || []).forEach(function(r) {
+                if (!r) return;
+                if (r.attempt && seenAttempt[r.attempt]) return;
+                if (r.attempt) seenAttempt[r.attempt] = true;
+                recs.push(r);
+            });
+            base.records = recs;
+            out[id] = base;
+        });
+        return out;
+    }
+    // 考试系统列表正在显示时重渲染（学员进入/提交考试后状态自动更新）
+    function refreshExamListIfVisible() {
+        var content = document.getElementById('examTabContent');
+        if (!content) return;
+        if (currentExamTab !== 'records') return;
+        try { renderExamRecordsTab(content); } catch(e) {}
+    }
+    // 同浏览器其他标签页更新考试数据时自动刷新列表
+    window.addEventListener('storage', function(ev) {
+        if (ev.key === EXAM_HISTORY_KEY) refreshExamListIfVisible();
+    });
+    // 定时从云端同步考试历史（多设备：学员在手机进入/提交考试，管理端列表30秒内自动更新状态）
+    setInterval(function() {
+        fetch(SUPABASE_URL + '/rest/v1/app_data?select=value&key=eq.' + EXAM_HISTORY_KEY, {
+            headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY }
+        }).then(function(r) { return r.json(); }).then(function(rows) {
+            if (!Array.isArray(rows) || rows.length === 0 || !rows[0].value) return;
+            try {
+                var localH = getExamHistory();
+                var cloudH = JSON.parse(rows[0].value);
+                var mergedH = mergeExamHistories(localH, cloudH);
+                var mergedRaw = JSON.stringify(mergedH);
+                if (mergedRaw === JSON.stringify(localH)) return; // 本地已是最新
+                localStorage.setItem(EXAM_HISTORY_KEY, mergedRaw);
+                fetch(SUPABASE_URL + '/rest/v1/app_data', {
+                    method: 'POST',
+                    headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY, 'Content-Type': 'application/json', 'Prefer': 'resolution=merge-duplicates' },
+                    body: JSON.stringify({ key: EXAM_HISTORY_KEY, value: mergedRaw, updated_at: new Date().toISOString() })
+                }).catch(function() {});
+                refreshExamListIfVisible();
+            } catch(e) {}
+        }).catch(function() {});
+    }, 30000);
     // 按周分组
     function getWeekKey(dateStr) {
         var d = new Date(dateStr);
@@ -19479,12 +19601,14 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
                     var candidates = allQ.filter(function(qq) {
                         if (usedIds[qq.id]) return false;
                         if (isQuestionReported(qq.id)) return false;
+                        if (qq.type === 'qa') return false;
                         return (qq.category || '') === (wq.category || '');
                     });
                     if (candidates.length === 0) {
                         // 无同类别候选，从全部题库随机
                         candidates = allQ.filter(function(qq) {
                             if (usedIds[qq.id]) return false;
+                            if (qq.type === 'qa') return false;
                             return !isQuestionReported(qq.id);
                         });
                     }
@@ -19520,6 +19644,11 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
                     var im = (q.optionImages && q.optionImages[oi]) ? photoTag(q.optionImages[oi], 50, 50) : '';
                     return '<div class="exam-option" data-qidx="' + idx + '" data-oidx="' + oi + '">' + String.fromCharCode(65+oi) + '. ' + escapeHtml(opt) + im + '</div>';
                 }).join('') + '</div>';
+            } else if (q.type === 'multi' && q.options && q.options.length > 0) {
+                answerArea = '<div style="margin-top:8px;"><div style="font-size:0.7rem;color:#2a5298;margin-bottom:4px;">（多选题，可多选）</div>' + q.options.map((opt, oi) => {
+                    var im = (q.optionImages && q.optionImages[oi]) ? photoTag(q.optionImages[oi], 50, 50) : '';
+                    return '<div class="exam-option exam-option-multi" data-qidx="' + idx + '" data-oidx="' + oi + '">' + String.fromCharCode(65+oi) + '. ' + escapeHtml(opt) + im + '</div>';
+                }).join('') + '</div>';
             } else if (q.type === 'judge') {
                 answerArea = '<div style="margin-top:8px;display:flex;gap:8px;"><div class="exam-option" data-qidx="' + idx + '" data-oidx="0">✅ 正确</div><div class="exam-option" data-qidx="' + idx + '" data-oidx="1">❌ 错误</div></div>';
             } else {
@@ -19531,7 +19660,7 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
                     <button class="report-question-btn" id="rptbtn_${idx}" data-qid="${escapeHtml(q.id)}" data-qidx="${idx}" onclick="event.stopPropagation();reportQuestionInExam(this)" style="flex-shrink:0;background:transparent;border:1px solid #e67e22;color:#e67e22;padding:1px 8px;border-radius:10px;cursor:pointer;font-size:0.6rem;white-space:nowrap;">⚠️ 试题有问题</button>
                 </div>
                 ${q.screenshot ? photoTag(q.screenshot, 150, 120) : ''}
-                <div style="font-size:0.7rem;color:#94a3b8;">${q.productCategory?'🏷️ '+escapeHtml(q.productCategory)+' | ':''}类型：${q.type==='choice'?'选择题':(q.type==='judge'?'判断题':'问答题')} | 分类：${escapeHtml(q.category||'未分类')} | 难度：${escapeHtml(q.difficulty||'中等')}</div>
+                <div style="font-size:0.7rem;color:#94a3b8;">${q.productCategory?'🏷️ '+escapeHtml(q.productCategory)+' | ':''}类型：${q.type==='choice'?'选择题':(q.type==='multi'?'多选题':(q.type==='judge'?'判断题':'问答题'))} | 分类：${escapeHtml(q.category||'未分类')} | 难度：${escapeHtml(q.difficulty||'中等')}</div>
                 ${answerArea}
             </div>`;
         }).join('');
@@ -19605,9 +19734,24 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
             document.querySelectorAll('.exam-option').forEach(opt => {
                 opt.onclick = function() {
                     const qidx = parseInt(this.dataset.qidx);
-                    document.querySelectorAll('.exam-option[data-qidx="' + qidx + '"]').forEach(o => o.classList.remove('selected'));
-                    this.classList.add('selected');
-                    currentExamAnswers[qidx] = parseInt(this.dataset.oidx);
+                    const oidx = parseInt(this.dataset.oidx);
+                    if (this.classList.contains('exam-option-multi')) {
+                        // 多选题：点击切换选中，可多选
+                        this.classList.toggle('selected');
+                        let arr = currentExamAnswers[qidx];
+                        if (!Array.isArray(arr)) arr = [];
+                        if (this.classList.contains('selected')) {
+                            if (arr.indexOf(oidx) < 0) arr.push(oidx);
+                        } else {
+                            arr = arr.filter(x => x !== oidx);
+                        }
+                        currentExamAnswers[qidx] = arr;
+                    } else {
+                        // 单选/判断：互斥选择
+                        document.querySelectorAll('.exam-option[data-qidx="' + qidx + '"]').forEach(o => o.classList.remove('selected'));
+                        this.classList.add('selected');
+                        currentExamAnswers[qidx] = oidx;
+                    }
                 };
             });
             document.querySelectorAll('.exam-answer-text').forEach(textarea => {
@@ -19616,7 +19760,7 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
             document.getElementById('submitExamBtn').onclick = async () => {
                 const questions = currentExamAnswers._questions || [];
                 const totalQ = questions.length;
-                const answered = Object.keys(currentExamAnswers).filter(k => k !== '_questions' && currentExamAnswers[k] !== undefined && currentExamAnswers[k] !== null && currentExamAnswers[k] !== '').length;
+                const answered = Object.keys(currentExamAnswers).filter(k => k !== '_questions' && currentExamAnswers[k] !== undefined && currentExamAnswers[k] !== null && currentExamAnswers[k] !== '' && !(Array.isArray(currentExamAnswers[k]) && currentExamAnswers[k].length === 0)).length;
                 const unanswered = totalQ - answered;
                 var msg = '';
                 if (unanswered > 0) {
@@ -19685,6 +19829,40 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
         showToast('✅ 已反馈，该题将不计入成绩', 'success');
     }
 
+    // 统一解析正确答案索引，兼容所有答案格式：
+    // 1) 选项带 ✓ 前缀标记  2) 纯字母答案（A / AC / A、C）  3) 字母引导格式（A. xxx / C. xxx）  4) 文本答案按分隔符匹配选项文字
+    function resolveCorrectIndexes(q) {
+        var opts = (q.options || []).map(function(o) { return String(o || '').trim(); });
+        var ans = String(q.answer || '').trim();
+        var idxs = [];
+        // 1) 选项 ✓ 前缀标记
+        opts.forEach(function(o, i) { if (/^✓/.test(o)) idxs.push(i); });
+        if (idxs.length > 0) return idxs;
+        // 去空白和 ✓/√ 符号后解析答案
+        var clean = ans.replace(/[✓√\s]+/g, '');
+        if (!clean) return [];
+        // 2) 纯字母（AC / A、C / a,b）
+        if (/^[A-Fa-f,，、;；]+$/.test(clean)) {
+            idxs = (clean.match(/[A-Fa-f]/g) || []).map(function(ch) { return ch.toUpperCase().charCodeAt(0) - 65; });
+            idxs = idxs.filter(function(i) { return i >= 0 && i < opts.length; });
+            if (idxs.length > 0) return idxs;
+        }
+        // 3) 文本答案按分隔符拆分匹配选项文字（如 选项A、选项C）
+        var parts = ans.split(/[,，、;；]/).map(function(s) { return s.trim(); }).filter(Boolean);
+        idxs = parts.map(function(p) {
+            return opts.findIndex(function(o) { return o === p || o.indexOf(p) >= 0; });
+        }).filter(function(i) { return i >= 0; });
+        if (idxs.length > 0) return idxs;
+        // 4) 字母引导格式兜底（A. xxx / A、C. xxx）
+        var guides = (clean.match(/[A-Fa-f](?=[.．、，,:：])/g) || []);
+        if (guides.length > 0) {
+            idxs = guides.map(function(g) { return g.toUpperCase().charCodeAt(0) - 65; });
+            idxs = idxs.filter(function(i) { return i >= 0 && i < opts.length; });
+            if (idxs.length > 0) return idxs;
+        }
+        return idxs;
+    }
+
     function submitExam() {
         if (!currentExamId) return;
         const history = getExamHistory();
@@ -19705,23 +19883,48 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
             const userAnswer = currentExamAnswers[idx];
             let isCorrect = false;
             let userAnswerStr = '未作答';
-            if (q.type === 'choice' || q.type === 'judge') {
+            if (q.type === 'choice') {
                 if (userAnswer !== undefined && userAnswer !== null) {
-                    // 查找正确答案索引
-                    let correctIdx = -1;
-                    if (q.options && q.options.length > 0) {
-                        const optText = q.options.map(o => o.replace(/^✓\s*/, ''));
-                        correctIdx = q.options.findIndex(o => o.trim().startsWith('✓'));
-                        if (correctIdx < 0 && q.answer) {
-                            correctIdx = optText.findIndex(o => q.answer && o.includes(q.answer.trim()));
+                    var cIdxs = resolveCorrectIndexes(q);
+                    var correctIdx = cIdxs.length > 0 ? cIdxs[0] : -1;
+                    if (correctIdx >= 0) {
+                        isCorrect = userAnswer === correctIdx;
+                    } else if (q.answer) {
+                        // 兜底：字母答案直接比较字母，文本答案比较选项文字
+                        var ansC = String(q.answer).trim();
+                        if (/^[A-Fa-f]$/.test(ansC)) {
+                            isCorrect = String.fromCharCode(65 + userAnswer) === ansC.toUpperCase();
+                        } else if (q.options && q.options[userAnswer] !== undefined) {
+                            isCorrect = String(q.options[userAnswer]).trim() === ansC;
                         }
                     }
-                    if (correctIdx < 0 && q.answer) {
-                        isCorrect = String(userAnswer) === String(q.answer);
-                    } else {
-                        isCorrect = userAnswer === correctIdx;
+                    userAnswerStr = (q.options && q.options[userAnswer] !== undefined) ? (String.fromCharCode(65 + userAnswer) + '. ' + String(q.options[userAnswer]).replace(/^✓\s*/, '')) : String.fromCharCode(65 + userAnswer);
+                }
+            } else if (q.type === 'judge') {
+                if (userAnswer !== undefined && userAnswer !== null) {
+                    var ansJ = String(q.answer || '').trim().replace(/[。.]$/, '');
+                    if (/^(正确|对|√|✓|true|是|yes)$/i.test(ansJ)) isCorrect = userAnswer === 0;
+                    else if (/^(错误|错|×|✗|false|否|no)$/i.test(ansJ)) isCorrect = userAnswer === 1;
+                    userAnswerStr = userAnswer === 0 ? '✅ 正确' : '❌ 错误';
+                }
+            } else if (q.type === 'multi') {
+                if (Array.isArray(userAnswer) && userAnswer.length > 0) {
+                    var correctIdxs = resolveCorrectIndexes(q);
+                    correctIdxs = correctIdxs.filter(function(v, i2, a) { return a.indexOf(v) === i2; });
+                    if (correctIdxs.length > 0) {
+                        var uaSorted = userAnswer.slice().sort(function(a, b) { return a - b; });
+                        var caSorted = correctIdxs.slice().sort(function(a, b) { return a - b; });
+                        isCorrect = uaSorted.length === caSorted.length && uaSorted.every(function(v, i) { return v === caSorted[i]; });
+                    } else if (q.answer) {
+                        // 兜底：按答案字母集合与用户所选字母集合比较
+                        var uaLetters = userAnswer.map(function(i) { return String.fromCharCode(65 + i); }).sort().join('');
+                        var ansLetters = (String(q.answer).match(/[A-Fa-f]/g) || []).map(function(c) { return c.toUpperCase(); }).sort().join('');
+                        if (uaLetters && ansLetters && uaLetters === ansLetters) isCorrect = true;
                     }
-                    userAnswerStr = q.options ? (String.fromCharCode(65 + userAnswer) + '. ' + (q.options[userAnswer] || '')) : (userAnswer === 0 ? '正确' : '错误');
+                    userAnswerStr = userAnswer.map(function(i) { return String.fromCharCode(65 + i); }).join('、');
+                    if (q.options && q.options.length > 0) {
+                        userAnswerStr += '（' + userAnswer.map(function(i) { return String(q.options[i] || '').replace(/^✓\s*/, ''); }).join('；') + '）';
+                    }
                 }
             } else {
                 userAnswerStr = String(userAnswer || '未作答');
@@ -20013,6 +20216,19 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
                         try {
                             var localData = JSON.parse(localRaw);
                             var cloudData = JSON.parse(row.value);
+                            // 考试历史：按考试逐条合并取进度更新的一方，避免管理端旧数据覆盖学员端已更新的状态
+                            if (row.key === 'examHistoryData' && localData && cloudData && !Array.isArray(localData) && !Array.isArray(cloudData)) {
+                                var mergedH = mergeExamHistories(localData, cloudData);
+                                var mergedRaw = JSON.stringify(mergedH);
+                                _realLS.setItem(row.key, mergedRaw);
+                                fetch(SUPABASE_URL + '/rest/v1/app_data', {
+                                    method: 'POST',
+                                    headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY, 'Content-Type': 'application/json', 'Prefer': 'resolution=merge-duplicates' },
+                                    body: JSON.stringify({ key: row.key, value: mergedRaw, updated_at: new Date().toISOString() })
+                                }).catch(function() {});
+                                if (typeof refreshExamListIfVisible === 'function') refreshExamListIfVisible();
+                                return;
+                            }
                             var localCount = Array.isArray(localData) ? localData.length : Object.keys(localData).length;
                             var cloudCount = Array.isArray(cloudData) ? cloudData.length : Object.keys(cloudData).length;
                             if (localCount >= cloudCount) {
