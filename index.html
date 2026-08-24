@@ -1577,6 +1577,15 @@
                     <div class="stat-card-value" id="panzeCount">--</div>
                     <div class="stat-card-label">判责量同步</div>
                 </div>
+                <!-- 人员管理卡片 -->
+                <div class="stat-card" id="siteCard" style="cursor:pointer;" onclick="toggleAdminDetail('siteDetail')">
+                    <div class="stat-card-header">
+                        <div class="stat-card-icon" style="background:#e0f2fe;">👤</div>
+                        <span class="stat-card-trend up" id="siteBadge">--</span>
+                    </div>
+                    <div class="stat-card-value" id="siteCount">--</div>
+                    <div class="stat-card-label">人员管理</div>
+                </div>
             </div>
             <!-- 判责量详情 -->
             <div id="panzeDetail" class="report-box" style="display:none;margin-top:16px;">
@@ -1616,7 +1625,29 @@
                 <p style="color:#64748b;font-size:0.85rem;margin:8px 0 12px;">所有管理员敏感操作记录</p>
                 <div id="auditLogList" style="max-height:400px;overflow-y:auto;"><div style="text-align:center;color:#94a3b8;padding:20px;">加载中...</div></div>
             </div>
+            <!-- 人员管理详情 -->
+            <div id="siteDetail" class="report-box" style="display:none;margin-top:16px;">
+                <div class="report-title" style="display:flex;justify-content:space-between;align-items:center;">👤 人员管理 <span style="font-size:0.7rem;color:#94a3b8;cursor:pointer;" onclick="toggleAdminDetail('siteDetail')">收起 ▲</span></div>
+                <p style="color:#64748b;font-size:0.85rem;margin:8px 0 12px;">维护人员姓名与所属站点，<b>所有模块的站点归属以这里为准</b>。站点下拉直接修改即时保存。</p>
+                <div style="margin-bottom:8px;display:flex;gap:6px;flex-wrap:wrap;align-items:center;">
+                    <button class="site-filter-btn" data-site="" style="background:#1f3a6b;color:white;border:1px solid #1f3a6b;padding:4px 14px;border-radius:16px;cursor:pointer;font-size:0.78rem;font-weight:600;">全部 <span class="site-filter-count" style="opacity:0.85;">0</span></button>
+                    <button class="site-filter-btn" data-site="深圳" style="background:#f1f5f9;color:#5e6f8d;border:1px solid #cbd5e1;padding:4px 14px;border-radius:16px;cursor:pointer;font-size:0.78rem;font-weight:600;">深圳 <span class="site-filter-count" style="opacity:0.85;">0</span></button>
+                    <button class="site-filter-btn" data-site="青岛" style="background:#f1f5f9;color:#5e6f8d;border:1px solid #cbd5e1;padding:4px 14px;border-radius:16px;cursor:pointer;font-size:0.78rem;font-weight:600;">青岛 <span class="site-filter-count" style="opacity:0.85;">0</span></button>
+                    <button class="site-filter-btn" data-site="成都" style="background:#f1f5f9;color:#5e6f8d;border:1px solid #cbd5e1;padding:4px 14px;border-radius:16px;cursor:pointer;font-size:0.78rem;font-weight:600;">成都 <span class="site-filter-count" style="opacity:0.85;">0</span></button>
+                </div>
+                <div style="margin-bottom:8px;display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+                    <input id="siteSearchInput" type="text" placeholder="🔍 搜索姓名或站点..." oninput="window.refreshAdminSiteTable&&window.refreshAdminSiteTable(this.value)" style="flex:1;min-width:160px;padding:6px 12px;border:1px solid #cbd5e1;border-radius:8px;font-size:0.8rem;">
+                    <button id="addSiteRowBtn" style="background:#f1f5f9;border:1px solid #cbd5e1;padding:6px 16px;border-radius:8px;cursor:pointer;font-size:0.8rem;">➕ 添加人员</button>
+                    <button id="resetSiteBtn" style="background:#fef3c7;border:1px solid #f59e0b;color:#b45309;padding:6px 16px;border-radius:8px;cursor:pointer;font-size:0.8rem;">↩ 恢复默认名单</button>
+                </div>
+                <div style="max-height:380px;overflow-y:auto;">
+                <table id="adminSiteTable" style="width:100%;border-collapse:collapse;border:1px solid #e2e8f0;"><thead><tr style="background:#f8fafc;"><th style="text-align:center;padding:8px;font-size:0.8rem;color:#5e6f8d;width:40%;border:1px solid #e2e8f0;">姓名</th><th style="text-align:center;padding:8px;font-size:0.8rem;color:#5e6f8d;border:1px solid #e2e8f0;">站点</th><th style="text-align:center;width:60px;border:1px solid #e2e8f0;">删除</th></tr></thead><tbody id="adminSiteBody"><tr><td colspan="3" style="text-align:center;color:#94a3b8;padding:20px;">加载中...</td></tr></tbody></table>
+                </div>
+            </div>
         </div>`;
+
+        // 站点选项必须声明在任何调用之前（updateAdminCards→updateSiteCard 在函数体顶层立即执行）
+        const ADMIN_SITE_OPTIONS = ['深圳', '青岛', '成都'];
 
         function refreshHRCombinedList() {
             var list = document.getElementById('hrCombinedList'); if (!list) return;
@@ -1646,7 +1677,7 @@
             var el = document.getElementById(id);
             if (!el) return;
             // 先收起其他详情
-            ['hrDetail','emailDetail','auditDetail','panzeDetail'].forEach(function(d){
+            ['hrDetail','emailDetail','auditDetail','panzeDetail','siteDetail'].forEach(function(d){
                 if (d !== id) { var other = document.getElementById(d); if (other) other.style.display = 'none'; }
             });
             el.style.display = el.style.display === 'none' ? 'block' : 'none';
@@ -1654,6 +1685,7 @@
             if (id === 'hrDetail' && el.style.display === 'block') refreshHRCombinedList();
             if (id === 'auditDetail' && el.style.display === 'block') refreshAuditLog();
             if (id === 'panzeDetail' && el.style.display === 'block') refreshPanzeStatus();
+            if (id === 'siteDetail' && el.style.display === 'block') refreshAdminSiteTable();
         };
         // 更新卡片数字
         window._panzeAllData = [];
@@ -1846,6 +1878,7 @@
                 ac.textContent = n2 || '0';
                 if (ab) ab.textContent = n2 + '条';
             }
+            updateSiteCard();
             refreshPanzeStatus();
         }
         function refreshAuditLog() {
@@ -1866,6 +1899,127 @@
         updateAdminCards();
         window.refreshHRCombinedList = refreshHRCombinedList;
         refreshHRCombinedList();
+
+        // 人员管理（姓名→站点，站点归属的最终权威口径）
+        function refreshAdminSiteTable(filter) {
+            filter = (filter || '').toLowerCase();
+            var siteFilter = window._adminSiteFilter || '';
+            var tbody = document.getElementById('adminSiteBody');
+            if (!tbody) return;
+            var map = getAdminPersonSiteMap();
+            // 筛选按钮：更新人数 + 高亮当前选中
+            var counts = { '': 0, '深圳': 0, '青岛': 0, '成都': 0 };
+            Object.keys(map).forEach(function(n) { counts[map[n]] = (counts[map[n]] || 0) + 1; counts['']++; });
+            document.querySelectorAll('.site-filter-btn').forEach(function(b) {
+                var s = b.getAttribute('data-site') || '';
+                var active = s === siteFilter;
+                b.style.background = active ? '#1f3a6b' : '#f1f5f9';
+                b.style.color = active ? 'white' : '#5e6f8d';
+                b.style.borderColor = active ? '#1f3a6b' : '#cbd5e1';
+                var cnt = b.querySelector('.site-filter-count');
+                if (cnt) cnt.textContent = counts[s] || 0;
+            });
+            var names = Object.keys(map).filter(function(n) {
+                if (siteFilter && map[n] !== siteFilter) return false;
+                return !filter || n.toLowerCase().indexOf(filter) >= 0 || (map[n]||'').toLowerCase().indexOf(filter) >= 0;
+            }).sort();
+            if (names.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="3" style="text-align:center;color:#94a3b8;padding:20px;">' + (filter || siteFilter ? '未找到匹配项' : '暂无人员数据') + '</td></tr>';
+                return;
+            }
+            tbody.innerHTML = names.map(function(n) {
+                var opts = ADMIN_SITE_OPTIONS.map(function(s) {
+                    return '<option value="' + s + '"' + (map[n] === s ? ' selected' : '') + '>' + s + '</option>';
+                }).join('');
+                return '<tr data-name="' + escapeHtml(n) + '">' +
+                    '<td style="text-align:center;padding:8px 6px;font-size:0.82rem;font-weight:600;width:40%;border:1px solid #eef2f6;">' + escapeHtml(n) + '</td>' +
+                    '<td style="text-align:center;padding:8px 6px;font-size:0.8rem;border:1px solid #eef2f6;"><select class="as-site" data-name="' + escapeHtml(n) + '" style="padding:4px 8px;border:1px solid #cbd5e1;border-radius:6px;font-size:0.78rem;cursor:pointer;">' + opts + '</select></td>' +
+                    '<td style="text-align:center;padding:4px;width:60px;border:1px solid #eef2f6;"><button class="as-del" data-name="' + escapeHtml(n) + '" style="background:#ffedea;color:#c0392b;border:none;padding:3px 10px;border-radius:6px;cursor:pointer;font-size:0.7rem;">🗑️</button></td>' +
+                '</tr>';
+            }).join('');
+            // 站点下拉：修改即时保存
+            tbody.querySelectorAll('.as-site').forEach(function(sel) {
+                sel.onchange = function() {
+                    var nm = this.dataset.name, st = this.value;
+                    var m = getAdminPersonSiteMap();
+                    m[nm] = st;
+                    saveAdminPersonSiteMap(m);
+                    updateAdminCards();
+                    showToast('✅ ' + nm + ' 站点已改为 ' + st + '（所有模块以这里为准）', 'success');
+                };
+            });
+            // 删除按钮
+            tbody.querySelectorAll('.as-del').forEach(function(b) {
+                b.onclick = function() {
+                    var nm = this.dataset.name;
+                    showConfirm('确定删除「' + nm + '」的人员站点信息吗？\n删除后该人站点将回退到数据推断/默认名单', '🗑️', true).then(function(ok) {
+                        if (ok) {
+                            var m = getAdminPersonSiteMap();
+                            delete m[nm];
+                            saveAdminPersonSiteMap(m);
+                            refreshAdminSiteTable(document.getElementById('siteSearchInput') ? document.getElementById('siteSearchInput').value : '');
+                            updateAdminCards();
+                            showToast('✅ 已删除 ' + nm + ' 的人员站点信息', 'success');
+                        }
+                    });
+                };
+            });
+        }
+        window.refreshAdminSiteTable = refreshAdminSiteTable;
+        function updateSiteCard() {
+            var sc = document.getElementById('siteCount'), sb = document.getElementById('siteBadge');
+            if (sc) {
+                var m = getAdminPersonSiteMap();
+                var n = Object.keys(m).length;
+                sc.textContent = n || '0';
+                // 按站点统计（深/青/成）
+                var cnt = {}; Object.keys(m).forEach(function(k) { var s = m[k]; if (s) cnt[s] = (cnt[s] || 0) + 1; });
+                if (sb) sb.textContent = ADMIN_SITE_OPTIONS.map(function(s) { return s.charAt(0) + (cnt[s] || 0); }).join(' ');
+            }
+        }
+        // 先移除旧监听器再绑定，避免反复进入管理后台导致事件累积
+        if (window._adminSiteClickHandler) document.getElementById('mainContent').removeEventListener('click', window._adminSiteClickHandler);
+        window._adminSiteClickHandler = function(e) {
+            // 站点筛选按钮（含内部人数 span，用 closest 找按钮）
+            var sfBtn = e.target && e.target.closest ? e.target.closest('.site-filter-btn') : null;
+            if (sfBtn) {
+                e.preventDefault(); e.stopPropagation();
+                window._adminSiteFilter = sfBtn.getAttribute('data-site') || '';
+                refreshAdminSiteTable(document.getElementById('siteSearchInput') ? document.getElementById('siteSearchInput').value : '');
+            }
+            if (e.target && e.target.id === 'addSiteRowBtn') {
+                var tbody = document.getElementById('adminSiteBody');
+                if (!tbody) return;
+                e.preventDefault(); e.stopPropagation();
+                // 收起其他详情展开人员管理
+                var sd = document.getElementById('siteDetail');
+                if (sd && sd.style.display === 'none') toggleAdminDetail('siteDetail');
+                var opts = ADMIN_SITE_OPTIONS.map(function(s) { return '<option value="' + s + '">' + s + '</option>'; }).join('');
+                var tr = document.createElement('tr');
+                tr.innerHTML = '<td style="text-align:center;padding:8px 6px;"><input class="as-name" placeholder="输入姓名" style="width:90%;padding:4px;border:1px solid #cbd5e1;border-radius:6px;font-size:0.78rem;text-align:center;"></td><td style="text-align:center;padding:8px 6px;"><select class="as-site-new" style="padding:4px 8px;border:1px solid #cbd5e1;border-radius:6px;font-size:0.78rem;cursor:pointer;">' + opts + '</select></td><td style="text-align:center;"><button class="as-add-ok" style="background:#dcfce7;color:#166534;border:none;padding:3px 12px;border-radius:6px;cursor:pointer;font-size:0.72rem;font-weight:600;">✔ 保存</button></td>';
+                tbody.insertBefore(tr, tbody.firstChild);
+                var nameInput = tr.querySelector('.as-name');
+                nameInput.focus();
+                tr.querySelector('.as-add-ok').onclick = function() {
+                    var nm = nameInput.value.trim();
+                    if (!nm) { alert('请输入姓名'); return; }
+                    var m = getAdminPersonSiteMap();
+                    m[nm] = tr.querySelector('.as-site-new').value;
+                    saveAdminPersonSiteMap(m);
+                    refreshAdminSiteTable(document.getElementById('siteSearchInput') ? document.getElementById('siteSearchInput').value : '');
+                    updateAdminCards();
+                    showToast('✅ ' + nm + ' 已添加，站点归属以这里为准', 'success');
+                };
+            }
+            if (e.target && e.target.id === 'resetSiteBtn') {
+                var m = Object.assign({}, DEFAULT_PERSON_SITE_MAP, window._SITE_MAP || {});
+                saveAdminPersonSiteMap(m);
+                refreshAdminSiteTable(document.getElementById('siteSearchInput') ? document.getElementById('siteSearchInput').value : '');
+                updateAdminCards();
+                showToast('✅ 已恢复默认名单（' + Object.keys(m).length + '人）', 'success');
+            }
+        };
+        document.getElementById('mainContent').addEventListener('click', window._adminSiteClickHandler);
 
         // 邮箱管理
         function refreshEmailTable(filter) {
@@ -2198,6 +2352,56 @@
     // ==================== 数据分析模块 ====================
     function escapeHtml(str) { if (!str) return ''; return String(str).replace(/[&<>]/g, function(m) { if (m === '&') return '&'; if (m === '<') return '<'; if (m === '>') return '>'; return m; }); }
 
+    // ===== 人员管理（姓名→站点，站点归属的最终权威口径，一切以这里为准）=====
+    const ADMIN_PERSON_SITE_KEY = 'adminPersonSiteMap';
+    // 默认名单（首次初始化用，与看板 _SITE_MAP 全名单一致）
+    const DEFAULT_PERSON_SITE_MAP = { '袁彬城':'深圳','许嘉林':'深圳','林嘉士':'深圳','王跃强':'深圳','孙俊':'深圳','姜玉林':'深圳','邹文文':'深圳','刘华城':'深圳','彭士观':'深圳','宁泰联':'深圳','吕建效':'深圳','张兢':'深圳','贺涛':'深圳','黄俊德':'深圳','李晓阳':'深圳','赵元坤':'深圳','盘训起':'深圳','冯开宁':'深圳','刘文能':'深圳','丁怀强':'深圳','林欣彬':'深圳','许泽雄':'深圳','曾清源':'深圳','吴松豪':'深圳','王燕文':'深圳','庄振航':'深圳','陈跃军':'深圳','王帅':'深圳','李念甘':'深圳','林家文':'深圳','廖天水':'深圳','廖国辉':'深圳','孙伟':'青岛','苏超跃':'青岛','王清婷':'青岛','徐贤炜':'青岛','王洋':'青岛','郑凯雄':'青岛','陶永嵩':'青岛','王为':'青岛','刘荫民':'青岛','代金鹏':'青岛','辛明泉':'青岛','王兴清':'青岛','姜超':'青岛','张明':'青岛','魏才玉':'青岛','张凯凯':'青岛','刘昊东':'青岛','李选国':'青岛','王梦阳':'青岛','王瑞宇':'青岛','陈文彬':'青岛','许江':'青岛','贺文锐':'青岛','臧天昊':'青岛','王璐':'青岛','李仁义':'青岛','徐行':'成都','何显健':'成都','陈毅军':'成都','胡志鹏':'成都','樊景舜':'成都','向阳':'成都','周金山':'成都','马浩':'成都','雍彬彬':'成都','伏鑫':'成都','肖健平':'成都','罗宁':'成都','吴辉':'成都','任青俊':'成都','杜攀':'成都','麦钧淇':'成都','杨宏':'成都','赵晨鸿':'成都','李忠林':'成都','延依飞':'成都','张俊':'成都','刘超':'成都','李晓洋':'成都','张浩文':'成都','唐洲':'成都' };
+    var _adminPersonSiteCloudLoading = false;
+    var _adminPersonSiteMapCache = null;
+    function getAdminPersonSiteMap() {
+        if (_adminPersonSiteMapCache) return _adminPersonSiteMapCache;
+        // 本地为空时后台从云端拉取（与邮箱管理一致），不阻塞同步返回
+        if (!_adminPersonSiteCloudLoading) {
+            _adminPersonSiteCloudLoading = true;
+            try {
+                if (!localStorage.getItem(ADMIN_PERSON_SITE_KEY)) {
+                    fetch(SUPABASE_URL + '/rest/v1/app_data?select=value&key=eq.' + ADMIN_PERSON_SITE_KEY, {
+                        headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY }
+                    }).then(function(r) { return r.json(); }).then(function(rows) {
+                        if (Array.isArray(rows) && rows.length > 0 && rows[0].value) {
+                            try {
+                                var v = JSON.parse(rows[0].value);
+                                if (v && typeof v === 'object' && !Array.isArray(v)) localStorage.setItem(ADMIN_PERSON_SITE_KEY, rows[0].value);
+                            } catch(e) {}
+                        }
+                    }).catch(function() {});
+                }
+            } catch(e) {}
+        }
+        try {
+            var m = JSON.parse(localStorage.getItem(ADMIN_PERSON_SITE_KEY) || 'null');
+            if (m && typeof m === 'object' && !Array.isArray(m)) { _adminPersonSiteMapCache = m; return m; }
+        } catch(e) {}
+        // 首次：用默认名单初始化（看板已加载时合并其最新名单）
+        var init = Object.assign({}, DEFAULT_PERSON_SITE_MAP, window._SITE_MAP || {});
+        try { localStorage.setItem(ADMIN_PERSON_SITE_KEY, JSON.stringify(init)); } catch(e) {}
+        _adminPersonSiteMapCache = init;
+        return init;
+    }
+    function saveAdminPersonSiteMap(m) {
+        _adminPersonSiteMapCache = m || {};
+        var val = JSON.stringify(m || {});
+        try { localStorage.setItem(ADMIN_PERSON_SITE_KEY, val); } catch(e) {}
+        // 同步到云端（与其他管理数据一致，跨设备共享）
+        try {
+            fetch(SUPABASE_URL + '/rest/v1/app_data', {
+                method: 'POST',
+                headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY, 'Content-Type': 'application/json', 'Prefer': 'resolution=merge-duplicates' },
+                body: JSON.stringify({ key: ADMIN_PERSON_SITE_KEY, value: val, updated_at: new Date().toISOString() })
+            }).catch(function() {});
+        } catch(e) {}
+    }
+
     // ===== 模块3手动数据管理（全局作用域，供onclick调用） =====
     const MODULE3_STORAGE_KEY = 'samplingModule3Data';
     const COZE_BOT_ID = '7651069759974408230';
@@ -2343,15 +2547,25 @@
             return (mv !== undefined && mv !== null && Number(mv) > 0) || (cjv !== undefined && cjv !== null && Number(cjv) > 0) || (pzv !== undefined && pzv !== null && Number(pzv) > 0);
         });
         // 人员名单跟随站点筛选口径：未筛选/全选时显示全部站点，单站点时只显示该站点人员
-        const siteMap = Object.assign({}, window._reviewerSiteMap || {}, window._SITE_MAP || {});
+        // 站点归属优先顺序：管理后台人员管理（最终权威）> 抽检表B列（该人抽检行出现最多的站点）> 动态推断 > 硬编码名单
+        const siteMap = Object.assign({}, window._reviewerSiteMap || {}, window._SITE_MAP || {}, periodData.samplingPersonSiteMap || {}, getAdminPersonSiteMap());
         const selSites = window._selectedSites || [];
         function siteInFilter(n) {
             if (!n) return false;
             if (selSites.length === 0 || selSites.length >= 3) return true; // 全选/未筛选：全部显示
             const s = siteMap[n] || '';
+            if (!s) return true; // 站点映射里没有归属的新人：保留显示（与B区块行级筛选口径一致）
             return selSites.indexOf(s) >= 0;
         }
-        const allNames = [...new Set([...module3NameList, ...condShow, ...Object.keys(mistakeMap||{}), ...Object.keys(chouJianMapNew||{}), ...Object.keys(panZeMapFixed||{})])].filter(function(n) { return siteInFilter(n) && !getDepartedReviewers()[n]; });
+        const allNames = [...new Set([...module3NameList, ...condShow, ...Object.keys(mistakeMap||{}), ...Object.keys(chouJianMapNew||{}), ...Object.keys(panZeMapFixed||{})])].filter(function(n) {
+            if (!siteInFilter(n)) return false;
+            // 离职人员：有抽检量/判责量/失误量任一数据时仍显示（与周报口径一致），全无数据才隐藏
+            if (getDepartedReviewers()[n]) {
+                const mv = mistakeMap[n]; const cjv = chouJianMapNew[n]; const pzv = panZeMapFixed[n];
+                return (mv !== undefined && mv !== null && Number(mv) > 0) || (cjv !== undefined && cjv !== null && Number(cjv) > 0) || (pzv !== undefined && pzv !== null && Number(pzv) > 0);
+            }
+            return true;
+        });
 
         let card = '<div id="samplingCard3" style="background:#fff;border-radius:12px;border:1px solid #e2e8f0;box-shadow:0 1px 4px rgba(0,0,0,0.06);padding:16px;margin-bottom:16px;">';
         card += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">';
@@ -3550,27 +3764,35 @@
     function fixFeishuChouJianName(name) {
         name = String(name || '').trim();
         if (!name) return null;
+        // 剥离括号后缀（如"何显健(组长)"、"张三（师傅）"）后再匹配，避免名字带备注导致匹配不上
+        const stripped = name.replace(/[（(][^）)]*[）)]/g, '').trim();
+        const raw = stripped || name;
         const exactFix = {'吴晖':'吴辉','樊昱舜':'樊景舜','樊慧舞':'樊景舜','李思林':'李忠林','姜钧琪':'麦钧淇','姜钧淇':'麦钧淇'};
-        if (exactFix[name]) return exactFix[name];
-        if (module3NameList.includes(name)) return name;
-        // 模糊匹配候选名单：优先全站点名单（已加载时），否则退回成都名单
+        if (exactFix[raw]) return exactFix[raw];
+        if (module3NameList.includes(raw)) return raw;
+        // 模糊匹配候选名单：优先全站点名单（人员管理+已加载的看板名单），否则退回成都名单
         let validList = module3NameList;
-        if (window._SITE_MAP) {
-            const _smKeys = Object.keys(window._SITE_MAP);
-            if (_smKeys.length > 0) validList = _smKeys;
-        }
-        // 编辑距离 ≤1 模糊匹配
-        let bestName = null, bestDist = 999;
-        for (const valid of validList) {
-            const m = name.length, n = valid.length;
-            const dp = Array.from({length: m+1}, (_, i) => [i]);
-            for (let j = 1; j <= n; j++) dp[0][j] = j;
-            for (let i = 1; i <= m; i++) for (let j = 1; j <= n; j++) {
-                dp[i][j] = Math.min(dp[i-1][j]+1, dp[i][j-1]+1, dp[i-1][j-1]+(name[i-1]===valid[j-1]?0:1));
+        const _amKeys = Object.keys(getAdminPersonSiteMap());
+        const _smKeys = window._SITE_MAP ? Object.keys(window._SITE_MAP) : [];
+        const _allKeys = [...new Set([..._amKeys, ..._smKeys])];
+        if (_allKeys.length > 0) validList = _allKeys;
+        // 编辑距离 ≤1 模糊匹配（仅三字及以上名字）：
+        // 两字名太容易误配（如"陆鑫"→"伏鑫"），不做模糊匹配；三字名仅当最近候选唯一时才映射（防止把陌生人名的抽检量误记到别人头上）
+        let bestNames = [], bestDist = 999;
+        if (raw.length >= 3) {
+            for (const valid of validList) {
+                const m = raw.length, n = valid.length;
+                const dp = Array.from({length: m+1}, (_, i) => [i]);
+                for (let j = 1; j <= n; j++) dp[0][j] = j;
+                for (let i = 1; i <= m; i++) for (let j = 1; j <= n; j++) {
+                    dp[i][j] = Math.min(dp[i-1][j]+1, dp[i][j-1]+1, dp[i-1][j-1]+(raw[i-1]===valid[j-1]?0:1));
+                }
+                if (dp[m][n] < bestDist) { bestDist = dp[m][n]; bestNames = [valid]; }
+                else if (dp[m][n] === bestDist) { bestNames.push(valid); }
             }
-            if (dp[m][n] < bestDist) { bestDist = dp[m][n]; bestName = valid; }
         }
-        return (bestDist <= 1 && bestName) ? bestName : name;
+        if (bestDist <= 1 && bestNames.length === 1) return bestNames[0];
+        return raw;
     }
 
     // 解析飞书表格中的日期值（兼容字符串、数字、Date对象、中文年月日、无年份简写）
@@ -3696,7 +3918,7 @@
     ];
     // 抽检数据本地聚合缓存：首次全量拉取A:G后按 日期→站点→初审人 聚合，
     // 之后每次分析只增量拉取新增行（秒级），从缓存按周期+站点口径计算，不再拉全表
-    const FEISHU_SAMPLING_CACHE_KEY = 'feishuSamplingCacheV3';
+    const FEISHU_SAMPLING_CACHE_KEY = 'feishuSamplingCacheV4';
     let _feishuSamplingRefreshing = false;
 
     function getFeishuSamplingCache() {
@@ -3734,7 +3956,7 @@
             var r = parseSamplingRow(rows[i]);
             if (!r) continue;
             if (rowIndex && !rowIndex[r.ts]) rowIndex[r.ts] = firstRowNo + i; // 该日期首次出现的行号（表按日期升序）
-            if (!r.site) continue;
+            // 站点列为空的行也保留（st=''）：全选口径计入，单站点筛选时由计算层过滤（与实时拉取路径一致，避免全量缓存路径丢数据）
             if (!bucket[r.ds]) bucket[r.ds] = {};
             if (!bucket[r.ds][r.site]) bucket[r.ds][r.site] = {};
             bucket[r.ds][r.site][r.fn] = (bucket[r.ds][r.site][r.fn] || 0) + 1;
@@ -3746,6 +3968,7 @@
     function calcSamplingFromCache(cache, dateRange, siteFilter) {
         var online = 0, physical = 0;
         var personMap = {};
+        var personSiteCount = {}; // 人→{站点:次数}（用抽检表B列站点，不受筛选口径影响）
         ['online', 'physical'].forEach(function(tp) {
             var byDate = cache[tp] || {};
             Object.keys(byDate).forEach(function(ds) {
@@ -3756,17 +3979,31 @@
                 if (dd < s || dd > e) return;
                 var bySite = byDate[ds] || {};
                 Object.keys(bySite).forEach(function(st) {
-                    if (siteFilter && siteFilter.indexOf(st) < 0) return;
                     var byPerson = bySite[st] || {};
                     Object.keys(byPerson).forEach(function(pn) {
                         var cnt = Number(byPerson[pn]) || 0;
+                        if (st) { // 人站点归属统计（抽检表自己的站点列，选单站点时不受筛选影响）
+                            if (!personSiteCount[pn]) personSiteCount[pn] = {};
+                            personSiteCount[pn][st] = (personSiteCount[pn][st] || 0) + cnt;
+                        }
+                        if (siteFilter && siteFilter.indexOf(st) < 0) return;
                         if (tp === 'online') online += cnt; else physical += cnt;
                         personMap[pn] = (personMap[pn] || 0) + cnt;
                     });
                 });
             });
         });
-        return { online: online, physical: physical, personMap: personMap };
+        // 人→站点：取该人抽检行中出现次数最多的站点
+        var personSiteMap = {};
+        Object.keys(personSiteCount).forEach(function(pn) {
+            var sites = personSiteCount[pn];
+            var bestSite = '', bestCnt = 0;
+            Object.keys(sites).forEach(function(st) {
+                if (sites[st] > bestCnt) { bestCnt = sites[st]; bestSite = st; }
+            });
+            if (bestSite) personSiteMap[pn] = bestSite;
+        });
+        return { online: online, physical: physical, personMap: personMap, personSiteMap: personSiteMap };
     }
     // 按行区间拉取单个sheet的 日期(A)+站点(B)+初审人(F) 三列（只取计量需要的列，不读全表其他列）
     // rowRange: {s: 起始行号, e: 结束行号}，e 为 null 表示到表末尾；返回标准行格式 [日期,站点,...,初审人(row[5])]
@@ -3898,6 +4135,10 @@
             }));
             var okCnt = 0, online = 0, physical = 0;
             var personMap = {};
+            var personSiteCount = {}; // 人→{站点:次数}（用抽检表B列站点，不受筛选口径影响）
+            // 周期起止时间戳（用于行级日期校验，防御行区间定位误差导致的周期外行混入）
+            var _pStartTs = new Date(dateRange.startDate.getFullYear(), dateRange.startDate.getMonth(), dateRange.startDate.getDate()).getTime();
+            var _pEndTs = new Date(dateRange.endDate.getFullYear(), dateRange.endDate.getMonth(), dateRange.endDate.getDate()).getTime();
             results.forEach(function(res) {
                 if (!res.ok) {
                     console.log('[飞书抽检总量] ' + res.name + ' 周期区间拉取失败: ' + res.error);
@@ -3907,14 +4148,29 @@
                 for (var i = 0; i < res.rows.length; i++) {
                     var r = parseSamplingRow(res.rows[i]);
                     if (!r) continue;
+                    if (r.ts < _pStartTs || r.ts > _pEndTs) continue; // 日期严格在周期内才计入
+                    if (r.site) { // 人站点归属统计（抽检表自己的站点列，选单站点时不受筛选影响）
+                        if (!personSiteCount[r.fn]) personSiteCount[r.fn] = {};
+                        personSiteCount[r.fn][r.site] = (personSiteCount[r.fn][r.site] || 0) + 1;
+                    }
                     if (siteFilter && siteFilter.indexOf(r.site) < 0) continue; // 站点按当前筛选口径
                     if (res.type === 'online') online++; else physical++;
                     personMap[r.fn] = (personMap[r.fn] || 0) + 1;
                 }
             });
             if (okCnt === 0) return null;
+            // 人→站点：取该人抽检行中出现次数最多的站点
+            var personSiteMap = {};
+            Object.keys(personSiteCount).forEach(function(pn) {
+                var sites = personSiteCount[pn];
+                var bestSite = '', bestCnt = 0;
+                Object.keys(sites).forEach(function(st) {
+                    if (sites[st] > bestCnt) { bestCnt = sites[st]; bestSite = st; }
+                });
+                if (bestSite) personSiteMap[pn] = bestSite;
+            });
             console.log('[飞书抽检总量] 周期区间拉取完成（仅所选周期行）: 线上=' + online + ' 实物=' + physical);
-            return { online: online, physical: physical, personMap: personMap };
+            return { online: online, physical: physical, personMap: personMap, personSiteMap: personSiteMap };
         } catch(e) {
             console.log('[飞书抽检总量] 周期区间拉取异常: ' + e.message);
             return null;
@@ -3973,6 +4229,7 @@
             periodData.samplingPhysical = r.physical;
             periodData.samplingTotal = r.online + r.physical;
             periodData.samplingPersonMap = r.personMap;
+            periodData.samplingPersonSiteMap = r.personSiteMap || {}; // 人→站点（抽检表B列出现最多的站点）
             saveModule3PeriodData(pk, periodData);
             console.log('[飞书抽检总量] ✅ 已写入周期 ' + pk + '（按人抽检量 ' + Object.keys(r.personMap).length + ' 人）');
         } catch(e) {
@@ -5281,11 +5538,13 @@
         const m3NameList = ['何显健','周金山','陈毅军','樊景舜','向阳','胡志鹏','赵晨鸿','马浩','伏鑫','杜攀','罗宁','肖健平','吴辉','任青俊','张俊','麦钧淇','杨宏','李晓洋','刘超','李忠林','延依飞'];
         const condNames = ['徐行','唐洲'].filter(n => { const v = mkMap[n]; return v !== undefined && v !== null && Number(v) > 0; });
         // 人员名单跟随站点筛选口径：全选时显示全部站点，单站点时只显示该站点人员
-        const m3SiteMap = Object.assign({}, window._reviewerSiteMap || {}, window._SITE_MAP || {});
+        // 站点归属优先顺序：管理后台人员管理（最终权威）> 抽检表B列（该人抽检行出现最多的站点）> 动态推断 > 硬编码名单
+        const m3SiteMap = Object.assign({}, window._reviewerSiteMap || {}, window._SITE_MAP || {}, module3PeriodData.samplingPersonSiteMap || {}, getAdminPersonSiteMap());
         const m3SelSites = window._selectedSites || [];
         function m3SiteInFilter(n) {
             if (m3SelSites.length === 0 || m3SelSites.length >= 3) return true;
             const s = m3SiteMap[n] || '';
+            if (!s) return true; // 站点映射里没有归属的新人：保留显示
             return m3SelSites.indexOf(s) >= 0;
         }
         const allM3Names0 = [...new Set([...m3NameList, ...condNames, ...Object.keys(cjMap), ...Object.keys(pzMap), ...Object.keys(mkMap)])];
@@ -5558,13 +5817,13 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
         // 判断是否为月度分析
         const isMonthType = periodName.includes('月') && !periodName.includes('周');
         
-        // B区块站点口径：人名权威归属（_SITE_MAP人工维护）优先于数据行站点列
+        // B区块站点口径：人员管理（最终权威）优先，其次 _SITE_MAP 硬编码名单，最后数据行站点列
         // （数据行站点列可能写错，如成都人员的行标了别的站点；按人归属过滤最准）
         const bSelSites = window._selectedSites || [];
         function bRowSiteOk(row) {
             if (bSelSites.length === 0 || bSelSites.length >= 3) return true;
             const rn = String(row[reviewerColumn] || '').trim();
-            const auth = window._SITE_MAP ? window._SITE_MAP[rn] : null;
+            const auth = getAdminPersonSiteMap()[rn] || (window._SITE_MAP ? window._SITE_MAP[rn] : null);
             if (auth) return bSelSites.indexOf(auth) >= 0; // 有权威归属：按人判断
             return true; // 无归属的新人：保留（行级站点筛选已处理）
         }
@@ -5591,7 +5850,7 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
         });
         // 补齐：固定名单 + 徐行唐洲 + 历史数据中所有初审（已离职且无数据的除外，应用同名合并）
         // 站点口径：跟随当前筛选（全选/未筛选时显示全部站点，单站点时只补该站点人员）
-        const rvSiteMap2 = Object.assign({}, window._reviewerSiteMap || {}, window._SITE_MAP || {});
+        const rvSiteMap2 = Object.assign({}, window._reviewerSiteMap || {}, window._SITE_MAP || {}, getAdminPersonSiteMap());
         const rvSelSites = window._selectedSites || [];
         function rvSiteInFilter(n) {
             if (rvSelSites.length === 0 || rvSelSites.length >= 3) return true;
@@ -5722,7 +5981,7 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
         function _panZeBySite(name) {
             const sel = window._selectedSites || [];
             if (sel.length === 0 || sel.length >= 3) return _pzMap2[name] || 0;
-            const siteMap = window._reviewerSiteMap || {};
+            const siteMap = Object.assign({}, window._reviewerSiteMap || {}, getAdminPersonSiteMap());
             const site = siteMap[name] || '';
             if (sel.some(s => site === s)) return _pzMap2[name] || 0;
             return 0;
@@ -12388,11 +12647,11 @@ async function importQBFromFeishu() {
     let errorSiteCol = -1;
     let errorCurrentPeriod = 'week';
 
-    // 全局格式化初审名字：附加站点（如 徐行（成都））
+    // 全局格式化初审名字：附加站点（如 徐行（成都）），站点归属以人员管理为准
     function fmtRvGlobal(name) {
         const nameFix = {'肖建平':'肖健平'};
         const displayName = nameFix[name] || name;
-        const map = window._reviewerSiteMap || {};
+        const map = Object.assign({}, window._reviewerSiteMap || {}, getAdminPersonSiteMap());
         return map[displayName] ? displayName + '（' + map[displayName] + '）' : displayName;
     }
 
@@ -15594,6 +15853,7 @@ async function importQBFromFeishu() {
                         reviewer = reviewer.replace(/解答失误$/, '').replace(/解答$/, '').trim();
                         var note = (row[res.colNote] || '').toString().trim();
                         var site = (row[res.colSite] || '').toString().trim();
+                        if (!site && getAdminPersonSiteMap()[reviewer]) site = getAdminPersonSiteMap()[reviewer];
                         if (!site && window._SITE_MAP[reviewer]) site = window._SITE_MAP[reviewer];
                         var qcCode = (row[res.colQcCode] || '').toString().trim();
                         var product = res.colProduct >= 0 ? ((row[res.colProduct] || '') + '').trim() : '';
@@ -17972,7 +18232,7 @@ async function importQBFromFeishu() {
                             });
                             result = Object.entries(sites).sort(function(a, b) { return b[1] - a[1]; }).map(function(p) { return p[0]; }).join('/');
                         }
-                        if (!result) result = window._SITE_MAP[name] || '';
+                        if (!result) result = getAdminPersonSiteMap()[name] || (window._SITE_MAP ? window._SITE_MAP[name] : '') || '';
                         return result;
                     }
                     // 智能按钮：按周期阈值
@@ -18040,7 +18300,7 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
                             var allPeople2 = sortedReviewers;
                             if (errorDashboardFilter.site !== 'all') {
                                 allPeople2 = allPeople2.filter(function(e) {
-                                    var s = getPersonSites(e[0]) || window._SITE_MAP[e[0]] || '';
+                                    var s = getPersonSites(e[0]) || getAdminPersonSiteMap()[e[0]] || (window._SITE_MAP ? window._SITE_MAP[e[0]] : '') || '';
                                     return s.indexOf(errorDashboardFilter.site) >= 0;
                                 });
                             }
