@@ -15268,7 +15268,6 @@ async function importQBFromFeishu() {
         var firstMon = new Date(y, startM, 27);
         while (firstMon.getDay() !== 1) firstMon.setDate(firstMon.getDate() + 1);
         var wn = Math.floor((monday - firstMon) / (7 * 86400000)) + 1;
-        if (wn > 4) wn = 4;
         return (logicM + 1) + '月第' + wn + '周';
     }
 
@@ -16081,14 +16080,21 @@ async function importQBFromFeishu() {
                     '</div>' +
                     '<div style="flex:1;min-width:0;display:flex;flex-direction:column;">' +
                         (function(){
-                            // 本周范围（与失误总结模块同口径）
+                            // 本周范围（与失误总结模块同口径）；本周还没数据时（如周一）回退显示上周
                             var nowWk = new Date();
                             var dowWk = nowWk.getDay();
                             var mondayOffset = dowWk === 0 ? 6 : dowWk - 1;
                             var thisMonday = new Date(nowWk.getFullYear(), nowWk.getMonth(), nowWk.getDate() - mondayOffset);
                             thisMonday.setHours(0,0,0,0);
                             var wkEnd = new Date(thisMonday.getTime() + 6 * 86400000);
+                            var pzLabel = '（本周，每日同步）';
                             var pzd = getPanzeCategoryData(name, thisMonday.toISOString(), wkEnd.toISOString());
+                            if (pzd.total === 0) {
+                                var lastMonday = new Date(thisMonday.getTime() - 7 * 86400000);
+                                var lastEnd = new Date(thisMonday.getTime() - 1000);
+                                var pzdLast = getPanzeCategoryData(name, lastMonday.toISOString(), lastEnd.toISOString());
+                                if (pzdLast.total > 0) { pzd = pzdLast; pzLabel = '（本周暂无数据，显示上周）'; }
+                            }
                             var pzRows = '';
                             if (pzd.total > 0) {
                                 var ents = Object.entries(pzd.cats).sort(function(a,b){ return b[1]-a[1]; });
@@ -16099,7 +16105,7 @@ async function importQBFromFeishu() {
                             } else {
                                 pzRows = '<tr><td colspan="3" style="padding:10px;text-align:center;color:#94a3b8;">暂无每日同步的品类明细数据</td></tr>';
                             }
-                            return '<div style="font-weight:700;color:#1f3a6b;margin-bottom:6px;">📦 判责量品类明细 <span style="font-size:0.6rem;color:#94a3b8;">（本周，每日同步）</span></div>' +
+                            return '<div style="font-weight:700;color:#1f3a6b;margin-bottom:6px;">📦 判责量品类明细 <span style="font-size:0.6rem;color:#94a3b8;">' + pzLabel + '</span></div>' +
                                 '<div style="flex:1;background:#f8fafc;border-radius:12px;padding:12px;border:1px solid #eef2f6;">' +
                                     '<div style="font-size:0.72rem;color:#1f3a6b;font-weight:600;margin-bottom:8px;">📊 判责量总计：' + pzd.total + ' 次</div>' +
                                     '<table style="width:100%;border-collapse:collapse;table-layout:fixed;"><colgroup><col style="width:33.33%;"><col style="width:33.33%;"><col style="width:33.34%;"></colgroup>' +
