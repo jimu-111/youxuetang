@@ -17029,22 +17029,25 @@ async function importQBFromFeishu() {
             } catch(e) {}
         }
         if (!html) { showAlert('📄 培训资料不存在或已过期', '⚠️'); return; }
+        window._reportAutoOpened = true;
 
-        // 弹窗展示，保留主应用 JS 上下文
-        // 提取 body 内容（去掉 html/head/body 标签）
+        // 整页直开展示（与下载版培训资料 HTML 一致），保留主应用 JS 上下文
+        var styleContent = '';
+        var styleMatch = html.match(/<style[^>]*>([\s\S]*)<\/style>/i);
+        if (styleMatch) styleContent = styleMatch[1];
         var bodyContent = html;
         var bodyMatch = html.match(/<body[^>]*>([\s\S]*)<\/body>/i);
         if (bodyMatch) bodyContent = bodyMatch[1];
-        var ov = document.createElement('div');
-        ov.className = 'modal-overlay'; ov.style.zIndex = '3000'; ov.style.left = '0';
-        ov.innerHTML = '<div class="modal-container" style="max-width:960px;width:98%;">' +
-            '<div class="modal-header" style="background:#8e44ad;">' +
-                '<span>📖 培训资料</span>' +
-                '<button class="modal-close-btn" id="trainReportClose" style="background:rgba(255,255,255,0.2);border:none;color:white;width:32px;height:32px;border-radius:50%;cursor:pointer;font-size:1.2rem;">✕</button></div>' +
-            '<div class="modal-body" style="max-height:80vh;overflow-y:auto;padding:20px;" id="trainReportBody">' + bodyContent + '</div></div>';
-        document.body.appendChild(ov);
-        ov.querySelector('#trainReportClose').onclick = function() { ov.remove(); };
-        ov.addEventListener('click', function(e) { if (e.target === ov) ov.remove(); });
+        var sidebar = document.querySelector('.sidebar');
+        if (sidebar) sidebar.style.display = 'none';
+        document.body.style.cssText += ';background:#fff;height:auto;min-height:100vh;overflow:auto;';
+        document.title = '培训资料';
+        document.body.innerHTML = '<style>' + styleContent +
+            '#trainReportBody h1{display:block;font-size:2em;font-weight:bold;margin:0.67em 0;}' +
+            '#trainReportBody p{display:block;margin:1em 0;}' +
+            '</style>' +
+            '<a id="trainReportBack" href="' + window.location.pathname + '" style="position:fixed;top:14px;right:16px;z-index:9999;background:#1f3a6b;color:#fff;text-decoration:none;padding:8px 16px;border-radius:20px;font-size:0.8rem;box-shadow:0 2px 8px rgba(0,0,0,0.2);">← 返回优学堂</a>' +
+            '<div id="trainReportBody">' + bodyContent + '</div>';
         // 注入案例反馈按钮
         setTimeout(function() {
             var body = document.getElementById('trainReportBody');
@@ -19672,16 +19675,11 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
         if (sidebar && sidebar.style.display === 'none') sidebar.style.display = '';
         const container = document.getElementById('mainContent');
         const urlParams = new URLSearchParams(window.location.search);
-        // 自动打开培训报告（新窗口）
+        // 自动打开培训报告（整页直开，与分享链接一致）
         const autoReport = urlParams.get('report');
         if (autoReport && !window._reportAutoOpened) {
-            window._reportAutoOpened = true;
-            var rptName = decodeURIComponent(autoReport);
-            var rptHtml = generatedReports[rptName];
-            if (rptHtml) {
-                var blob = new Blob([rptHtml], { type: 'text/html' });
-                window.open(URL.createObjectURL(blob), '_blank');
-            }
+            openSharedReport(decodeURIComponent(autoReport));
+            return;
         }
         // 自动跳转学习地图
         const autoLearn = urlParams.get('learnPlan');
@@ -20319,12 +20317,8 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
 
     function toggleWeekGroup(el) { var n = el.nextElementSibling; if (n) n.style.display = n.style.display === "none" ? "" : "none"; }
     function openTrainingReport(name) {
-        var reports = JSON.parse(localStorage.getItem('generatedReports')||'{}');
-        var html = reports[name];
-        if (!html) { showAlert('培训资料已过期或被清理', '⚠️'); return; }
-        var w = window.open('', '_blank');
-        w.document.write(html);
-        w.document.close();
+        // 与分享链接一致：整页直开展示（含云端兜底）
+        openSharedReport(name);
     }
 
 
@@ -21692,7 +21686,9 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
             }).catch(function(){});
             getFeishuToken().then(function(){
                 fetchLearningMapData(false).then(function(){ buildLMCache(); });
-                refreshErrorDashboardData(true, true);
+                // 独立考试/报告/学习地图页不预加载看板，避免授权页覆盖页面
+                var inStandalone = /[?&](exam|report)=/.test(window.location.search) || /learnPlan=/.test(window.location.hash);
+                if (!inStandalone) refreshErrorDashboardData(true, true);
             });
         }, 300);
 
