@@ -17847,8 +17847,41 @@ async function importQBFromFeishu() {
             return true;
         });
         if (matched.length === 0) { showAlert("案例库中无匹配的案例", "⚠️"); return; }
-        matched.sort(function(a,b){ return (cats[b.errorCategory]||0)-(cats[a.errorCategory]||0); });
-        matched = matched.slice(0, 30);
+        // 按失误比例分配案例数（最大余数法）：失误多的类别配额多，再轮转补齐缺口
+        var MAX_CASES = 30;
+        var sortedCats = Object.keys(cats).sort(function(a,b){ return (cats[b]||0)-(cats[a]||0); });
+        var casesByCat = {};
+        matched.forEach(function(c){ (casesByCat[c.errorCategory] = casesByCat[c.errorCategory]||[]).push(c); });
+        var totalFails = 0;
+        sortedCats.forEach(function(cat){ totalFails += cats[cat]||0; });
+        var quota = {}, used = {}, remain = MAX_CASES;
+        sortedCats.forEach(function(cat){
+            var q = totalFails > 0 ? Math.floor((cats[cat]||0)/totalFails*MAX_CASES) : 0;
+            quota[cat] = q; remain -= q; used[cat] = 0;
+        });
+        // 余数名额按小数部分从大到小分配，保证总数凑满30
+        var fracList = sortedCats.map(function(cat){
+            return { cat: cat, f: totalFails > 0 ? ((cats[cat]||0)/totalFails*MAX_CASES) - quota[cat] : 0 };
+        }).sort(function(a,b){ return b.f - a.f; });
+        for (var fi = 0; fi < remain && fi < fracList.length; fi++) quota[fracList[fi].cat]++;
+        // 按配额取案例（类别内保持案例库原顺序），不足配额的类别由其他类别轮转补齐
+        var result = [];
+        sortedCats.forEach(function(cat){
+            var pool = casesByCat[cat] || [];
+            var take = Math.min(quota[cat], pool.length);
+            result.push.apply(result, pool.slice(0, take));
+            used[cat] = take;
+        });
+        var ci = 0, noAdd = 0;
+        while (result.length < MAX_CASES) {
+            var cat = sortedCats[ci % sortedCats.length];
+            var pool = casesByCat[cat] || [];
+            if (used[cat] < pool.length) { result.push(pool[used[cat]]); used[cat]++; noAdd = 0; }
+            else noAdd++;
+            if (noAdd >= sortedCats.length) break; // 所有类别案例都已取尽
+            ci++;
+        }
+        matched = result;
 
         var docHtml = "<!DOCTYPE html><html><head><meta charset=\"UTF-8\"><title>培训资料</title>" +
         "<style>body{font-family:Microsoft YaHei,SimHei,sans-serif;padding:40px;max-width:900px;margin:0 auto;color:#333;}" +
