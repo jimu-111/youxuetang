@@ -7,6 +7,7 @@ on:
         description: '强制运行（忽略本周已推送标记）'
         required: false
         default: 'false'
+  # 2026-08-31 重新注册定时触发器（GitHub Actions 后端 8-26 起丢失 schedule 触发，任何内容改动可强制重注册）
   schedule:
     - cron: "30 2 * * 1"
 
