@@ -11086,13 +11086,16 @@ URL.revokeObjectURL(url);
         }
         return 'qa';
     }
-    // 旧数据迁移：qa 题按答案重新推断题型（题库只保留单选/多选/判断）
+    // 旧数据迁移：qa 题按答案重新推断题型；choice 但答案为多字母（旧「多选」映射产物）→ multi
     function migrateQBTypes(data) {
         var migrated = false;
         (data.questions || []).forEach(function(q) {
             if (q.type === 'qa') {
                 var nt = inferQuestionType('', q.answer || '');
                 if (nt !== 'qa') { q.type = nt; migrated = true; }
+            } else if (q.type === 'choice' && q.answer) {
+                var nt2 = inferQuestionType('', q.answer || '');
+                if (nt2 === 'multi') { q.type = 'multi'; migrated = true; }
             }
         });
         if (migrated) {

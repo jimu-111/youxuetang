@@ -259,6 +259,13 @@ async function main() {
         return !(r && !r.resolved);
     });
     console.log('题库: ' + (qbData.questions||[]).length + '题 → 排除反馈后: ' + allQuestions.length + '题');
+    // 旧题库数据题型纠正：choice 但答案为多字母（多选）→ multi（与网页端 inferQuestionType 同规则）
+    allQuestions.forEach(function(q) {
+        if (q.type === 'choice' && q.answer) {
+            var cleanAns = String(q.answer).replace(/[\s√✓.,、;；]/g, '');
+            if (/^[A-Fa-f]{2,}$/.test(cleanAns)) q.type = 'multi';
+        }
+    });
 
     const examCodeChars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
     function genExamCode() {
