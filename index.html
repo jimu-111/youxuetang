@@ -1444,6 +1444,7 @@
                     </select>
                 </div>
                 <div style="margin-bottom:14px;"><label style="font-weight:600;color:#1f3a6b;display:block;margin-bottom:4px;">入职日期 *</label><input id="addStuJoinDate" type="date" value="${new Date().toISOString().slice(0,10)}" style="width:100%;padding:10px 14px;border:2px solid #e2e8f0;border-radius:10px;font-size:0.95rem;"></div>
+                <div style="margin-bottom:14px;"><label style="font-weight:600;color:#1f3a6b;display:block;margin-bottom:4px;">邮箱（选填）</label><input id="addStuEmail" type="text" placeholder="未填则发卡片给徐行补录" style="width:100%;padding:10px 14px;border:2px solid #e2e8f0;border-radius:10px;font-size:0.95rem;"></div>
                 <div style="margin-bottom:14px;"><label style="font-weight:600;color:#1f3a6b;display:block;margin-bottom:4px;">初始阶段</label>
                     <select id="addStuStage" style="width:100%;padding:10px 14px;border:2px solid #e2e8f0;border-radius:10px;font-size:0.95rem;">
                         <option value="0">阶段1：学习地图SOP</option>
@@ -1489,6 +1490,7 @@
             const name = document.getElementById('addStuName').value.trim();
             const site = document.getElementById('addStuSite').value;
             const joinDate = document.getElementById('addStuJoinDate').value;
+            const email = document.getElementById('addStuEmail').value.trim();
             const stage = parseInt(document.getElementById('addStuStage').value);
             const errDiv = document.getElementById('addStuError');
             if(!name) { errDiv.textContent = '请输入学员姓名'; errDiv.style.display = 'block'; return; }
@@ -1498,6 +1500,8 @@
             stu.stage = stage;
             students.push(stu);
             saveToLocal();
+            // 联动：人员变动（入职）+ 人员管理（站点）+ 邮箱管理（姓名/邮箱），无邮箱发卡片给徐行补录
+            linkNewStudent(name, site, joinDate, email);
             addOverlay.remove();
             if(parentOverlay) { parentOverlay.remove(); showFrontendAdminModal(); }
             renderFrontend();
@@ -1505,7 +1509,45 @@
         document.getElementById('addStuName').addEventListener('keydown', (e) => { if(e.key === 'Enter') document.getElementById('confirmAddStuBtn').click(); });
     }
 
-    function renderAdminContent(){ 
+    // ===== 添加学员联动：人员变动（入职）+ 人员管理（站点）+ 邮箱管理（姓名/邮箱），无邮箱发卡片给徐行补录 =====
+    const XUHANG_EMAIL = 'xuhang02@zhuanzhuan.com';
+    function linkNewStudent(name, site, joinDate, email) {
+        // 1. 人员变动记录：自动加入职（已在名单中则不重复加）
+        var od = getOnboardingReviewers();
+        var alreadyOnboarded = !!od[name];
+        if (!alreadyOnboarded) {
+            od[name] = joinDate;
+            saveOnboardingReviewers(od);
+            logAdminAction('人员变动', '联动入职', name + ' ' + joinDate);
+        }
+        // 2. 人员管理：姓名→站点（已有则更新站点）
+        var pm = getAdminPersonSiteMap();
+        var siteExisted = pm[name] !== undefined;
+        pm[name] = site;
+        saveAdminPersonSiteMap(pm);
+        logAdminAction('人员管理', siteExisted ? '联动更新站点' : '联动添加人员', name + ' → ' + site);
+        // 3. 邮箱管理：姓名+邮箱（填了写入，没填占位待补录；已有旧邮箱且本次没填则不覆盖）
+        var em = getPersonnelEmails();
+        var finalEmail = email || em[name] || '';
+        em[name] = finalEmail;
+        savePersonnelEmails(em);
+        logAdminAction('邮箱管理', '联动添加姓名', name + (finalEmail ? '' : '（待补录）'));
+        // 4. 没填邮箱且此前未入职过 → 发飞书卡片给徐行补录
+        if (!email && !alreadyOnboarded) {
+            sendFillEmailCardToXuhang(name);
+        }
+    }
+    async function sendFillEmailCardToXuhang(name) {
+        try {
+            var card = buildFeishuCard('email_fill', { name: name, fillUrl: DEPLOYED_URL + '?fillEmail=' + encodeURIComponent(name) });
+            await sendFeishuCard(XUHANG_EMAIL, card);
+            logAdminAction('飞书推送', '发送补录邮箱卡片', name + ' → 徐行');
+        } catch(e) {
+            logAdminAction('飞书推送', '补录卡片发送失败', name + '：' + e.message);
+        }
+    }
+
+    function renderAdminContent(){
         const container = document.getElementById('mainContent'); 
         // 已登录管理员直接进入，不用重复输密码
         if (isAdminMode()) { renderAdminPanel(container); return; }
@@ -2080,7 +2122,7 @@
             tbody.innerHTML = names.map(function(n) {
                 return '<tr>' +
                     '<td style="text-align:center;padding:8px 6px;font-size:0.82rem;font-weight:600;width:80px;border:1px solid #eef2f6;">' + escapeHtml(n) + '</td>' +
-                    '<td style="text-align:center;padding:8px 6px;font-size:0.78rem;color:#5e6f8d;border:1px solid #eef2f6;">' + escapeHtml(emails[n]) + '</td>' +
+                    '<td style="text-align:center;padding:8px 6px;font-size:0.78rem;color:#5e6f8d;border:1px solid #eef2f6;">' + (emails[n] ? escapeHtml(emails[n]) : '<span style="color:#c0392b;font-weight:600;">待补录</span>') + '</td>' +
                     '<td style="text-align:center;padding:4px;width:50px;border:1px solid #eef2f6;"><button class="ae-edit" data-name="' + escapeHtml(n) + '" data-email="' + escapeHtml(emails[n]) + '" style="background:#eef2ff;color:#2a5298;border:none;padding:3px 10px;border-radius:6px;cursor:pointer;font-size:0.7rem;">✏️</button></td>' +
                     '<td style="text-align:center;padding:4px;width:50px;border:1px solid #eef2f6;"><button class="ae-del" data-name="' + escapeHtml(n) + '" style="background:#ffedea;color:#c0392b;border:none;padding:3px 10px;border-radius:6px;cursor:pointer;font-size:0.7rem;">🗑️</button></td>' +
                 '</tr>';
@@ -19010,7 +19052,7 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
             return d;
         } catch(e) { return {}; }
     }
-    function saveDepartedReviewers(d) { localStorage.setItem(DEPARTED_KEY, JSON.stringify(d)); }
+    function saveDepartedReviewers(d) { localStorage.setItem(DEPARTED_KEY, JSON.stringify(d)); _syncPushKey(DEPARTED_KEY, JSON.stringify(d)); }
     function addDepartedReviewer(name, dateStr) {
         var d = getDepartedReviewers();
         d[name] = dateStr;
@@ -19116,7 +19158,7 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
     }
     const ONBOARD_KEY = 'onboardingReviewers';
     function getOnboardingReviewers() { try { return JSON.parse(localStorage.getItem(ONBOARD_KEY) || '{}'); } catch(e) { return {}; } }
-    function saveOnboardingReviewers(d) { localStorage.setItem(ONBOARD_KEY, JSON.stringify(d)); }
+    function saveOnboardingReviewers(d) { localStorage.setItem(ONBOARD_KEY, JSON.stringify(d)); _syncPushKey(ONBOARD_KEY, JSON.stringify(d)); }
     function isOnboardedAfter(name, refDate) { var d = getOnboardingReviewers(); var jd = d[name]; if (!jd) return false; return new Date(jd) > refDate; }
     function removeOnboardingReviewer(name) { var d = getOnboardingReviewers(); delete d[name]; saveOnboardingReviewers(d); showToast('✅ 已移除 ' + name + ' 的入职记录', 'success'); }
     function isActiveInPeriod(name, periodStart) { if (isDepartedBefore(name, periodStart)) return false; if (isOnboardedAfter(name, periodStart)) return false; return true; }
@@ -19155,6 +19197,68 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
                 body: JSON.stringify({ key: PERSONNEL_EMAILS_KEY, value: val, updated_at: new Date().toISOString() })
             }).catch(function() {});
         } catch(e) {}
+    }
+
+    // ===== 邮箱补录页（飞书卡片按钮 ?fillEmail=姓名 跳转进来，徐行补录邮箱用） =====
+    function renderEmailFillPage(name) {
+        var sb = document.querySelector('.sidebar');
+        if (sb) sb.style.display = 'none';
+        var mc = document.getElementById('mainContent');
+        if (mc) { mc.style.padding = '0'; mc.style.marginLeft = '0'; }
+        if (!mc) return;
+        mc.innerHTML = '<div style="max-width:480px;margin:60px auto;padding:0 16px;">' +
+            '<div style="background:white;border-radius:24px;padding:36px;box-shadow:0 4px 20px rgba(0,0,0,0.08);text-align:center;">' +
+            '<div style="font-size:3rem;margin-bottom:12px;">📧</div>' +
+            '<h2 style="color:#1f3a6b;margin-bottom:6px;">邮箱补录</h2>' +
+            '<p style="color:#5e6f8d;margin-bottom:24px;font-size:0.95rem;">为新增人员 <b style="color:#c0392b;">' + escapeHtml(name) + '</b> 填写飞书邮箱</p>' +
+            '<input id="fillEmailInput" type="text" placeholder="如 zhangsan@zhuanzhuan.com" style="width:100%;padding:12px 16px;border:2px solid #e2e8f0;border-radius:12px;font-size:0.95rem;text-align:center;margin-bottom:16px;">' +
+            '<div id="fillEmailMsg" style="font-size:0.85rem;margin-bottom:12px;display:none;"></div>' +
+            '<button id="fillEmailSaveBtn" style="width:100%;background:#27ae60;color:white;border:none;padding:12px;border-radius:12px;cursor:pointer;font-size:1rem;font-weight:700;">💾 保存邮箱</button>' +
+            '</div></div>';
+        var input = document.getElementById('fillEmailInput');
+        // 本地先回显，再从云端拉最新值回显（云端有更新则以云端为准）
+        var localEmails = getPersonnelEmails();
+        if (localEmails[name]) input.value = localEmails[name];
+        fetch(SUPABASE_URL + '/rest/v1/app_data?select=value&key=eq.' + PERSONNEL_EMAILS_KEY, {
+            headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY }
+        }).then(function(r) { return r.json(); }).then(function(rows) {
+            if (Array.isArray(rows) && rows.length > 0 && rows[0].value) {
+                try {
+                    localStorage.setItem(PERSONNEL_EMAILS_KEY, rows[0].value);
+                    var cloudEmails = JSON.parse(rows[0].value);
+                    if (cloudEmails[name]) input.value = cloudEmails[name];
+                } catch(e) {}
+            }
+        }).catch(function() {});
+        function showFillEmailMsg(txt, color) {
+            var m = document.getElementById('fillEmailMsg');
+            m.textContent = txt; m.style.color = color; m.style.display = 'block';
+        }
+        document.getElementById('fillEmailSaveBtn').onclick = function() {
+            var em = input.value.trim();
+            if (!em || em.indexOf('@') < 0) { showFillEmailMsg('请输入有效的邮箱地址（需包含 @）', '#c0392b'); return; }
+            var btn = document.getElementById('fillEmailSaveBtn');
+            btn.disabled = true; btn.textContent = '⏳ 保存中...';
+            // 先拉云端最新再合并写入，防止用本机旧数据覆盖其他人
+            fetch(SUPABASE_URL + '/rest/v1/app_data?select=value&key=eq.' + PERSONNEL_EMAILS_KEY, {
+                headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY }
+            }).then(function(r) { return r.json(); }).then(function(rows) {
+                var all = {};
+                if (Array.isArray(rows) && rows.length > 0 && rows[0].value) { try { all = JSON.parse(rows[0].value); } catch(e2) {} }
+                all[name] = em;
+                savePersonnelEmails(all);
+                showFillEmailMsg('✅ 已保存：' + escapeHtml(name) + ' → ' + escapeHtml(em), '#27ae60');
+                btn.textContent = '✅ 保存成功';
+                logAdminAction('邮箱管理', '飞书卡片补录邮箱', name + ' → ' + em);
+            }).catch(function() {
+                var local = getPersonnelEmails();
+                local[name] = em;
+                savePersonnelEmails(local);
+                showFillEmailMsg('✅ 已保存（云端稍后重试）', '#27ae60');
+                btn.textContent = '✅ 保存成功';
+                logAdminAction('邮箱管理', '飞书卡片补录邮箱', name + ' → ' + em);
+            });
+        };
     }
     const FEISHU_PUSH_KEY = 'feishuPushRecords';
     function getFeishuPushRecords() { try { return JSON.parse(localStorage.getItem(FEISHU_PUSH_KEY) || '[]'); } catch(e) { return []; } }
@@ -19418,6 +19522,15 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
                     { tag: 'div', text: { tag: 'lark_md', content: '📋 请在飞书源文档中核实并修改\n[打开源文档](' + FEISHU_SOURCE_DOC_URL + ')' } },
                     { tag: 'action', actions: [
                         { tag: 'button', text: { tag: 'plain_text', content: '📋 打开优学堂查看' }, type: 'primary', url: DEPLOYED_URL + '?tab=reported' }
+                    ] }
+                ] };
+        }
+        if (type === 'email_fill') {
+            return { config: { wide_screen_mode: true }, header: { title: { tag: 'plain_text', content: '🆕 新增人员 · 请补录邮箱' }, template: 'green' },
+                elements: [
+                    { tag: 'div', text: { tag: 'lark_md', content: '**新增人员：' + (data.name || '') + '**\n该学员已加入新人进度，请点击下方按钮补充其飞书邮箱。' } },
+                    { tag: 'action', actions: [
+                        { tag: 'button', text: { tag: 'plain_text', content: '📝 填写邮箱' }, type: 'primary', url: data.fillUrl || '' }
                     ] }
                 ] };
         }
@@ -21802,8 +21915,13 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
             try { loadData(); } catch(e) {}
             var initExam = initParams.get('exam');
             var initReport = initParams.get('report');
+            var initFillEmail = initParams.get('fillEmail');
             var initTab = initParams.get('tab');
-            if (initExam) { startStandaloneExam(initExam); }
+            if (initFillEmail) {
+                // 邮箱补录页（飞书卡片跳转，徐行补录新增人员邮箱）
+                renderEmailFillPage(decodeURIComponent(initFillEmail));
+            }
+            else if (initExam) { startStandaloneExam(initExam); }
             else if (initReport) {
                 // 培训报告直开，隐藏侧栏
                 var sbRP = document.querySelector('.sidebar');
@@ -21853,7 +21971,7 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
             getFeishuToken().then(function(){
                 fetchLearningMapData(false).then(function(){ buildLMCache(); });
                 // 独立考试/报告/学习地图页不预加载看板，避免授权页覆盖页面
-                var inStandalone = /[?&](exam|report)=/.test(window.location.search) || /learnPlan=/.test(window.location.hash);
+                var inStandalone = /[?&](exam|report|fillEmail)=/.test(window.location.search) || /learnPlan=/.test(window.location.hash);
                 if (!inStandalone) refreshErrorDashboardData(true, true);
             });
         }, 300);
