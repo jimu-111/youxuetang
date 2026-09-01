@@ -506,8 +506,8 @@
     // ==================== 存储生成的周报 ====================
     let generatedReports = JSON.parse(localStorage.getItem('generatedReports') || '{}');
     function refreshReportSection() { var s = document.getElementById('reportGenSection'); if (s && s.parentNode) s.parentNode.removeChild(s); appendReportSection(); }
-    function saveReportToLocal(name, htmlContent) { generatedReports[name] = htmlContent; localStorage.setItem('generatedReports', JSON.stringify(generatedReports)); refreshReportSection(); }
-    function deleteReport(name) { delete generatedReports[name]; var val = JSON.stringify(generatedReports); localStorage.setItem('generatedReports', val); refreshReportSection(); try { fetch(SUPABASE_URL + '/rest/v1/app_data', { method: 'POST', headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY, 'Content-Type': 'application/json', 'Prefer': 'resolution=merge-duplicates' }, body: JSON.stringify([{ key: 'generatedReports', value: val, updated_at: new Date().toISOString() }]) }).catch(function(){}); } catch(e) {} }
+    function saveReportToLocal(name, htmlContent) { generatedReports[name] = htmlContent; localStorage.setItem('generatedReports', JSON.stringify(generatedReports)); refreshReportSection(); logAdminAction('报告', '生成报告', name); }
+    function deleteReport(name) { logAdminAction('报告', '删除报告', name); delete generatedReports[name]; var val = JSON.stringify(generatedReports); localStorage.setItem('generatedReports', val); refreshReportSection(); try { fetch(SUPABASE_URL + '/rest/v1/app_data', { method: 'POST', headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY, 'Content-Type': 'application/json', 'Prefer': 'resolution=merge-duplicates' }, body: JSON.stringify([{ key: 'generatedReports', value: val, updated_at: new Date().toISOString() }]) }).catch(function(){}); } catch(e) {} }
     
     // ==================== 新人情况模块 ====================
     const ADMIN_PASSWORD = "888888";
@@ -519,20 +519,42 @@
     function loginAdmin(user, pass) {
         if (user !== ADMIN_ACCOUNT.user || pass !== ADMIN_ACCOUNT.pass) return false;
         sessionStorage.setItem(ADMIN_MODE_KEY, '1');
-        logAdminAction('系统', '登录', '管理员 ' + user + ' 登录成功');
         return true;
     }
     function logoutAdmin() {
-        logAdminAction('系统', '登出', '管理员登出');
         sessionStorage.removeItem(ADMIN_MODE_KEY);
     }
     function logAdminAction(action, target, details) {
         var log = getAuditLog();
-        log.push({ time: new Date().toISOString(), action: action, target: target || '', details: details || '', ip: '' });
+        var entry = { id: Date.now() + '_' + Math.random().toString(36).slice(2, 7), time: new Date().toISOString(), action: action, target: target || '', details: details || '', ip: '', city: '' };
+        log.push(entry);
         saveAuditLog(log);
+        // 异步获取 IP + 城市后补记（拿不到留空，不影响操作）
+        fetchIpCity().then(function(info) {
+            var log2 = getAuditLog();
+            var found = log2.find(function(l) { return l.id === entry.id; });
+            if (found) { found.ip = info.ip; found.city = info.city; saveAuditLog(log2); }
+        }).catch(function() {});
+    }
+    var _ipCityCache = null;
+    async function fetchIpCity() {
+        if (_ipCityCache) return _ipCityCache;
+        try {
+            var r = await fetch('https://ipwho.is/?lang=zh-CN', { signal: AbortSignal.timeout(8000) });
+            var d = await r.json();
+            if (d && d.success && d.ip) { _ipCityCache = { ip: d.ip, city: d.city || d.region || '' }; return _ipCityCache; }
+        } catch(e) {}
+        try {
+            var r2 = await fetch('https://ipinfo.io/json', { signal: AbortSignal.timeout(8000) });
+            var d2 = await r2.json();
+            if (d2 && d2.ip) { _ipCityCache = { ip: d2.ip, city: d2.city || d2.region || '' }; return _ipCityCache; }
+        } catch(e) {}
+        return { ip: '', city: '' };
     }
     function getAuditLog() { try { return JSON.parse(localStorage.getItem(AUDIT_LOG_KEY) || '[]'); } catch(e) { return []; } }
     function saveAuditLog(data) {
+        // 保留最近 5000 条（本地+云端一致，覆盖式同步下防无限增长）
+        if (data.length > 5000) data = data.slice(data.length - 5000);
         var val = JSON.stringify(data);
         localStorage.setItem(AUDIT_LOG_KEY, val);
         try {
@@ -1881,21 +1903,38 @@
             updateSiteCard();
             refreshPanzeStatus();
         }
-        function refreshAuditLog() {
+        var _auditPage = 0, _auditPageSize = 50;
+        function refreshAuditLog(page) {
             var el = document.getElementById('auditLogList'); if (!el) return;
-            var log = getAuditLog();
+            var log = getAuditLog().slice().reverse(); // 最新在前
             if (log.length === 0) { el.innerHTML = '<div style="text-align:center;color:#94a3b8;padding:20px;">暂无审计记录</div>'; return; }
-            el.innerHTML = log.reverse().map(function(l) {
+            _auditPage = (typeof page === 'number') ? page : _auditPage;
+            var totalPages = Math.max(1, Math.ceil(log.length / _auditPageSize));
+            if (_auditPage < 0) _auditPage = 0;
+            if (_auditPage > totalPages - 1) _auditPage = totalPages - 1;
+            var rows = log.slice(_auditPage * _auditPageSize, (_auditPage + 1) * _auditPageSize).map(function(l) {
                 var d = new Date(l.time);
-                return '<div style="border-bottom:1px solid #eef2f6;padding:8px 12px;display:flex;gap:12px;align-items:center;font-size:0.78rem;">' +
+                var ipTxt = l.ip ? '<span style="color:#7f8fa6;">' + escapeHtml(l.ip) + (l.city ? '（' + escapeHtml(l.city) + '）' : '') + '</span>' : '';
+                return '<div style="border-bottom:1px solid #eef2f6;padding:8px 12px;font-size:0.78rem;">' +
+                    '<div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;">' +
                     '<span style="color:#94a3b8;white-space:nowrap;">' + d.toLocaleString('zh-CN') + '</span>' +
                     '<span style="font-weight:600;color:#1f3a6b;">' + escapeHtml(l.action) + '</span>' +
                     '<span style="color:#5e6f8d;">' + escapeHtml(l.target) + '</span>' +
                     (l.details ? '<span style="color:#94a3b8;">' + escapeHtml(l.details) + '</span>' : '') +
-                '</div>';
+                    ipTxt +
+                    '</div></div>';
             }).join('');
+            var nav = '<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 12px;font-size:0.75rem;color:#5e6f8d;border-bottom:1px solid #eef2f6;">' +
+                '<span>共 ' + log.length + ' 条</span>' +
+                '<span style="display:flex;gap:8px;align-items:center;">' +
+                '<button onclick="refreshAuditLog(' + (_auditPage - 1) + ')" ' + (_auditPage === 0 ? 'disabled style="opacity:0.4;"' : '') + ' style="padding:2px 10px;border:1px solid #cbd5e1;border-radius:6px;background:white;cursor:pointer;font-size:0.72rem;">◀ 上一页</button>' +
+                '<span>第 ' + (_auditPage + 1) + ' / ' + totalPages + ' 页</span>' +
+                '<button onclick="refreshAuditLog(' + (_auditPage + 1) + ')" ' + (_auditPage >= totalPages - 1 ? 'disabled style="opacity:0.4;"' : '') + ' style="padding:2px 10px;border:1px solid #cbd5e1;border-radius:6px;background:white;cursor:pointer;font-size:0.72rem;">下一页 ▶</button>' +
+                '</span></div>';
+            el.innerHTML = nav + rows;
             updateAdminCards();
         }
+        window.refreshAuditLog = refreshAuditLog;
         updateAdminCards();
         window.refreshHRCombinedList = refreshHRCombinedList;
         refreshHRCombinedList();
@@ -1944,6 +1983,7 @@
                     var m = getAdminPersonSiteMap();
                     m[nm] = st;
                     saveAdminPersonSiteMap(m);
+                    logAdminAction('人员管理', '修改站点', nm + ' → ' + st);
                     updateAdminCards();
                     showToast('✅ ' + nm + ' 站点已改为 ' + st + '（所有模块以这里为准）', 'success');
                 };
@@ -1957,6 +1997,7 @@
                             var m = getAdminPersonSiteMap();
                             delete m[nm];
                             saveAdminPersonSiteMap(m);
+                            logAdminAction('人员管理', '删除人员', nm);
                             refreshAdminSiteTable(document.getElementById('siteSearchInput') ? document.getElementById('siteSearchInput').value : '');
                             updateAdminCards();
                             showToast('✅ 已删除 ' + nm + ' 的人员站点信息', 'success');
@@ -2006,6 +2047,7 @@
                     var m = getAdminPersonSiteMap();
                     m[nm] = tr.querySelector('.as-site-new').value;
                     saveAdminPersonSiteMap(m);
+                    logAdminAction('人员管理', '添加人员', nm + ' → ' + tr.querySelector('.as-site-new').value);
                     refreshAdminSiteTable(document.getElementById('siteSearchInput') ? document.getElementById('siteSearchInput').value : '');
                     updateAdminCards();
                     showToast('✅ ' + nm + ' 已添加，站点归属以这里为准', 'success');
@@ -2014,6 +2056,7 @@
             if (e.target && e.target.id === 'resetSiteBtn') {
                 var m = Object.assign({}, DEFAULT_PERSON_SITE_MAP, window._SITE_MAP || {});
                 saveAdminPersonSiteMap(m);
+                logAdminAction('人员管理', '恢复默认名单', Object.keys(m).length + '人');
                 refreshAdminSiteTable(document.getElementById('siteSearchInput') ? document.getElementById('siteSearchInput').value : '');
                 updateAdminCards();
                 showToast('✅ 已恢复默认名单（' + Object.keys(m).length + '人）', 'success');
@@ -2124,6 +2167,7 @@
                 if (n && e && e.indexOf('@') > 0) newEmails[n] = e;
             });
             savePersonnelEmails(newEmails);
+            logAdminAction('邮箱管理', '保存邮箱列表', Object.keys(newEmails).length + '人');
             refreshEmailTable();
             updateAdminCards();
             showToast('✅ 邮箱列表已保存（' + Object.keys(newEmails).length + '人）', 'success');
@@ -2196,6 +2240,7 @@
                     }
                 });
                 savePersonnelEmails(emails);
+                logAdminAction('邮箱管理', '批量导入', count + '人');
                 refreshEmailTable();
                 updateAdminCards();
                 ov.remove();
@@ -3474,6 +3519,7 @@
         if (!existing[periodKey]) existing[periodKey] = {};
         Object.assign(existing[periodKey], result);
         localStorage.setItem('reviewerAccRateData', JSON.stringify(existing));
+        logAdminAction('数据看板', '保存准确率识别', periodKey);
 
         // 同时保存判责量到模块3（如果有AI识别到的判责量数据）
         if (window._accRatePanzeResult && Object.keys(window._accRatePanzeResult).length > 0 && window._accRatePanzePeriodKey === periodKey) {
@@ -3668,6 +3714,7 @@
         if (!periodData[storageKey]) periodData[storageKey] = {};
         Object.assign(periodData[storageKey], parsed);
         saveModule3PeriodData(pk, periodData);
+        logAdminAction('数据看板', '保存识别结果', type === 'chouJian' ? '抽检量' : '判责量');
 
         // 刷新弹窗（绿点+已有数据区）
         const allTabs = document.querySelectorAll('.m3PeriodTab');
@@ -3708,6 +3755,7 @@
         const storageKey = type === 'chouJian' ? 'chouJianMap' : 'panZeMap';
         periodData[storageKey] = {};
         saveModule3PeriodData(pk, periodData);
+        logAdminAction('数据看板', '清空识别数据', type === 'chouJian' ? '抽检量' : '判责量');
 
         // 刷新弹窗
         const allTabs = document.querySelectorAll('.m3PeriodTab');
@@ -4891,6 +4939,7 @@
             curNd.summary = generateNewcomerSummary(curNd.efficiencyThis || null, curNd.efficiencyLast || null, curNd.mistakesThis || null, curNd.mistakesLast || null, curNd.accuracyThis || null, curNd.accuracyLast || null, avgEffThis, avgEffLast, curNd.attendanceDaysThis || null);
             nd[thisPk]._filled = true;
             localStorage.setItem('newcomerAnalysisData', JSON.stringify(nd));
+            logAdminAction('数据看板', '保存新人分析数据', ncName);
             document.getElementById(modalId)?.remove();
             if (typeof window._doAnalysis === 'function') window._doAnalysis(currentAnalysisType || 'week');
         });
@@ -9246,6 +9295,7 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
                     }
                     if (updated > 0) saveManualCases(cases);
                     saveManualCases(cases);
+                    logAdminAction('案例库', '飞书导入案例', '新增' + added + '条' + (updated > 0 ? '，更新' + updated + '条' : ''));
                     alert('✅ 导入完成：新增 ' + added + ' 条' + (updated > 0 ? '，更新 ' + updated + ' 条' : '') + '（跳过 ' + (rows.length - 1 - added - updated) + ' 条重复）');
                     renderManualTab();
                 } catch(e) {
@@ -9278,6 +9328,7 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
             localStorage.setItem('biweeklyFeishuTitle',document.getElementById('bwTitle').value.trim());
             var note=document.getElementById('bwNote').value.trim();
             if(note)localStorage.setItem('biweeklyPptNote',note);
+            logAdminAction('培训学习', '保存双周培训链接', document.getElementById('bwTitle').value.trim());
             ov.remove();renderBiweeklyTab();showToast('✅ 已更新','success');
             // 同步更新案例库卡片上的备注文字
             var cardEls = document.querySelectorAll('.qb-type-card');
@@ -9520,6 +9571,7 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
                 cases.unshift({ qcCode, errorCategory, issueDesc, issuePhotos, correctDir, dirPhotos, dirExamplePhotos, productCategory, caseType, createTime: Date.now() });
             }
             saveManualCases(cases);
+            logAdminAction('案例库', !isNaN(editIdx) ? '编辑案例' : '新增案例', qcCode);
             document.getElementById('manualQcCode').value = '';
             document.getElementById('manualErrorCategory').value = '';
             document.getElementById('manualIssueDesc').value = '';
@@ -9563,9 +9615,11 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
             btn.addEventListener('click', async () => {
                 const idx = parseInt(btn.dataset.idx);
                 const cases = getManualCasesFull();
-                if (!await confirmDelete(`质检码「${cases[idx]?.qcCode || ''}」的案例`)) return;
+                const delQc = cases[idx]?.qcCode || '';
+                if (!await confirmDelete(`质检码「${delQc}」的案例`)) return;
                 cases.splice(idx, 1);
                 saveManualCases(cases);
+                logAdminAction('案例库', '删除案例', delQc);
                 renderManualTab();
             });
         });
@@ -9728,6 +9782,7 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
             const cases = getKnowledgeCasesFull();
             cases.unshift({ type: 'screenshot', title: title || '截图记录', description: desc, files, createTime: Date.now() });
             saveKnowledgeCases(cases);
+            logAdminAction('知识库', '新增截图记录', title || '截图记录');
             document.getElementById('knowledgeScreenshotModal').style.display = 'none';
             renderKnowledgeTab();
         });
@@ -9744,6 +9799,7 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
                 const cases = getKnowledgeCasesFull();
                 cases.unshift({ type: 'file', title: title || file.name, description: desc, fileName: file.name, files: [e.target.result], createTime: Date.now() });
                 saveKnowledgeCases(cases);
+                logAdminAction('知识库', '新增文件', file.name);
                 document.getElementById('knowledgeFileModal').style.display = 'none';
                 renderKnowledgeTab();
             };
@@ -9759,6 +9815,7 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
             const cases = getKnowledgeCasesFull();
             cases.unshift({ type: 'text', title: title || '文字记录', description: desc, content, createTime: Date.now() });
             saveKnowledgeCases(cases);
+            logAdminAction('知识库', '新增文字记录', title || content.slice(0, 20));
             document.getElementById('knowledgeTextModal').style.display = 'none';
             renderKnowledgeTab();
         });
@@ -9768,9 +9825,11 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
             btn.addEventListener('click', async () => {
                 const idx = parseInt(btn.dataset.idx);
                 const cases = getKnowledgeCasesFull();
-                if (!await confirmDelete(`「${cases[idx]?.title || ''}」`)) return;
+                const delTitle = cases[idx]?.title || '';
+                if (!await confirmDelete(`「${delTitle}」`)) return;
                 cases.splice(idx, 1);
                 saveKnowledgeCases(cases);
+                logAdminAction('知识库', '删除记录', delTitle);
                 renderKnowledgeTab();
             });
         });
@@ -9973,6 +10032,7 @@ delete window._editCaseIdx;
 cases.unshift({qcCode:qc,errorCategory:cat2,issueDesc:desc,issuePhotos:ips,correctDir:dir,dirPhotos:dps,dirExamplePhotos:deps,productCategory:pc2,caseType:'培训案例',createTime:Date.now()});
 }
 saveManualCases(cases);
+logAdminAction('案例库',editIdx!==undefined?'编辑案例':'新增案例',qc);
 ov.remove();
 showToast('✅ 案例已'+(editIdx!==undefined?'更新':'录入'),'success');
 renderCompletedCasesTab();
@@ -9981,6 +10041,7 @@ renderCompletedCasesTab();
 async function clearAllCases(){
 if(!await confirmDelete('全部案例数据'))return;
 saveManualCases([]);
+logAdminAction('案例库','清空全部案例','');
 showToast('✅ 全部案例已清空','success');
 renderCompletedCasesTab();
 }
@@ -9989,6 +10050,7 @@ if(!await confirmDelete(cat+' 分类的全部案例'))return;
 var cases=getManualCasesFull();
 var filtered=cases.filter(function(c){return(c.errorCategory||'未分类')!==cat});
 saveManualCases(filtered);
+logAdminAction('案例库','清空分类案例',cat);
 showToast('✅ 已清空 '+cat+' 分类','success');
 renderCompletedCasesTab();
 }
@@ -9999,6 +10061,7 @@ if(!c)return;
 if(!await confirmDelete('案例 '+c.qcCode))return;
 cases.splice(idx,1);
 saveManualCases(cases);
+logAdminAction('案例库','删除案例',c.qcCode);
 renderCompletedCasesTab();
 }
 function editCaseByIndex(idx){
@@ -11354,6 +11417,7 @@ URL.revokeObjectURL(url);
         });
 
         saveQuestionBank(qb);
+        logAdminAction('题库', '文件导入题目', totalAdded + '题');
         if (onSuccess) onSuccess(totalAdded, duplicates.length, qaSkipped);
     }
 
@@ -11368,6 +11432,7 @@ URL.revokeObjectURL(url);
         if (pwd !== ADMIN_PASSWORD) { alert('❌ 密码错误，操作已取消'); return; }
         // 执行清空
         localStorage.setItem(QB_STORAGE_KEY, JSON.stringify({ categories: {}, questions: [] }));
+        logAdminAction('题库', '清空题库', total + '题');
         alert('✅ 题库已清空（共删除 ' + total + ' 道题目）');
         renderQuestionBank();
     }
@@ -11601,6 +11666,7 @@ async function importQBFromFeishu() {
                     });
                 }
                 saveQuestionBank(qb); renderQuestionBank(); overlay.remove();
+                logAdminAction('题库', '飞书导入题目', imported + '题');
                 console.log('[诊断] 导入完成: 共导入'+imported+'题, 重复跳过'+duplicated+'题, 更新题型'+dupTypeUpdated+'题, 跳过问答题'+skippedQa+'题, 库中总计'+(qb.questions||[]).length+'题');
                 showToast('✅ 从飞书导入 '+imported+' 题'+(duplicated>0?'（'+duplicated+' 题重复已跳过）':'')+(dupTypeUpdated>0?'（'+dupTypeUpdated+' 题已更新题型）':'')+(skippedQa>0?'（跳过 '+skippedQa+' 道问答题）':'')+'','success');
             } catch(e){console.log('导入失败',e); showToast('❌ 导入失败：'+e.message,'error'); btn.disabled=false; btn.textContent='✅ 确认导入';}
@@ -11618,6 +11684,7 @@ async function importQBFromFeishu() {
         if (pwd !== ADMIN_PASSWORD) { alert('❌ 密码错误，操作已取消'); return; }
         qb.questions = (qb.questions || []).filter(q => q.category !== catName);
         saveQuestionBank(qb);
+        logAdminAction('题库', '清空分类', catName + ' ' + count + '题');
         alert('✅ 已清空分类「' + catName + '」（删除了 ' + count + ' 道题目）');
         renderQuestionBank();
     }
@@ -11854,6 +11921,7 @@ async function importQBFromFeishu() {
         const qb = getQuestionBank();
         qb.questions = qb.questions.filter(q => q.id !== id);
         saveQuestionBank(qb);
+        logAdminAction('题库', '删除题目', qbDetailCat || '');
         // 更新当前弹窗的数据
         qbDetailQuestions = qbDetailQuestions.filter(q => q.id !== id);
         if (qbDetailPage > Math.ceil(qbDetailQuestions.length / QB_DETAIL_PAGE_SIZE) && qbDetailPage > 1) {
@@ -11971,6 +12039,7 @@ async function importQBFromFeishu() {
         q.explanation = explanation;
 
         saveQuestionBank(qb);
+        logAdminAction('题库', '编辑题目', category);
         overlay.remove();
 
         // 刷新详情弹窗
@@ -12183,6 +12252,7 @@ async function importQBFromFeishu() {
             createdAt: new Date().toISOString()
         });
         saveQuestionBank(qb);
+        logAdminAction('题库', '新建题目', category);
         window._screenshotData = null;
         overlay.remove();
         renderQuestionBank();
@@ -12376,6 +12446,7 @@ async function importQBFromFeishu() {
             createdAt: new Date().toISOString()
         });
         saveQuestionBank(qb);
+        logAdminAction('题库', '新建题目', category);
         window._screenshotData = null;
         currentQBPage = 1;
         renderQuestionBank();
@@ -12384,8 +12455,10 @@ async function importQBFromFeishu() {
     async function deleteQBQuestion(id) {
         if (!await confirmDelete('该题目')) return;
         const qb = getQuestionBank();
+        const delQ = qb.questions.find(q => q.id === id);
         qb.questions = qb.questions.filter(q => q.id !== id);
         saveQuestionBank(qb);
+        logAdminAction('题库', '删除题目', delQ ? delQ.category : '');
         renderQuestionBank();
     }
 
@@ -12582,6 +12655,7 @@ async function importQBFromFeishu() {
 
     function downloadQuestionBank() {
         const qb = getQuestionBank();
+        logAdminAction('题库', '导出题库', (qb.questions||[]).length + '题');
         if (typeof XLSX === 'undefined') { alert('Excel库未加载，请刷新页面重试'); return; }
         var header = ['题目ID','品类','失误类别','题型','题目','答案','答案解析','选项A','选项B','选项C','选项D','选项E','选项F','题目图','答案解析图'];
         var rows = (qb.questions || []).map(function(q, idx){
@@ -12629,6 +12703,7 @@ async function importQBFromFeishu() {
                 }
             }
             saveQuestionBank(qb);
+            logAdminAction('题库', '批量添加题目', addedCount + '题');
             statusDiv.innerHTML = '<span style="color:#2e7d32;">✅ 成功添加 ' + addedCount + ' 道题目到分类「' + escapeHtml(finalCat) + '」</span>';
             document.getElementById('fileInputQB').value = '';
             setTimeout(() => { currentQBPage = 1; renderQuestionBank(); }, 500);
@@ -14275,6 +14350,7 @@ async function importQBFromFeishu() {
             }, [email]);
             if (results[0] && results[0].success) {
                 markFeishuPushed('exam_' + examCode, { type: 'exam', title: clean + ' · 失误画像试卷', reviewerName: clean, users: [clean], site: '' });
+                logAdminAction('考试', '推送飞书卡片', clean + ' · ' + examCode);
                 if (statusEl) statusEl.innerHTML = '✅ 考试卡片已推送至「' + escapeHtml(clean) + '」的飞书';
             } else {
                 if (statusEl) statusEl.innerHTML = '⚠️ 飞书推送失败：' + escapeHtml((results[0] && results[0].error) || '未知错误') + '，请手动复制链接发送';
@@ -14341,6 +14417,7 @@ async function importQBFromFeishu() {
         };
         examData[examId] = examRecord;
         saveExamHistory(examData);
+        logAdminAction('考试', '生成试卷', reviewerName + ' · ' + examCode);
 
         // 生成考试链接：使用当前页面完整URL + exam参数
         const baseUrl = window.location.href.split('?')[0];
@@ -16815,6 +16892,7 @@ async function importQBFromFeishu() {
                 }, {
                     onSuccess: function() {
                         saveExamHistory(examData);
+                        logAdminAction('考试', '生成试卷并推送飞书', '按比例出卷 · ' + examCode);
                         btn.textContent = '✅ 已推送'; btn.style.background = '#27ae60';
                     }
                 });
@@ -17055,6 +17133,7 @@ async function importQBFromFeishu() {
                 reviewerName: reviewerName,
                 onSuccess: function() {
                     saveExamHistory(examData);
+                    logAdminAction('考试', '生成试卷并推送飞书', reviewerName + ' · ' + examCode);
                     btn.textContent = '✅ 已推送'; btn.style.background = '#27ae60';
                 }
             });
@@ -17651,6 +17730,7 @@ async function importQBFromFeishu() {
                     var records = getLearnPlanPushes();
                     records.push({ time: new Date().toISOString(), type: 'learn', reviewerName: planData.reviewerName, planCode: planData.code, courseCount: planData.totalCourses, areaCount: planData.areas.length });
                     saveLearnPlanPushes(records);
+                    logAdminAction('培训学习', '推送学习地图', planData.reviewerName);
                     btn.textContent = '✅ 已推送'; btn.style.background = '#27ae60';
                 }
             });
@@ -18018,6 +18098,7 @@ async function importQBFromFeishu() {
                     var records = getTrainingPushes();
                     records.push({ time: new Date().toISOString(), type: 'train', reviewerName: reviewerNames.join(','), reportName: reportName, scope: titleLabel, caseCount: matched.length });
                     saveTrainingPushes(records);
+                    logAdminAction('培训学习', '推送培训内容', titleLabel);
                     btn.textContent = '✅ 已推送'; btn.style.background = '#27ae60';
                 }
             });
@@ -19248,6 +19329,7 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
                     if (n && n.trim() && e && e.trim()) newEmails[n.trim()] = e.trim();
                 });
                 savePersonnelEmails(newEmails);
+                logAdminAction('邮箱管理', '推送弹窗内编辑邮箱', Object.keys(newEmails).length + '人');
                 updateEmailCount();
                 renderEmailList(document.getElementById('fpSearchInput') ? document.getElementById('fpSearchInput').value.trim() : '');
                 eOverlay.remove();
@@ -20077,7 +20159,7 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
                 if (!isAdminMode()) { showToast('🔒 请先登录管理员', 'warning'); return; }
                 if (!await confirmDelete('考试记录')) return;
                 var d = getExamHistory(); delete d[btn.dataset.delexam]; saveExamHistory(d); renderExamRecordsTab(document.getElementById('examTabContent'));
-                logAdminAction('删除考试记录', btn.dataset.delexam, '');
+                logAdminAction('考试', '删除考试记录', btn.dataset.delexam);
                 showToast('✅ 已删除', 'success');
             };
         });
@@ -21530,6 +21612,7 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
                         if (!replyContent) { showToast('请输入回复内容', 'warning'); return; }
                         var rpImages = window._fbReplyPendingImages[entryId] || [];
                         addReply(entryId, replyContent, '管理员', rpImages);
+                        logAdminAction('反馈', '回复反馈', entryId);
                         delete window._fbReplyPendingImages[entryId];
                         showToast('✅ 回复已发送', 'success');
                         renderFeedback();
