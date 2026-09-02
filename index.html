@@ -9187,6 +9187,7 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
                         <button class="analysis-type-btn ${currentTrainingSubNav==='manual'?'active':''}" data-subnav="manual">📌 培训案例</button>
                         <button class="analysis-type-btn ${currentTrainingSubNav==='biweekly'?'active':''}" data-subnav="biweekly">📅 双周培训案例</button>
                         <button class="analysis-type-btn ${currentTrainingSubNav==='knowledge'?'active':''}" data-subnav="knowledge">📖 知识巩固</button>
+                        <button class="analysis-type-btn ${currentTrainingSubNav==='monthlystd'?'active':''}" data-subnav="monthlystd">🗓️ 月度标准更新</button>
                     </div>
                     <div style="display:flex;gap:8px;">
                         <button id="importFeishuCasesBtn" class="primary" style="background:#e67e22;padding:6px 14px;border-radius:20px;font-size:0.8rem;">📥 从飞书导入</button>
@@ -9206,12 +9207,12 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
                 currentTrainingSubNav = btn.dataset.subnav;
                 container.querySelectorAll('.analysis-type-btn[data-subnav]').forEach(b => b.classList.remove('active'));
                 btn.classList.add('active');
-                var typeMap={biweekly:'双周培训',knowledge:'知识巩固'};
+                var typeMap={biweekly:'双周培训',knowledge:'知识巩固',monthlystd:'月度标准更新'};
                 var lbl=document.getElementById('trainingTypeLabel');
                 if(lbl)lbl.textContent=typeMap[currentTrainingSubNav]||'培训案例';
                 var sel=document.getElementById('manualCaseType');
                 if(sel)sel.value=typeMap[currentTrainingSubNav]||'培训案例';
-                // 双周培训/知识巩固：隐藏手动录入
+                // 双周培训/知识巩固/月度标准更新：隐藏手动录入
                 var manualEntry=document.getElementById('trainingManualEntry');
                 var manualBtn=document.getElementById('toggleManualEntryBtn');
                 var isManual=currentTrainingSubNav==='manual';
@@ -9219,6 +9220,7 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
                 if(manualBtn)manualBtn.style.display=isManual?'':'none';
                 if (currentTrainingSubNav === 'biweekly') renderBiweeklyTab();
                 else if (currentTrainingSubNav === 'knowledge') renderKnowledgeTab();
+                else if (currentTrainingSubNav === 'monthlystd') renderMonthlyStdTab();
                 else if (currentTrainingSubNav === 'manual') { document.getElementById('trainingSubContent').innerHTML = ''; renderManualTab(true); }
             });
         });
@@ -9229,6 +9231,7 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
         }
         if (currentTrainingSubNav === 'biweekly') renderBiweeklyTab();
         else if (currentTrainingSubNav === 'knowledge') renderKnowledgeTab();
+        else if (currentTrainingSubNav === 'monthlystd') renderMonthlyStdTab();
 
         // 从飞书导入案例
         var importBtn = document.getElementById('importFeishuCasesBtn');
@@ -9375,6 +9378,35 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
             // 同步更新案例库卡片上的备注文字
             var cardEls = document.querySelectorAll('.qb-type-card');
             cardEls.forEach(function(card){ if(card.textContent.indexOf('双周培训')>=0){ var noteDiv=card.querySelector('div[style*=\"font-size:0.6rem\"]'); if(noteDiv) noteDiv.textContent=note||noteDiv.textContent; } });
+        };
+    }
+
+    // 子Tab4：月度标准更新（飞书链接内嵌，可编辑，与双周培训逻辑一致）
+    var MONTHLY_STD_FEISHU_KEY = 'monthlyStdFeishuUrl';
+    function getMonthlyStdFeishuUrl() { return localStorage.getItem(MONTHLY_STD_FEISHU_KEY) || 'https://zhuanspirit.feishu.cn/slides/BHunsshMtlAWZcdKMo9cY7smnah'; }
+    function renderMonthlyStdTab() {
+        var title = localStorage.getItem('monthlyStdFeishuTitle') || '月度标准更新';
+        var url = getMonthlyStdFeishuUrl();
+        var note = localStorage.getItem('monthlyStdPptNote') || '月度标准更新资料汇总';
+        document.getElementById('trainingSubContent').innerHTML = '<div class="report-box"><div style="font-size:0.85rem;color:#5e6f8d;margin-bottom:12px;">当前链接：<span style="color:#2a5298;">'+escapeHtml(url)+'</span></div><div style="margin-bottom:12px;"><strong>名称：</strong>'+escapeHtml(title)+'</div><div style="margin-bottom:16px;"><strong>备注：</strong>'+escapeHtml(note)+'</div><button onclick="editMonthlyStdFeishuLink()" class="primary" style="background:#27ae60;color:white;border:none;padding:8px 20px;border-radius:20px;cursor:pointer;font-weight:600;">✏️ 编辑链接</button></div>';
+    }
+    function editMonthlyStdFeishuLink() {
+        var ov=document.createElement('div');ov.className='modal-overlay';ov.style.zIndex='4000';
+        ov.innerHTML='<div class="modal-container" style="max-width:500px;"><div class="modal-header"><span>✏️ 编辑月度标准更新链接</span><button class="modal-close-btn" id="msEditClose">✕</button></div><div class="modal-body" style="padding:20px;"><label style="font-weight:600;">名称</label><input id="msTitle" value="'+(localStorage.getItem('monthlyStdFeishuTitle')||'月度标准更新')+'" style="width:100%;padding:8px;border:1px solid #cbd5e1;border-radius:8px;margin:4px 0 12px;"><label style="font-weight:600;">飞书链接</label><input id="msUrl" value="'+getMonthlyStdFeishuUrl()+'" style="width:100%;padding:8px;border:1px solid #cbd5e1;border-radius:8px;margin:4px 0 12px;"><label style="font-weight:600;">备注</label><input id="msNote" value="'+(localStorage.getItem('monthlyStdPptNote')||'月度标准更新资料汇总')+'" style="width:100%;padding:8px;border:1px solid #cbd5e1;border-radius:8px;margin:4px 0 12px;"><input id="msPwd" type="password" placeholder="管理密码" style="width:100%;padding:8px;border:1px solid #cbd5e1;border-radius:8px;text-align:center;margin-bottom:8px;"><div id="msMsg" style="color:#c0392b;font-size:0.75rem;display:none;margin-bottom:8px;"></div><button id="msSave" style="width:100%;background:#27ae60;color:white;border:none;padding:10px;border-radius:10px;cursor:pointer;font-weight:600;">💾 保存</button></div></div>';
+        document.body.appendChild(ov);
+        ov.querySelector('#msEditClose').onclick=function(){ov.remove();};
+        ov.addEventListener('click',function(e){if(e.target===ov)ov.remove();});
+        ov.querySelector('#msSave').onclick=function(){
+            if(document.getElementById('msPwd').value!=='888888'){document.getElementById('msMsg').textContent='❌ 密码错误';document.getElementById('msMsg').style.display='block';return;}
+            localStorage.setItem(MONTHLY_STD_FEISHU_KEY,document.getElementById('msUrl').value.trim());
+            localStorage.setItem('monthlyStdFeishuTitle',document.getElementById('msTitle').value.trim());
+            var note=document.getElementById('msNote').value.trim();
+            if(note)localStorage.setItem('monthlyStdPptNote',note);
+            logAdminAction('培训学习', '保存月度标准更新链接', document.getElementById('msTitle').value.trim());
+            ov.remove();renderMonthlyStdTab();showToast('✅ 已更新','success');
+            // 同步更新案例库卡片上的备注文字
+            var cardEls = document.querySelectorAll('.qb-type-card');
+            cardEls.forEach(function(card){ if(card.textContent.indexOf('月度标准更新')>=0){ var noteDiv=card.querySelector('div[style*="font-size:0.6rem"]'); if(noteDiv) noteDiv.textContent=note||noteDiv.textContent; } });
         };
     }
 
@@ -9903,6 +9935,34 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
         document.getElementById('mainContent').appendChild(wrap);
         wrap.scrollIntoView({behavior:'smooth'});
     }
+    function openMonthlyStdOverlay(){
+        var existing=document.getElementById('monthlyStdWrap');
+        if(existing){ existing.remove(); return; }
+        var wrap=document.createElement('div');
+        wrap.id='monthlyStdWrap';
+        wrap.style.cssText='background:white;border-radius:16px;overflow:hidden;box-shadow:0 4px 12px rgba(0,0,0,0.05);border:1px solid #eef2f6;height:calc(100vh - 55px);margin-bottom:16px;';
+        wrap.innerHTML='<div style="background:#7c3aed;color:white;padding:8px 16px;display:flex;justify-content:space-between;align-items:center;"><span>📊 月度标准更新</span><div style="display:flex;gap:8px;"><a href="'+getMonthlyStdFeishuUrl()+'" target="_blank" style="color:white;font-size:0.7rem;text-decoration:none;background:rgba(255,255,255,0.2);padding:4px 10px;border-radius:12px;">🔗 新窗口</a><button onclick="document.getElementById(\'monthlyStdWrap\').remove()" style="background:rgba(255,255,255,0.2);border:none;color:white;width:28px;height:28px;border-radius:50%;cursor:pointer;font-size:1rem;">✕</button></div></div><div style="width:100%;height:calc(100% - 44px);"><iframe src="'+getMonthlyStdFeishuUrl()+'" style="width:100%;height:100%;border:none;" sandbox="allow-same-origin allow-scripts allow-popups allow-forms allow-top-navigation"></iframe></div>';
+        document.getElementById('mainContent').appendChild(wrap);
+        wrap.scrollIntoView({behavior:'smooth'});
+    }
+    function editMonthlyStdNotePopup(el) {
+        var ov=document.createElement('div');ov.className='modal-overlay';ov.style.zIndex='4000';
+        ov.innerHTML='<div class="modal-container" style="max-width:420px;"><div class="modal-header"><span>📝 修改备注</span><button class="modal-close-btn" id="msNoteClose">✕</button></div><div class="modal-body" style="padding:20px;"><textarea id="msNoteInput" style="width:100%;padding:10px;border:1px solid #cbd5e1;border-radius:10px;font-size:0.85rem;min-height:60px;resize:vertical;">'+(localStorage.getItem('monthlyStdPptNote')||'月度标准更新资料汇总')+'</textarea><input id="msNotePwd" type="password" placeholder="管理密码" style="width:100%;padding:10px;border:1px solid #cbd5e1;border-radius:10px;font-size:0.85rem;margin-top:8px;text-align:center;"><div id="msNoteMsg" style="color:#c0392b;font-size:0.75rem;margin-top:4px;display:none;"></div><button id="msNoteSave" style="width:100%;margin-top:12px;background:#7c3aed;color:white;border:none;padding:10px;border-radius:10px;cursor:pointer;font-size:0.85rem;font-weight:600;">💾 保存</button></div></div>';
+        document.body.appendChild(ov);
+        ov.querySelector('#msNoteClose').onclick=function(){ov.remove();};
+        ov.addEventListener('click',function(e){if(e.target===ov)ov.remove();});
+        ov.querySelector('#msNoteSave').onclick=function(){
+            var note=document.getElementById('msNoteInput').value.trim();
+            var pwd=document.getElementById('msNotePwd').value;
+            if(!note)return;
+            if(pwd!=='888888'){document.getElementById('msNoteMsg').textContent='❌ 密码错误';document.getElementById('msNoteMsg').style.display='block';return;}
+            localStorage.setItem('monthlyStdPptNote',note);
+            if(el)el.textContent=note;
+            ov.remove();
+            logAdminAction('培训学习', '修改月度标准更新备注', note);
+            showToast('✅ 已更新','success');
+        };
+    }
     function editPptNotePopup(el) {
         var ov=document.createElement('div');ov.className='modal-overlay';ov.style.zIndex='4000';
         ov.innerHTML='<div class="modal-container" style="max-width:420px;"><div class="modal-header"><span>📝 修改日期范围</span><button class="modal-close-btn" id="pptNoteClose">✕</button></div><div class="modal-body" style="padding:20px;"><textarea id="pptNoteInput" style="width:100%;padding:10px;border:1px solid #cbd5e1;border-radius:10px;font-size:0.85rem;min-height:60px;resize:vertical;">'+(localStorage.getItem('biweeklyPptNote')||'2025/06/03至2026/06/17双周培训资料汇总')+'</textarea><input id="pptNotePwd" type="password" placeholder="管理密码" style="width:100%;padding:10px;border:1px solid #cbd5e1;border-radius:10px;font-size:0.85rem;margin-top:8px;text-align:center;"><div id="pptNoteMsg" style="color:#c0392b;font-size:0.75rem;margin-top:4px;display:none;"></div><button id="pptNoteSave" style="width:100%;margin-top:12px;background:#27ae60;color:white;border:none;padding:10px;border-radius:10px;cursor:pointer;font-size:0.85rem;font-weight:600;">💾 保存</button></div></div>';
@@ -9990,6 +10050,8 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
 	});
 	var pptNote=localStorage.getItem("biweeklyPptNote")||"2025/06/03至2026/06/17双周培训资料汇总";
 	typeCards+="<div class=\"qb-type-card\" style=\"background:#f0fdf4;cursor:pointer;\" onclick=\"openPptOverlay()\"><div class=\"qb-cat-icon\">📅</div><div class=\"qb-cat-name\">双周培训</div><div class=\"qb-cat-count\">飞书PPT</div><div style=\"font-size:0.6rem;color:#5e6f8d;margin:2px 0;cursor:pointer;\" title=\"点击修改日期\" onclick=\"event.stopPropagation();editPptNotePopup(this)\">"+pptNote+"</div><div class=\"qb-cat-actions\"><button class=\"qb-card-btn qb-card-view\" onclick=\"event.stopPropagation();openPptOverlay()\">👁️ 查看</button></div></div>";
+	var monthlyStdNote=localStorage.getItem("monthlyStdPptNote")||"月度标准更新资料汇总";
+	typeCards+="<div class=\"qb-type-card\" style=\"background:#f5f3ff;cursor:pointer;\" onclick=\"openMonthlyStdOverlay()\"><div class=\"qb-cat-icon\">🗓️</div><div class=\"qb-cat-name\">月度标准更新</div><div class=\"qb-cat-count\">飞书PPT</div><div style=\"font-size:0.6rem;color:#5e6f8d;margin:2px 0;cursor:pointer;\" title=\"点击修改备注\" onclick=\"event.stopPropagation();editMonthlyStdNotePopup(this)\">"+monthlyStdNote+"</div><div class=\"qb-cat-actions\"><button class=\"qb-card-btn qb-card-view\" onclick=\"event.stopPropagation();openMonthlyStdOverlay()\">👁️ 查看</button></div></div>";
 	// 按失误类别统计
 	var catMap={};
 	cases.forEach(function(c){var cat=c.errorCategory||"未分类";if(!catMap[cat])catMap[cat]=[];catMap[cat].push(c);});
@@ -10002,7 +10064,7 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
 	var safeCat=cat.replace(/'/g,"\'");
 		catCards+='<div class="qb-cat-card" onclick="showCaseCategoryDetail(\''+safeCat+'\')" style="cursor:pointer;position:relative;"><button class="qb-card-clear-corner admin-only" onclick="event.stopPropagation();clearCaseCategory(\''+safeCat+'\')" title="清空此分类">✕</button><div class="qb-cat-icon">'+icon+'</div><div class="qb-cat-name">'+escapeHtml(cat)+'</div><div class="qb-cat-count">'+count+' 例</div><div class="qb-cat-actions"><button class="qb-card-btn qb-card-view" onclick="event.stopPropagation();showCaseCategoryDetail(\''+safeCat+'\')">👁️ 查看</button><button class="qb-card-btn qb-card-add admin-only" onclick="event.stopPropagation();openAddCaseModal(\''+safeCat+'\')">✍️ 录入</button></div></div>';
 	});
-	content.innerHTML='<style>.qb-type-card,.qb-cat-card{background:#f8fafc;border-radius:16px;padding:20px 16px;text-align:center;box-shadow:0 2px 8px rgba(0,0,0,0.08);border:1px solid #dde4ed;transition:transform 0.2s;position:relative}.qb-type-card:hover,.qb-cat-card:hover{transform:translateY(-2px);box-shadow:0 4px 16px rgba(0,0,0,0.14)}.qb-cat-icon{font-size:2rem;margin-bottom:8px}.qb-cat-name{font-weight:700;color:#1e293b;font-size:0.9rem;margin-bottom:4px}.qb-cat-count{font-size:0.75rem;color:#5e6f8d;margin-bottom:10px}.qb-cat-actions{display:flex;gap:5px;justify-content:center;flex-wrap:wrap}.qb-card-btn{padding:5px 12px;border-radius:14px;border:none;cursor:pointer;font-size:0.7rem;font-weight:600}.qb-card-view{background:#dbeafe;color:#1e40af}.qb-card-add{background:#fef3c7;color:#92400e}.qb-card-clear{background:#fecaca;color:#991b1b}.qb-card-clear-corner{position:absolute;top:6px;right:6px;width:22px;height:22px;border-radius:50%;border:none;background:#fecaca;color:#991b1b;font-size:0.7rem;cursor:pointer;display:flex;align-items:center;justify-content:center;line-height:1;opacity:0.6;transition:opacity 0.2s}.qb-card-clear-corner:hover{opacity:1}</style><div class="report-box" style="margin-bottom:12px;"><div style="font-size:0.8rem;color:#5e6f8d;margin-bottom:8px;">📌 按案例类型</div><div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;">'+typeCards+'</div></div><div class="report-box"><div style="font-size:0.8rem;color:#5e6f8d;margin-bottom:8px;">🏷️ 按失误类别</div><div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;">'+catCards+'</div></div>';
+	content.innerHTML='<style>.qb-type-card,.qb-cat-card{background:#f8fafc;border-radius:16px;padding:20px 16px;text-align:center;box-shadow:0 2px 8px rgba(0,0,0,0.08);border:1px solid #dde4ed;transition:transform 0.2s;position:relative}.qb-type-card:hover,.qb-cat-card:hover{transform:translateY(-2px);box-shadow:0 4px 16px rgba(0,0,0,0.14)}.qb-cat-icon{font-size:2rem;margin-bottom:8px}.qb-cat-name{font-weight:700;color:#1e293b;font-size:0.9rem;margin-bottom:4px}.qb-cat-count{font-size:0.75rem;color:#5e6f8d;margin-bottom:10px}.qb-cat-actions{display:flex;gap:5px;justify-content:center;flex-wrap:wrap}.qb-card-btn{padding:5px 12px;border-radius:14px;border:none;cursor:pointer;font-size:0.7rem;font-weight:600}.qb-card-view{background:#dbeafe;color:#1e40af}.qb-card-add{background:#fef3c7;color:#92400e}.qb-card-clear{background:#fecaca;color:#991b1b}.qb-card-clear-corner{position:absolute;top:6px;right:6px;width:22px;height:22px;border-radius:50%;border:none;background:#fecaca;color:#991b1b;font-size:0.7rem;cursor:pointer;display:flex;align-items:center;justify-content:center;line-height:1;opacity:0.6;transition:opacity 0.2s}.qb-card-clear-corner:hover{opacity:1}</style><div class="report-box" style="margin-bottom:12px;"><div style="font-size:0.8rem;color:#5e6f8d;margin-bottom:8px;">📌 按案例类型</div><div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;">'+typeCards+'</div></div><div class="report-box"><div style="font-size:0.8rem;color:#5e6f8d;margin-bottom:8px;">🏷️ 按失误类别</div><div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;">'+catCards+'</div></div>';
 	window._caseCatMap=catMap;
 	}
 function openAddCaseModal(cat){
