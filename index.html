@@ -553,8 +553,8 @@
     }
     function getAuditLog() { try { return JSON.parse(localStorage.getItem(AUDIT_LOG_KEY) || '[]'); } catch(e) { return []; } }
     function saveAuditLog(data) {
-        // 保留最近 5000 条（本地+云端一致，覆盖式同步下防无限增长）
-        if (data.length > 5000) data = data.slice(data.length - 5000);
+        // 保留最近 200 条（本地+云端一致，覆盖式同步下防无限增长，2026-09-03 流量优化）
+        if (data.length > 200) data = data.slice(data.length - 200);
         var val = JSON.stringify(data);
         localStorage.setItem(AUDIT_LOG_KEY, val);
         try {
@@ -1799,11 +1799,14 @@
             // 1. 先用本地缓存立即渲染（秒开，不再干等云端）
             var cached = getPanzeCache();
             if (cached) renderPanzeData(cached.data);
-            // 2. 后台拉云端更新缓存
-            fetch(SUPABASE_URL + '/rest/v1/app_data?key=like.feishu_panze_2026*&select=key,value&order=key.desc', {
+            // 2. 后台拉云端更新缓存（增量：只拉比缓存最新日期新的数据，2026-09-03 流量优化）
+            var panzeUrl = SUPABASE_URL + '/rest/v1/app_data?key=like.feishu_panze_2026*&select=key,value&order=key.desc';
+            if (cached && cached.data && cached.data.length > 0) panzeUrl += '&key=gt.feishu_panze_' + cached.data[0].date;
+            fetch(panzeUrl, {
                 headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY }
             }).then(function(r){return r.json();}).then(function(rows){
-                var list = [];
+                var list = (cached && cached.data) ? cached.data.slice() : [];
+                var added = 0;
                 rows.forEach(function(r){
                     try {
                         var d = JSON.parse(r.value);
@@ -1812,11 +1815,16 @@
                         var map = d.map || {};
                         var cnt = Object.keys(map).length;
                         var total = panzeMapTotal(map);
+                        // 同日期去重替换（增量拉取可能含缓存最新日期）
+                        for (var pi = 0; pi < list.length; pi++) {
+                            if (list[pi].date === dateStr) { list[pi] = { date: dateStr, count: cnt, total: total, map: map }; return; }
+                        }
                         list.push({ date: dateStr, count: cnt, total: total, map: map });
+                        added++;
                     } catch(e) {}
                 });
                 list.sort(function(a,b){ return b.date.localeCompare(a.date); });
-                if (list.length > 0) {
+                if (added > 0) {
                     savePanzeCache(list);
                     renderPanzeData(list);
                 }
@@ -19676,6 +19684,9 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
                 method: 'POST',
                 headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY, 'Content-Type': 'application/json', 'Prefer': 'resolution=merge-duplicates' },
                 body: JSON.stringify({ key: EXAM_HISTORY_KEY, value: payload, updated_at: new Date().toISOString() })
+            }).then(function() {
+                // 更新云端时间记录，避免自己推的更新触发下次轮询拉全量
+                try { _examCloudLastTime = new Date().toISOString(); localStorage.setItem('_examCloudTime', _examCloudLastTime); } catch(e) {}
             }).catch(function() {});
         }).catch(function() {
             // 拉取云端失败时按原逻辑直接推本地数据
@@ -20155,25 +20166,41 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
         if (ev.key === EXAM_HISTORY_KEY) refreshExamListIfVisible();
     });
     // 定时从云端同步考试历史（多设备：学员在手机进入/提交考试，管理端列表30秒内自动更新状态）
+    // 轻量增量轮询（2026-09-03 流量优化）：仅考试记录页可见时，先拉更新时间戳（几十字节），
+    // 与上次已知时间比对，没变化不拉数据；有变化才拉全量合并。云端结构不变，旧版设备完全兼容。
+    var _examCloudLastTime = null;
+    try { _examCloudLastTime = localStorage.getItem('_examCloudTime') || null; } catch(e) {}
     setInterval(function() {
-        fetch(SUPABASE_URL + '/rest/v1/app_data?select=value&key=eq.' + EXAM_HISTORY_KEY, {
+        if (currentExamTab !== 'records') return;   // 仅考试记录页可见时轮询
+        if (document.hidden) return;                 // 页面隐藏不轮询
+        fetch(SUPABASE_URL + '/rest/v1/app_data?select=updated_at&key=eq.' + EXAM_HISTORY_KEY + '&limit=1', {
             headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY }
-        }).then(function(r) { return r.json(); }).then(function(rows) {
-            if (!Array.isArray(rows) || rows.length === 0 || !rows[0].value) return;
-            try {
-                var localH = getExamHistory();
-                var cloudH = JSON.parse(rows[0].value);
-                var mergedH = mergeExamHistories(localH, cloudH);
-                var mergedRaw = JSON.stringify(mergedH);
-                if (mergedRaw === JSON.stringify(localH)) return; // 本地已是最新
-                localStorage.setItem(EXAM_HISTORY_KEY, mergedRaw);
-                fetch(SUPABASE_URL + '/rest/v1/app_data', {
-                    method: 'POST',
-                    headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY, 'Content-Type': 'application/json', 'Prefer': 'resolution=merge-duplicates' },
-                    body: JSON.stringify({ key: EXAM_HISTORY_KEY, value: mergedRaw, updated_at: new Date().toISOString() })
-                }).catch(function() {});
-                refreshExamListIfVisible();
-            } catch(e) {}
+        }).then(function(r) { return r.json(); }).then(function(metaRows) {
+            if (!Array.isArray(metaRows) || metaRows.length === 0 || !metaRows[0].updated_at) return;
+            var cloudTime = metaRows[0].updated_at;
+            if (_examCloudLastTime && cloudTime <= _examCloudLastTime) return; // 云端无变化，跳过
+            _examCloudLastTime = cloudTime;
+            try { localStorage.setItem('_examCloudTime', cloudTime); } catch(e) {}
+            // 云端有变化，拉全量合并
+            fetch(SUPABASE_URL + '/rest/v1/app_data?select=value&key=eq.' + EXAM_HISTORY_KEY, {
+                headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY }
+            }).then(function(r) { return r.json(); }).then(function(rows) {
+                if (!Array.isArray(rows) || rows.length === 0 || !rows[0].value) return;
+                try {
+                    var localH = getExamHistory();
+                    var cloudH = JSON.parse(rows[0].value);
+                    var mergedH = mergeExamHistories(localH, cloudH);
+                    var mergedRaw = JSON.stringify(mergedH);
+                    if (mergedRaw === JSON.stringify(localH)) return; // 本地已是最新
+                    localStorage.setItem(EXAM_HISTORY_KEY, mergedRaw);
+                    fetch(SUPABASE_URL + '/rest/v1/app_data', {
+                        method: 'POST',
+                        headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY, 'Content-Type': 'application/json', 'Prefer': 'resolution=merge-duplicates' },
+                        body: JSON.stringify({ key: EXAM_HISTORY_KEY, value: mergedRaw, updated_at: new Date().toISOString() })
+                    }).catch(function() {});
+                    refreshExamListIfVisible();
+                } catch(e) {}
+            }).catch(function() {});
         }).catch(function() {});
     }, 30000);
     // 按周分组
@@ -21234,11 +21261,20 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
     }
 
     function _syncPullAll() {
-        return fetch(SUPABASE_URL + '/rest/v1/app_data?select=*&order=updated_at.desc', {
+        // 增量拉取：只下载自上次同步后有变化的数据（2026-09-03 流量优化）
+        // generatedReports（整份HTML报告）排除，打开报告链接时按需单拉（openSharedReport）
+        var _lastSyncAt = null;
+        try { _lastSyncAt = _realLS.getItem('_lastCloudSyncAt'); } catch(e) {}
+        var _pullUrl = SUPABASE_URL + '/rest/v1/app_data?select=*&order=updated_at.desc&key=neq.generatedReports';
+        if (_lastSyncAt) _pullUrl += '&updated_at=gt.' + encodeURIComponent(_lastSyncAt);
+        var _maxCloudUpdated = null;
+        return fetch(_pullUrl, {
             headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY }
         }).then(function(r) { return r.json(); }).then(function(rows) {
             if (Array.isArray(rows)) {
                 rows.forEach(function(row) {
+                    // 记录本次返回行中最大的更新时间（同步完成后写回，作为下次增量起点）
+                    if (row.updated_at && (!_maxCloudUpdated || row.updated_at > _maxCloudUpdated)) _maxCloudUpdated = row.updated_at;
                     // feishu_token 不过期的不被云端旧数据覆盖
                     if (row.key === 'feishu_token') {
                         var localToken = null;
@@ -21317,6 +21353,7 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
                                     body: JSON.stringify({ key: row.key, value: mergedRaw, updated_at: new Date().toISOString() })
                                 }).catch(function() {});
                                 if (typeof refreshExamListIfVisible === 'function') refreshExamListIfVisible();
+                                try { _examCloudLastTime = new Date().toISOString(); localStorage.setItem('_examCloudTime', _examCloudLastTime); } catch(e) {}
                                 return;
                             }
                             var localCount = Array.isArray(localData) ? localData.length : Object.keys(localData).length;
@@ -21335,6 +21372,22 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
                         } catch(e) { _realLS.setItem(row.key, row.value); }
                         return;
                     }
+                    // 审计日志：云端旧数据裁剪为最近 200 条并回推（2026-09-03 流量优化，云端收敛）
+                    if (row.key === 'adminAuditLog') {
+                        try {
+                            var _aud = JSON.parse(row.value);
+                            if (Array.isArray(_aud) && _aud.length > 200) {
+                                var _audTrimmed = JSON.stringify(_aud.slice(_aud.length - 200));
+                                _realLS.setItem(row.key, _audTrimmed);
+                                fetch(SUPABASE_URL + '/rest/v1/app_data', {
+                                    method: 'POST',
+                                    headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY, 'Content-Type': 'application/json', 'Prefer': 'resolution=merge-duplicates' },
+                                    body: JSON.stringify({ key: 'adminAuditLog', value: _audTrimmed, updated_at: new Date().toISOString() })
+                                }).catch(function() {});
+                                return;
+                            }
+                        } catch(e) {}
+                    }
                     // generatedReports 太大，不做双向同步，只用云端兜底
                     if (row.key === 'generatedReports') {
                         if (!_realLS.getItem(row.key)) _realLS.setItem(row.key, row.value);
@@ -21344,6 +21397,10 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
                     if (row.key === 'trainee_full_admin_backup' || row.key === 'trainee_data_sync_time') return;
                     if (row.key && row.value !== null) _realLS.setItem(row.key, row.value);
                 });
+            }
+            // 写回本次同步时间（增量拉取的下一次起点）
+            if (_maxCloudUpdated) {
+                try { _realLS.setItem('_lastCloudSyncAt', _maxCloudUpdated); } catch(e) {}
             }
             return rows ? rows.length : 0;
         }).then(function(n){ _updateSyncBadge(); return n || 0; }).catch(function(){ _updateSyncBadge(); return 0; });
@@ -22014,17 +22071,29 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
         setTimeout(function(){
             migrateOldPushRecords();
             initAutoPush();
-            // 自动加载每日判责量数据（无需进管理后台）
-            fetch(SUPABASE_URL + '/rest/v1/app_data?key=like.feishu_panze_2026*&select=key,value&order=key.desc', {
+            // 自动加载每日判责量数据（无需进管理后台，增量：只拉比缓存最新日期新的，2026-09-03 流量优化）
+            // 直接读 localStorage 缓存（getPanzeCache 定义在管理后台函数作用域内，顶层访问不到）
+            var _panzeCacheInit = null;
+            try { _panzeCacheInit = JSON.parse(localStorage.getItem('panzeSyncCacheV1') || 'null'); } catch(e) {}
+            var _panzeUrlInit = SUPABASE_URL + '/rest/v1/app_data?key=like.feishu_panze_2026*&select=key,value&order=key.desc';
+            if (_panzeCacheInit && _panzeCacheInit.data && _panzeCacheInit.data.length > 0) _panzeUrlInit += '&key=gt.feishu_panze_' + _panzeCacheInit.data[0].date;
+            fetch(_panzeUrlInit, {
                 headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY }
             }).then(function(r){return r.json();}).then(function(rows){
-                window._panzeAllData = [];
+                window._panzeAllData = (_panzeCacheInit && _panzeCacheInit.data) ? _panzeCacheInit.data.slice() : [];
                 rows.forEach(function(r){
                     try {
                         var pd = JSON.parse(r.value);
                         var ds = r.key.replace('feishu_panze_', '');
                         if (ds === 'latest') return;
                         var m = pd.map || {};
+                        // 同日期去重替换
+                        for (var pi2 = 0; pi2 < window._panzeAllData.length; pi2++) {
+                            if (window._panzeAllData[pi2].date === ds) {
+                                window._panzeAllData[pi2] = { date: ds, count: Object.keys(m).length, total: panzeMapTotal(m), map: m };
+                                return;
+                            }
+                        }
                         window._panzeAllData.push({ date: ds, count: Object.keys(m).length, total: panzeMapTotal(m), map: m });
                     } catch(e) {}
                 });
