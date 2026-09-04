@@ -1795,6 +1795,30 @@
             }
             renderPanzePage(1);
         }
+        // 本地兜底：Supabase 402 期间从本机 panze-server 拉每日汇总（2026-09-04）
+        function fetchPanzeLocal() {
+            var cache2 = getPanzeCache();
+            var latestDate = (cache2 && Array.isArray(cache2.data) && cache2.data.length > 0) ? cache2.data[0].date : '';
+            var url = 'http://localhost:3456/panze-local';
+            if (latestDate) url += '?after=' + latestDate; // 只补缺失日期，不重复解析已有文件
+            fetch(url)
+                .then(function(r){ return r.json(); })
+                .then(function(resp) {
+                    if (!resp || !resp.ok || !Array.isArray(resp.dailyList) || resp.dailyList.length === 0) return;
+                    var list = (cache2 && Array.isArray(cache2.data)) ? cache2.data.slice() : [];
+                    resp.dailyList.forEach(function(day){
+                        for (var i = 0; i < list.length; i++) {
+                            if (list[i].date === day.date) { list[i] = day; return; }
+                        }
+                        list.push(day);
+                    });
+                    list.sort(function(a,b){ return b.date.localeCompare(a.date); });
+                    savePanzeCache(list);
+                    renderPanzeData(list);
+                    console.log('✅ 判责量已从本地服务兜底加载（' + resp.dailyList.length + '天）');
+                })
+                .catch(function(){});
+        }
         function refreshPanzeStatus() {
             // 1. 先用本地缓存立即渲染（秒开，不再干等云端）
             var cached = getPanzeCache();
@@ -1805,6 +1829,8 @@
             fetch(panzeUrl, {
                 headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY }
             }).then(function(r){return r.json();}).then(function(rows){
+                // 云端返回错误对象（402 配额耗尽等）→ 走本地兜底
+                if (!Array.isArray(rows)) { fetchPanzeLocal(); return; }
                 var list = (cached && cached.data) ? cached.data.slice() : [];
                 var added = 0;
                 rows.forEach(function(r){
@@ -1828,7 +1854,7 @@
                     savePanzeCache(list);
                     renderPanzeData(list);
                 }
-            }).catch(function(){});
+            }).catch(function(){ fetchPanzeLocal(); });
         }
         // 一键同步判责量：调用本地服务 → 显示同步中 → 自动刷新
         window.manualPanzeUpload = function() {
@@ -22147,6 +22173,8 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
             fetch(_panzeUrlInit, {
                 headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY }
             }).then(function(r){return r.json();}).then(function(rows){
+                // 云端返回错误对象（402 配额耗尽等）→ 走本地兜底
+                if (!Array.isArray(rows)) { fetchPanzeLocal(); return; }
                 window._panzeAllData = (_panzeCacheInit && _panzeCacheInit.data) ? _panzeCacheInit.data.slice() : [];
                 rows.forEach(function(r){
                     try {
@@ -22165,7 +22193,7 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
                     } catch(e) {}
                 });
                 window._panzeAllData.sort(function(a,b){ return b.date.localeCompare(a.date); });
-            }).catch(function(){});
+            }).catch(function(){ fetchPanzeLocal(); });
             getFeishuToken().then(function(){
                 fetchLearningMapData(false).then(function(){ buildLMCache(); });
                 // 独立考试/报告/学习地图页不预加载看板，避免授权页覆盖页面
