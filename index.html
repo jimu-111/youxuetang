@@ -445,8 +445,29 @@
         function kvFetchRows(url) {
             var q = {};
             (url.split('?')[1] || '').split('&').forEach(function(pair){
-                var kv = pair.split('='); if (kv[0] && kv[1] !== undefined) q[kv[0]] = decodeURIComponent(kv[1]);
+                var kv = pair.split('='); if (kv[0] && kv[1] !== undefined) {
+                    var val = decodeURIComponent(kv[1]);
+                    if (q[kv[0]] === undefined) q[kv[0]] = val;
+                    else if (Array.isArray(q[kv[0]])) q[kv[0]].push(val);
+                    else q[kv[0]] = [q[kv[0]], val];
+                }
             });
+            // key 条件收集：PostgREST 多个 key 参数是 AND 关系（如 like.feishu_panze_2026* 且 gt.xxx）
+            var keyConds = [];
+            if (typeof q['key'] === 'string') keyConds = [q['key']];
+            else if (Array.isArray(q['key'])) keyConds = q['key'];
+            function matchKeyCond(cond, key) {
+                if (cond.indexOf('eq.') === 0) return key === cond.slice(3);
+                if (cond.indexOf('gt.') === 0) return key > cond.slice(3);
+                if (cond.indexOf('neq.') === 0) return key !== cond.slice(3);
+                if (cond.indexOf('like.') === 0) {
+                    // PostgREST like 语义：* 为任意字符通配符；先转义其余特殊字符（不含 *），再把 * 换 .*
+                    var pat = cond.slice(5);
+                    var re = new RegExp('^' + pat.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*') + '$');
+                    return re.test(key);
+                }
+                return true; // 未识别的操作符宽松放行（KV 兜底不追求完美语义）
+            }
             return _origFetch(KV_PAGES + '/data/list', { headers: { 'x-yxt-secret': KV_SECRET } })
                 .then(function(r){ return r.json(); })
                 .then(function(j){
@@ -466,10 +487,9 @@
                 .then(function(rows){
                     return rows.filter(function(row){
                         if (!row || row.key === 'generatedReports') return false;
-                        var kf = q['key'] || '';
-                        if (kf.indexOf('eq.') === 0) return row.key === kf.slice(3);
-                        if (kf.indexOf('gt.') === 0) return row.key > kf.slice(3);
-                        if (kf.indexOf('neq.') === 0) return row.key !== kf.slice(3);
+                        for (var i = 0; i < keyConds.length; i++) {
+                            if (!matchKeyCond(keyConds[i], row.key)) return false;
+                        }
                         if (q['updated_at'] && q['updated_at'].indexOf('gt.') === 0) return (row.updated_at || '') > q['updated_at'].slice(3);
                         return true;
                     });
@@ -1968,12 +1988,21 @@
         function getPanzeCache() {
             try {
                 var c = JSON.parse(localStorage.getItem(PANZE_CACHE_KEY) || 'null');
-                if (c && Array.isArray(c.data)) return c;
+                if (c && Array.isArray(c.data)) {
+                    // 读净化：过滤非日期格式的行（2026-09-04 KV 兜底 bug 曾混入其他 key 的行），并回写清理
+                    var cleaned = c.data.filter(function(it){ return it && /^\d{4}-\d{2}-\d{2}$/.test(it.date || ''); });
+                    if (cleaned.length !== c.data.length) { c.data = cleaned; savePanzeCache(cleaned); }
+                    return c;
+                }
             } catch(e) {}
             return null;
         }
         function savePanzeCache(data) {
-            try { localStorage.setItem(PANZE_CACHE_KEY, JSON.stringify({ fetchedAt: Date.now(), data: data })); } catch(e) {}
+            try {
+                // 写净化：非日期格式的行不落缓存
+                data = (data || []).filter(function(it){ return it && /^\d{4}-\d{2}-\d{2}$/.test(it.date || ''); });
+                localStorage.setItem(PANZE_CACHE_KEY, JSON.stringify({ fetchedAt: Date.now(), data: data }));
+            } catch(e) {}
         }
         // 用列表渲染卡片数字+详情表格（本地渲染，毫秒级）
         function renderPanzeData(list) {
@@ -2045,6 +2074,8 @@
                 var added = 0;
                 rows.forEach(function(r){
                     try {
+                        // 防御：非判责量 key（KV 兜底异常行等）直接跳过，避免污染缓存
+                        if (r.key.indexOf('feishu_panze_') !== 0) return;
                         var d = JSON.parse(r.value);
                         var dateStr = r.key.replace('feishu_panze_', '');
                         if (dateStr === 'latest') return;
