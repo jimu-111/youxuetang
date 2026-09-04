@@ -15953,6 +15953,14 @@ async function importQBFromFeishu() {
                 body: JSON.stringify({ key: 'feishu_token', value: tokenStr, updated_at: new Date().toISOString() })
             }).catch(function() {});
         } catch(e) {}
+        // 双写 Cloudflare KV（2026-09-04：Supabase 配额挂起期间由 CF 承担共享）
+        try {
+            fetch(FEISHU_CLOUDFLARE_PROXY_URL + '/token', {
+                method: 'POST',
+                headers: { 'Content-Type': 'text/plain', 'x-yxt-secret': 'yxt-feishu-2026' },
+                body: tokenStr
+            }).catch(function() {});
+        } catch(e) {}
     }
 
     // 从云端拉取 token（用于跨设备共享 / 本地 token 过期时兜底）
@@ -15968,6 +15976,21 @@ async function importQBFromFeishu() {
                     localStorage.setItem('feishu_token', rows[0].value);
                     console.log('☁️ 从云端恢复了有效的 feishu_token');
                     return stored.access_token;
+                }
+            }
+        } catch(e) {}
+        // Cloudflare KV 兜底（2026-09-04：Supabase 402 期间共享不中断）
+        try {
+            var cfResp = await fetchWithTimeout(FEISHU_CLOUDFLARE_PROXY_URL + '/token', {
+                headers: { 'x-yxt-secret': 'yxt-feishu-2026' }
+            }, 15000);
+            var cfData = await cfResp.json();
+            if (cfData && cfData.value) {
+                var cfStored = JSON.parse(cfData.value);
+                if (cfStored && cfStored.expiresAt > Date.now() + 60000) {
+                    localStorage.setItem('feishu_token', cfData.value);
+                    console.log('☁️ 从 Cloudflare 恢复了有效的 feishu_token');
+                    return cfStored.access_token;
                 }
             }
         } catch(e) {}
