@@ -8947,16 +8947,17 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
                 'x-target-method': 'GET'
             };
             if (token) headers['x-target-auth'] = 'Bearer ' + token;
-            var resp = await fetch(FEISHU_PROXY_URL, { method: 'POST', headers: headers });
-            if (!resp.ok) {
-                console.warn('[飞书图片] 代理返回' + resp.status + '，尝试直连...');
+            var resp = null;
+            try { resp = await fetchViaProxy(headers, null, 30000); } catch(e) { console.warn('[飞书图片] 代理全线路失败: ' + e.message); }
+            if (!resp || !resp.ok) {
+                console.warn('[飞书图片] 代理返回' + (resp ? resp.status : '异常') + '，尝试直连...');
                 if (token) {
                     var _dr = await fetch('https://open.feishu.cn/open-apis/drive/v1/medias/' + fileToken + '/download', {
                         headers: { 'Authorization': 'Bearer ' + token }
                     });
                     if (_dr.ok) { var _db = await _dr.arrayBuffer(); if (_db && _db.byteLength > 0) return URL.createObjectURL(new Blob([_db], { type: 'image/png' })); }
                 }
-                throw new Error('状态:' + resp.status + '（直连也失败）');
+                throw new Error('状态:' + (resp ? resp.status : '全线路失败') + '（直连也失败）');
             }
             var buf = await resp.arrayBuffer();
             if (!buf || buf.byteLength === 0) return null;
@@ -9126,14 +9127,15 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
                 'x-target-method': 'GET'
             };
             if (token) headers['x-target-auth'] = 'Bearer ' + token;
-            var resp = await fetch(FEISHU_PROXY_URL, { method: 'POST', headers: headers });
-            if (!resp.ok) {
-                console.warn('[飞书图片] 代理返回' + resp.status + '，尝试直连...');
+            var resp = null;
+            try { resp = await fetchViaProxy(headers, null, 30000); } catch(e) { console.warn('[飞书图片] 代理全线路失败: ' + e.message); }
+            if (!resp || !resp.ok) {
+                console.warn('[飞书图片] 代理返回' + (resp ? resp.status : '异常') + '，尝试直连...');
                 if (token) {
                     var _dr2 = await fetch(targetUrl, { headers: { 'Authorization': 'Bearer ' + token } });
                     if (_dr2.ok) { var _db2 = await _dr2.arrayBuffer(); if (_db2 && _db2.byteLength > 0) { var _blob2 = new Blob([_db2]); return new Promise(function(r2) { var _r2 = new FileReader(); _r2.onloadend = function() { r2(_r2.result); }; _r2.onerror = function() { r2(url); }; _r2.readAsDataURL(_blob2); }); } }
                 }
-                throw new Error('状态:' + resp.status + '（直连也失败）');
+                throw new Error('状态:' + (resp ? resp.status : '全线路失败') + '（直连也失败）');
             }
             // 只读一次 body，根据首字节判断是JSON还是原始图片
             var buf = await resp.arrayBuffer();
@@ -15711,8 +15713,43 @@ async function importQBFromFeishu() {
     let errorDashboardFilter = { period: 'day', site: 'all', category: 'all', reviewer: 'all', customStart: '', customEnd: '' };
     let errorDashboardAllFailed = false; // 全部Sheet加载失败标记（通常意味着授权过期）
 
-    // 飞书API请求 — 通过Supabase Edge Function代理（原始body转发）
+    // 飞书API请求 — 通过代理转发（原始body转发）
+    // 三层线路（2026-09-03 Supabase 配额耗尽事件）：Supabase云端 → Cloudflare免费代理 → 本地代理
+    // 某线路失败后熔断 5 分钟跳过；云端恢复后自动优先走云端
     const FEISHU_PROXY_URL = 'https://zfxwnixlvdxawoylhgxj.supabase.co/functions/v1/feishu-proxy';
+    var FEISHU_CLOUDFLARE_PROXY_URL = 'https://feishu-proxy.xuhang1117.workers.dev'; // Cloudflare Worker 代理地址（2026-09-04 已部署回填）
+    var _proxyDownUntil = {}; // 线路熔断表：地址 -> 恢复时间戳
+    function getProxyUrlList() {
+        var list = [FEISHU_PROXY_URL];
+        if (FEISHU_CLOUDFLARE_PROXY_URL) list.push(FEISHU_CLOUDFLARE_PROXY_URL);
+        list.push('http://localhost:3456/feishu-proxy');
+        return list;
+    }
+    // 按线路顺序尝试代理请求，全部失败才抛错；返回第一个成功的响应
+    async function fetchViaProxy(proxyHeaders, options, timeoutMs) {
+        var urls = getProxyUrlList();
+        var lastErr = null;
+        for (var i = 0; i < urls.length; i++) {
+            var pu = urls[i];
+            if (_proxyDownUntil[pu] && Date.now() < _proxyDownUntil[pu]) continue;
+            try {
+                var resp = await fetchWithTimeout(pu, {
+                    method: 'POST',
+                    headers: proxyHeaders,
+                    body: (options && options.body) || undefined
+                }, timeoutMs || 20000);
+                if (resp.ok) { if (_proxyDownUntil[pu]) delete _proxyDownUntil[pu]; return resp; }
+                var _et = '';
+                try { _et = await resp.text(); } catch(e) {}
+                lastErr = new Error('代理请求失败: ' + resp.status + (_et ? ' ' + _et.substring(0, 120) : ''));
+                _proxyDownUntil[pu] = Date.now() + 300000; // 熔断 5 分钟
+            } catch(e) {
+                lastErr = e;
+                _proxyDownUntil[pu] = Date.now() + 300000;
+            }
+        }
+        throw lastErr || new Error('代理请求失败: 所有线路不可用');
+    }
     const FEISHU_SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InpmeHduaXhsdmR4YXdveWxoZ3hqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODIyMDEyNzIsImV4cCI6MjA5Nzc3NzI3Mn0.aPfO4Ry_LzoOColCVx64JQPF-BWga-_J2fX9hg-E4G8';
     async function feishuApiFetch(url, options, timeoutMs) {
         options = options || {};
@@ -15727,15 +15764,7 @@ async function importQBFromFeishu() {
         if (options.headers && options.headers['Content-Type']) {
             proxyHeaders['x-target-content-type'] = options.headers['Content-Type'];
         }
-        var resp = await fetchWithTimeout(FEISHU_PROXY_URL, {
-            method: 'POST',
-            headers: proxyHeaders,
-            body: options.body || undefined
-        }, timeoutMs || 20000);
-        if (!resp.ok) {
-            var errText = await resp.text();
-            throw new Error('代理请求失败: ' + resp.status + ' ' + errText);
-        }
+        var resp = await fetchViaProxy(proxyHeaders, options, timeoutMs);
         var data = await resp.json();
         if (data.error) {
             console.log('[代理错误] URL:', url);
