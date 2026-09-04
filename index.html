@@ -403,6 +403,216 @@
 </div>
 
 <script>
+    // ==================== KV 兜底暂存（2026-09-04）====================
+    // 机制：Supabase 挂断期间，写 app_data 自动镜像到 CF KV（sync_ 前缀，带时间戳防旧覆盖），
+    // 读 app_data 失败自动转 KV；Supabase 恢复后自动回灌（KV 比 Supabase 新才覆盖）并清空中转。
+    // KV 只做 Supabase 错误后的最后屏障，正常时 KV 是 Supabase 的实时镜像副本。
+    (function(){
+        var KV_PAGES = 'https://yxt-feishu.pages.dev';
+        var KV_SECRET = 'yxt-feishu-2026';
+        var KV_DIRTY_KEY = '_kvDirtyKeys';
+        var KV_INIT_KEY = '_kvMirrorInitDone';
+        var _supDown = false;
+        var _origFetch = window.fetch;
+
+        function kvDirtyKeys() {
+            try { return JSON.parse(localStorage.getItem(KV_DIRTY_KEY) || '[]'); } catch(e) { return []; }
+        }
+        function kvSetDirty(keys) {
+            var list = kvDirtyKeys();
+            keys.forEach(function(k){ if (list.indexOf(k) < 0) list.push(k); });
+            try { localStorage.setItem(KV_DIRTY_KEY, JSON.stringify(list)); } catch(e) {}
+        }
+        function kvRemoveDirty(keys) {
+            var list = kvDirtyKeys().filter(function(k){ return keys.indexOf(k) < 0; });
+            try { localStorage.setItem(KV_DIRTY_KEY, JSON.stringify(list)); } catch(e) {}
+        }
+
+        // 镜像写 KV（批量）：body 为数组 [{key,value,updated_at}] 或单对象；排除 generatedReports（HTML 报告太大不进 KV）
+        function kvMirrorWrite(rows) {
+            var arr = Array.isArray(rows) ? rows : [rows];
+            var items = arr.filter(function(r){ return r && r.key && !String(r.key).startsWith('_') && r.key !== 'generatedReports' && r.key !== 'feishu_token'; })
+                .map(function(r){ return { key: r.key, v: r.value !== undefined && r.value !== null ? String(r.value) : null, t: r.updated_at || new Date().toISOString() }; });
+            if (items.length === 0) return;
+            _origFetch(KV_PAGES + '/data', {
+                method: 'POST',
+                headers: { 'x-yxt-secret': KV_SECRET, 'Content-Type': 'application/json' },
+                body: JSON.stringify({ items: items })
+            }).then(function(resp){ if (resp.ok) kvSetDirty(items.map(function(it){ return it.key; })); }).catch(function(){});
+        }
+
+        // 从 KV 构造 rows（读兜底），按原请求的过滤参数保持语义
+        function kvFetchRows(url) {
+            var q = {};
+            (url.split('?')[1] || '').split('&').forEach(function(pair){
+                var kv = pair.split('='); if (kv[0] && kv[1] !== undefined) q[kv[0]] = decodeURIComponent(kv[1]);
+            });
+            return _origFetch(KV_PAGES + '/data/list', { headers: { 'x-yxt-secret': KV_SECRET } })
+                .then(function(r){ return r.json(); })
+                .then(function(j){
+                    var keys = ((j && j.keys) || []).map(function(it){ return it.key; });
+                    // 合并本设备脏列表：刚写入的 key，KV list 有最终一致延迟，可能还没可见
+                    kvDirtyKeys().forEach(function(k){ if (keys.indexOf(k) < 0) keys.push(k); });
+                    return Promise.all(keys.map(function(k2){
+                        return _origFetch(KV_PAGES + '/data?key=' + encodeURIComponent(k2), { headers: { 'x-yxt-secret': KV_SECRET } })
+                            .then(function(r){ return r.json(); })
+                            .then(function(vj){
+                                var row = null;
+                                try { var o = JSON.parse(vj.value); row = { key: k2, value: o.v, updated_at: o.t }; } catch(e) {}
+                                return row;
+                            }).catch(function(){ return null; });
+                    }));
+                })
+                .then(function(rows){
+                    return rows.filter(function(row){
+                        if (!row || row.key === 'generatedReports') return false;
+                        var kf = q['key'] || '';
+                        if (kf.indexOf('eq.') === 0) return row.key === kf.slice(3);
+                        if (kf.indexOf('gt.') === 0) return row.key > kf.slice(3);
+                        if (kf.indexOf('neq.') === 0) return row.key !== kf.slice(3);
+                        if (q['updated_at'] && q['updated_at'].indexOf('gt.') === 0) return (row.updated_at || '') > q['updated_at'].slice(3);
+                        return true;
+                    });
+                }).catch(function(){ return []; });
+        }
+
+        // 探测 Supabase 是否恢复（直连，几字节，不包装）
+        function probeSupabase() {
+            if (typeof SUPABASE_URL === 'undefined') return Promise.resolve(true);
+            return _origFetch(SUPABASE_URL + '/rest/v1/app_data?select=updated_at&key=eq.trainee_data_sync_time&limit=1', {
+                headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY }
+            }).then(function(r){ return r.ok; }).catch(function(){ return false; });
+        }
+
+        // 回灌 KV → Supabase：KV 比 Supabase 新才覆盖；v=null 为删除墓碑
+        function drainKV() {
+            var keysPromise = kvDirtyKeys().length > 0 ? Promise.resolve(kvDirtyKeys()) :
+                new Promise(function(resolve){ setTimeout(function(){
+                    _origFetch(KV_PAGES + '/data/list', { headers: { 'x-yxt-secret': KV_SECRET } })
+                        .then(function(r){ return r.json(); })
+                        .then(function(j){ resolve(((j && j.keys) || []).map(function(it){ return it.key; })); })
+                        .catch(function(){ resolve([]); });
+                }, 30000); }); // list 最终一致延迟最长约 60 秒，等 30 秒再读
+            return keysPromise.then(function(keys){
+                if (keys.length === 0) { _supDown = false; return 0; }
+                return Promise.all(keys.map(function(k){
+                    return _origFetch(KV_PAGES + '/data?key=' + encodeURIComponent(k), { headers: { 'x-yxt-secret': KV_SECRET } })
+                        .then(function(r){ return r.json(); })
+                        .then(function(vj){
+                            var o = null; try { o = JSON.parse(vj.value); } catch(e) {}
+                            if (!o) return { k: k, done: true };
+                            return _origFetch(SUPABASE_URL + '/rest/v1/app_data?key=eq.' + encodeURIComponent(k) + '&select=updated_at', {
+                                headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY }
+                            }).then(function(r){ return r.json(); }).then(function(j){
+                                var supT = (Array.isArray(j) && j[0] && j[0].updated_at) || null;
+                                if (supT && o.t && String(supT) > String(o.t)) return { k: k, done: true };
+                                if (o.v === null) {
+                                    return _origFetch(SUPABASE_URL + '/rest/v1/app_data?key=eq.' + encodeURIComponent(k), {
+                                        method: 'DELETE',
+                                        headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY }
+                                    }).then(function(){ return { k: k, done: true }; });
+                                }
+                                return _origFetch(SUPABASE_URL + '/rest/v1/app_data', {
+                                    method: 'POST',
+                                    headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY, 'Content-Type': 'application/json', 'Prefer': 'resolution=merge-duplicates' },
+                                    body: JSON.stringify({ key: k, value: o.v, updated_at: o.t })
+                                }).then(function(){ return { k: k, done: true }; });
+                            }).catch(function(){ return { k: k, done: false }; });
+                        }).catch(function(){ return { k: k, done: false }; });
+                })).then(function(results){
+                    var doneKeys = results.filter(function(r){ return r.done; }).map(function(r){ return r.k; });
+                    if (doneKeys.length > 0) {
+                        return _origFetch(KV_PAGES + '/data/clear', {
+                            method: 'POST',
+                            headers: { 'x-yxt-secret': KV_SECRET, 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ keys: doneKeys })
+                        }).then(function(){ kvRemoveDirty(doneKeys); return doneKeys.length; }).catch(function(){ return 0; });
+                    }
+                    return 0;
+                });
+            });
+        }
+
+        // 探测循环：打开后 3 秒 + 每 5 分钟；探测到恢复自动回灌
+        function probeLoop() {
+            probeSupabase().then(function(ok){
+                if (ok) {
+                    if (_supDown) {
+                        drainKV().then(function(n){
+                            _supDown = false;
+                            console.log('[KV兜底] Supabase 已恢复，回灌 ' + n + ' 条，已清空 KV 中转');
+                        });
+                    }
+                } else {
+                    _supDown = true;
+                }
+            });
+            setTimeout(probeLoop, 5 * 60 * 1000);
+        }
+
+        // 首次运行：全量快照镜像 KV（保证读兜底有断流前历史数据）
+        function kvInitMirror() {
+            try {
+                if (localStorage.getItem(KV_INIT_KEY)) return;
+                localStorage.setItem(KV_INIT_KEY, '1');
+            } catch(e) { return; }
+            var items = [];
+            for (var i = 0; i < localStorage.length; i++) {
+                var k = localStorage.key(i);
+                if (k && !k.startsWith('_') && k !== 'generatedReports' && k !== 'feishu_token') {
+                    items.push({ key: k, v: localStorage.getItem(k), t: new Date().toISOString() });
+                }
+            }
+            if (items.length === 0) return;
+            _origFetch(KV_PAGES + '/data', {
+                method: 'POST',
+                headers: { 'x-yxt-secret': KV_SECRET, 'Content-Type': 'application/json' },
+                body: JSON.stringify({ items: items })
+            }).then(function(resp){ if (resp.ok) kvSetDirty(items.map(function(it){ return it.key; })); }).catch(function(){});
+        }
+
+        // 包装 fetch：写 app_data 镜像 KV；读 app_data 失败转 KV
+        window.fetch = function(input, init) {
+            var url = typeof input === 'string' ? input : (input && input.url) || '';
+            var isAppData = url.indexOf('/rest/v1/app_data') >= 0;
+            var method = (init && init.method) || 'GET';
+            if (!isAppData) return _origFetch.apply(this, arguments);
+            // 轻量探测类请求（select=updated_at&limit=1）直连不包装
+            if (method === 'GET' && url.indexOf('select=updated_at') >= 0 && url.indexOf('limit=1') >= 0) {
+                return _origFetch.apply(this, arguments);
+            }
+            if (method === 'POST') {
+                var p = _origFetch.apply(this, arguments);
+                p.then(function(){
+                    try { kvMirrorWrite(init.body ? JSON.parse(init.body) : null); } catch(e) {}
+                }).catch(function(){});
+                return p;
+            }
+            if (method === 'DELETE') {
+                var pd = _origFetch.apply(this, arguments);
+                pd.then(function(){
+                    var m = url.match(/key=eq\.([^&]+)/);
+                    if (m) kvMirrorWrite([{ key: decodeURIComponent(m[1]), value: null, updated_at: new Date().toISOString() }]);
+                }).catch(function(){});
+                return pd;
+            }
+            if (method === 'GET') {
+                return _origFetch.apply(this, arguments).then(function(resp){
+                    if (resp.ok) return resp;
+                    _supDown = true;
+                    return kvFetchRows(url).then(function(rows){
+                        return new Response(JSON.stringify(rows), { status: 200, headers: { 'Content-Type': 'application/json' } });
+                    });
+                });
+            }
+            return _origFetch.apply(this, arguments);
+        };
+
+        kvInitMirror();
+        setTimeout(probeLoop, 3000);
+        // 调试钩子：控制台手动触发回灌 window._kvDrainNow()
+        window._kvDrainNow = function(){ return probeSupabase().then(function(ok){ if (ok && _supDown) return drainKV(); return null; }); };
+    })();
     window._panzeAllData = window._panzeAllData || [];
     // 动态加载 SheetJS 库
     function loadSheetJS() {

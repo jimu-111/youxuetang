@@ -10,6 +10,8 @@ const FEISHU_APP_SECRET = '1uLKmOkzQpoac6Ixw3Qhsb6KR1gCrcTn';
 const SUPABASE_URL = (process.env.SUPABASE_URL || 'https://zfxwnixlvdxawoylhgxj.supabase.co').replace(/\/$/, '').replace(/\s/g, '');
 const SUPABASE_KEY = (process.env.SUPABASE_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InpmeHduaXhsdmR4YXdveWxoZ3hqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODIyMDEyNzIsImV4cCI6MjA5Nzc3NzI3Mn0.aPfO4Ry_LzoOColCVx64JQPF-BWga-_J2fX9hg-E4G8').replace(/\s/g, '');
 const SITE_URL = 'https://jimu-111.github.io/youxuetang/';
+const KV_PAGES = 'https://yxt-feishu.pages.dev';
+const KV_SECRET = 'yxt-feishu-2026';
 
 // ===== 工具 =====
 function fmt(d) { return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); }
@@ -35,6 +37,64 @@ function lastWeek() {
     return { start: mon, end: sun, key: fmt(mon) };
 }
 
+// ===== KV 兜底暂存（2026-09-04）=====
+// Supabase 挂断（402/网络错）期间：写 app_data 转存 CF KV /data，读失败从 KV 读回
+// feishu_token 走 /token 路由（与页面双写共用一份，不进中转、不回灌）
+// KV 只做 Supabase 错误后的最后屏障：Supabase 恢复后由页面自动回灌并清空 KV
+async function kvUpsert(key, value, t) {
+    try {
+        const r = await fetch(KV_PAGES + '/data', {
+            method: 'POST',
+            headers: { 'x-yxt-secret': KV_SECRET, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ items: [{ key: key, v: value, t: t || new Date().toISOString() }] })
+        });
+        return r.ok;
+    } catch(e) { console.log('  ⚠️ KV 写入失败: ' + e.message); return false; }
+}
+async function kvGetRaw(key) {
+    // KV /data 中转读：返回原 value 字符串（无记录/墓碑返回 null）
+    try {
+        const r = await fetch(KV_PAGES + '/data?key=' + encodeURIComponent(key), { headers: { 'x-yxt-secret': KV_SECRET } });
+        if (!r.ok) return null;
+        const d = await r.json();
+        if (!d || typeof d.value !== 'string') return null;
+        const o = JSON.parse(d.value); // {"v":<原value>, "t":<时间>}
+        return (o && typeof o.v === 'string') ? o.v : null;
+    } catch(e) { return null; }
+}
+async function kvMirrorFromBody(body) {
+    try {
+        const items = JSON.parse(body);
+        const arr = Array.isArray(items) ? items : [items];
+        for (const it of arr) {
+            if (!it || !it.key || typeof it.value === 'undefined') continue;
+            if (it.key === 'feishu_token') {
+                await fetch(KV_PAGES + '/token', { method: 'POST', headers: { 'x-yxt-secret': KV_SECRET, 'Content-Type': 'application/json' }, body: it.value }).catch(function(){});
+            } else {
+                await kvUpsert(it.key, String(it.value), it.updated_at);
+            }
+        }
+    } catch(e) {}
+}
+// 写 app_data 的 fetch 统一包装：Supabase 失败/异常时把 body 转存 KV 兜底（读请求不包装）
+const _origFetch = globalThis.fetch;
+globalThis.fetch = function(input, init) {
+    const url = typeof input === 'string' ? input : (input && input.url) || '';
+    if (url.indexOf(SUPABASE_URL + '/rest/v1/app_data') >= 0 && init && init.method === 'POST') {
+        return _origFetch(input, init).then(function(res) {
+            if (!res.ok) {
+                console.log('  ⚠️ Supabase ' + res.status + '，写入转存 KV 兜底');
+                return kvMirrorFromBody(init.body).then(function() { return res; });
+            }
+            return res;
+        }).catch(function(e) {
+            console.log('  ⚠️ Supabase 网络错误（' + e.message + '），写入转存 KV 兜底');
+            return kvMirrorFromBody(init.body).then(function() { return null; });
+        });
+    }
+    return _origFetch(input, init);
+};
+
 // ===== API =====
 async function getAppToken() {
     const r = await fetch('https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal', {
@@ -47,12 +107,28 @@ async function getAppToken() {
 }
 
 async function supabaseGet(key) {
-    const r = await fetch(SUPABASE_URL + '/rest/v1/app_data?key=eq.' + encodeURIComponent(key) + '&select=value&limit=1', {
-        headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY }
-    });
-    const arr = await r.json();
-    if (Array.isArray(arr) && arr.length > 0) { try { return JSON.parse(arr[0].value); } catch(e) {} }
-    return null;
+    try {
+        const r = await fetch(SUPABASE_URL + '/rest/v1/app_data?key=eq.' + encodeURIComponent(key) + '&select=value&limit=1', {
+            headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY }
+        });
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        const arr = await r.json();
+        if (Array.isArray(arr) && arr.length > 0) { try { return JSON.parse(arr[0].value); } catch(e) {} }
+        return null;
+    } catch(e) {
+        // Supabase 挂断 → KV 兜底读（feishu_token 走 /token 路由，其余走 /data 中转）
+        if (key === 'feishu_token') {
+            try {
+                const r2 = await fetch(KV_PAGES + '/token', { headers: { 'x-yxt-secret': KV_SECRET } });
+                const d2 = await r2.json();
+                if (d2 && d2.value) { try { return JSON.parse(d2.value); } catch(e2) {} }
+            } catch(e2) {}
+            return null;
+        }
+        const v = await kvGetRaw(key);
+        if (v === null) { console.log('  ⚠️ Supabase 读 ' + key + ' 失败（' + e.message + '），KV 无兜底数据'); return null; }
+        try { return JSON.parse(v); } catch(e2) { return null; }
+    }
 }
 
 async function sendCard(email, card, token) {
