@@ -15740,13 +15740,15 @@ async function importQBFromFeishu() {
     let errorDashboardAllFailed = false; // 全部Sheet加载失败标记（通常意味着授权过期）
 
     // 飞书API请求 — 通过代理转发（原始body转发）
-    // 三层线路（2026-09-03 Supabase 配额耗尽事件）：Supabase云端 → Cloudflare免费代理 → 本地代理
+    // 四层线路（2026-09-03 Supabase 配额耗尽事件）：Supabase云端 → Cloudflare Pages免费代理 → Cloudflare Worker → 本地代理
     // 某线路失败后熔断 5 分钟跳过；云端恢复后自动优先走云端
     const FEISHU_PROXY_URL = 'https://zfxwnixlvdxawoylhgxj.supabase.co/functions/v1/feishu-proxy';
     var FEISHU_CLOUDFLARE_PROXY_URL = 'https://feishu-proxy.xuhang1117.workers.dev'; // Cloudflare Worker 代理地址（2026-09-04 已部署回填）
+    var FEISHU_PAGES_PROXY_URL = 'https://yxt-feishu.pages.dev'; // Cloudflare Pages 代理地址（workers.dev 被屏蔽时的免费线路，2026-09-04）
     var _proxyDownUntil = {}; // 线路熔断表：地址 -> 恢复时间戳
     function getProxyUrlList() {
         var list = [FEISHU_PROXY_URL];
+        if (FEISHU_PAGES_PROXY_URL) list.push(FEISHU_PAGES_PROXY_URL);
         if (FEISHU_CLOUDFLARE_PROXY_URL) list.push(FEISHU_CLOUDFLARE_PROXY_URL);
         list.push('http://localhost:3456/feishu-proxy');
         return list;
@@ -15985,22 +15987,27 @@ async function importQBFromFeishu() {
         syncTokenToCloudflare(tokenStr, 0);
     }
 
-    // token 写入 Cloudflare KV（带重试：立即 + 30s + 2min + 5min）
+    // token 写入 Cloudflare KV（Pages + Worker 双写，共用同一 KV 命名空间；带重试：立即 + 30s + 2min + 5min）
     function syncTokenToCloudflare(tokenStr, attempt) {
-        fetch(FEISHU_CLOUDFLARE_PROXY_URL + '/token', {
-            method: 'POST',
-            headers: { 'Content-Type': 'text/plain', 'x-yxt-secret': 'yxt-feishu-2026' },
-            body: tokenStr
-        }).then(function(resp) {
-            if (!resp.ok) throw new Error('HTTP ' + resp.status);
-            console.log('✅ token 已同步到 Cloudflare KV');
-        }).catch(function(e) {
-            if (attempt < 3) {
-                var delays = [30000, 120000, 300000];
-                setTimeout(function() { syncTokenToCloudflare(tokenStr, attempt + 1); }, delays[attempt]);
-            } else {
-                console.log('⚠️ token 同步 Cloudflare KV 失败（已重试3次）: ' + e.message);
-            }
+        var targets = [];
+        if (FEISHU_PAGES_PROXY_URL) targets.push(FEISHU_PAGES_PROXY_URL);
+        if (FEISHU_CLOUDFLARE_PROXY_URL) targets.push(FEISHU_CLOUDFLARE_PROXY_URL);
+        targets.forEach(function(tu) {
+            fetch(tu + '/token', {
+                method: 'POST',
+                headers: { 'Content-Type': 'text/plain', 'x-yxt-secret': 'yxt-feishu-2026' },
+                body: tokenStr
+            }).then(function(resp) {
+                if (!resp.ok) throw new Error('HTTP ' + resp.status);
+                console.log('✅ token 已同步到 Cloudflare KV（' + tu + '）');
+            }).catch(function(e) {
+                if (attempt < 3) {
+                    var delays = [30000, 120000, 300000];
+                    setTimeout(function() { syncTokenToCloudflare(tokenStr, attempt + 1); }, delays[attempt]);
+                } else {
+                    console.log('⚠️ token 同步 Cloudflare KV 失败（已重试3次）: ' + e.message);
+                }
+            });
         });
     }
 
@@ -16020,21 +16027,26 @@ async function importQBFromFeishu() {
                 }
             }
         } catch(e) {}
-        // Cloudflare KV 兜底（2026-09-04：Supabase 402 期间共享不中断）
-        try {
-            var cfResp = await fetchWithTimeout(FEISHU_CLOUDFLARE_PROXY_URL + '/token', {
-                headers: { 'x-yxt-secret': 'yxt-feishu-2026' }
-            }, 15000);
-            var cfData = await cfResp.json();
-            if (cfData && cfData.value) {
-                var cfStored = JSON.parse(cfData.value);
-                if (cfStored && cfStored.expiresAt > Date.now() + 60000) {
-                    localStorage.setItem('feishu_token', cfData.value);
-                    console.log('☁️ 从 Cloudflare 恢复了有效的 feishu_token');
-                    return cfStored.access_token;
+        // Cloudflare KV 兜底（2026-09-04：Supabase 402 期间共享不中断；Pages 线路优先，workers.dev 常被屏蔽）
+        var cfTargets = [];
+        if (FEISHU_PAGES_PROXY_URL) cfTargets.push(FEISHU_PAGES_PROXY_URL);
+        if (FEISHU_CLOUDFLARE_PROXY_URL) cfTargets.push(FEISHU_CLOUDFLARE_PROXY_URL);
+        for (var _ci = 0; _ci < cfTargets.length; _ci++) {
+            try {
+                var cfResp = await fetchWithTimeout(cfTargets[_ci] + '/token', {
+                    headers: { 'x-yxt-secret': 'yxt-feishu-2026' }
+                }, 15000);
+                var cfData = await cfResp.json();
+                if (cfData && cfData.value) {
+                    var cfStored = JSON.parse(cfData.value);
+                    if (cfStored && cfStored.expiresAt > Date.now() + 60000) {
+                        localStorage.setItem('feishu_token', cfData.value);
+                        console.log('☁️ 从 Cloudflare 恢复了有效的 feishu_token');
+                        return cfStored.access_token;
+                    }
                 }
-            }
-        } catch(e) {}
+            } catch(e) {}
+        }
         return null;
     }
 
