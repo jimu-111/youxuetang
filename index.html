@@ -15733,11 +15733,13 @@ async function importQBFromFeishu() {
             var pu = urls[i];
             if (_proxyDownUntil[pu] && Date.now() < _proxyDownUntil[pu]) continue;
             try {
+                // Cloudflare 线路超时缩短到 5 秒（workers.dev 间歇性网络时快速跳过，不拖慢页面）
+                var puTimeout = (pu.indexOf('workers.dev') >= 0) ? 5000 : (timeoutMs || 20000);
                 var resp = await fetchWithTimeout(pu, {
                     method: 'POST',
                     headers: proxyHeaders,
                     body: (options && options.body) || undefined
-                }, timeoutMs || 20000);
+                }, puTimeout);
                 if (resp.ok) { if (_proxyDownUntil[pu]) delete _proxyDownUntil[pu]; return resp; }
                 var _et = '';
                 try { _et = await resp.text(); } catch(e) {}
@@ -15953,14 +15955,27 @@ async function importQBFromFeishu() {
                 body: JSON.stringify({ key: 'feishu_token', value: tokenStr, updated_at: new Date().toISOString() })
             }).catch(function() {});
         } catch(e) {}
-        // 双写 Cloudflare KV（2026-09-04：Supabase 配额挂起期间由 CF 承担共享）
-        try {
-            fetch(FEISHU_CLOUDFLARE_PROXY_URL + '/token', {
-                method: 'POST',
-                headers: { 'Content-Type': 'text/plain', 'x-yxt-secret': 'yxt-feishu-2026' },
-                body: tokenStr
-            }).catch(function() {});
-        } catch(e) {}
+        // 双写 Cloudflare KV（2026-09-04：Supabase 配额挂起期间由 CF 承担共享；带重试应对 workers.dev 间歇性网络）
+        syncTokenToCloudflare(tokenStr, 0);
+    }
+
+    // token 写入 Cloudflare KV（带重试：立即 + 30s + 2min + 5min）
+    function syncTokenToCloudflare(tokenStr, attempt) {
+        fetch(FEISHU_CLOUDFLARE_PROXY_URL + '/token', {
+            method: 'POST',
+            headers: { 'Content-Type': 'text/plain', 'x-yxt-secret': 'yxt-feishu-2026' },
+            body: tokenStr
+        }).then(function(resp) {
+            if (!resp.ok) throw new Error('HTTP ' + resp.status);
+            console.log('✅ token 已同步到 Cloudflare KV');
+        }).catch(function(e) {
+            if (attempt < 3) {
+                var delays = [30000, 120000, 300000];
+                setTimeout(function() { syncTokenToCloudflare(tokenStr, attempt + 1); }, delays[attempt]);
+            } else {
+                console.log('⚠️ token 同步 Cloudflare KV 失败（已重试3次）: ' + e.message);
+            }
+        });
     }
 
     // 从云端拉取 token（用于跨设备共享 / 本地 token 过期时兜底）
