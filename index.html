@@ -9218,11 +9218,15 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
     async function fetchFeishuImage(fileToken) {
         if (!fileToken) return null;
         try {
-            var token = getErrorDashboardToken();
-            if (!token) { console.warn('[飞书图片] 本地token已过期，尝试刷新...'); }
+            // 图片下载 token 链（2026-09-05 优化）：内存缓存 → 本地用户token → tenant token（快、必然可用）→ 慢速兜底
+            // 原顺序每张图都先走 refresh/云端（失败且慢），1269 张图时每张卡十几秒导致「一直加载中」
+            var token = null;
+            if (_imgAuthToken && Date.now() < _imgAuthTokenExp) token = _imgAuthToken;
+            if (!token) token = getErrorDashboardToken();
+            if (!token) token = await getFeishuToken();
             if (!token) token = await feishuRefreshToken();
             if (!token) token = await getCloudToken();
-            if (!token) token = await getFeishuToken();
+            if (token) { _imgAuthToken = token; _imgAuthTokenExp = Date.now() + 600000; }
             var headers = {
                 'Authorization': 'Bearer ' + FEISHU_SUPABASE_KEY,
                 'x-target-url': 'https://open.feishu.cn/open-apis/drive/v1/medias/' + fileToken + '/download',
@@ -9231,7 +9235,7 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
             if (token) headers['x-target-auth'] = 'Bearer ' + token;
             var resp = null;
             try {
-                resp = await fetchViaProxy(headers, null, 30000, _qbImgRespValid);
+                resp = await fetchViaProxy(headers, null, 120000, _qbImgRespValid);
             } catch(e) { console.warn('[飞书图片] 代理全线路失败: ' + e.message); }
             if (!resp || !resp.ok) {
                 console.warn('[飞书图片] 代理返回' + (resp ? resp.status : '异常') + '，尝试直连...');
@@ -9250,7 +9254,7 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
                 try {
                     var j = JSON.parse(new TextDecoder().decode(bytes));
                     // 有 _raw 或 base64 才处理，否则 token 可能已过期（飞书返回错误JSON）
-                    if (!j._raw && !j.base64) return null;
+                    if (!j._raw && !j.base64) { _imgAuthToken = null; _imgAuthTokenExp = 0; return null; }
                     var binData = null;
                     if (j._raw) {
                         try { binData = Uint8Array.from(atob(j._raw), function(c){ return c.charCodeAt(0); }); } catch(e) {}
@@ -9294,6 +9298,8 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
             img.src = imgSrc;
         });
     }
+    // 图片下载 auth 内存缓存（2026-09-05：避免每张图重复走 token 刷新链）
+    var _imgAuthToken = null, _imgAuthTokenExp = 0;
     // ==================== 题库图片本地持久化（2026-09-05，仿培训案例 IndexedDB 模式） ====================
     // 思路：飞书图下载成功后完整图压缩存 IndexedDB qbimg_<token>（培训案例 ci_/ki_ 同款），
     // 之后显示走本地不再依赖飞书实时下载；未下载的由后台预热队列慢速补全本地化。
@@ -9305,6 +9311,53 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
         var key = _qbImgKey(token);
         window._imageCache[key] = dataUrl;
         if (window._imageDB) _idbPut_inline(window._imageDB, key, dataUrl);
+        _qbKVEnqueue(token, dataUrl); // 同步压缩图到 Pages KV 供手机等设备共享（避免 15MB 原图每台设备重下）
+    }
+    // ==================== KV 压缩图共享（2026-09-05）：主电脑预热成功后同步 Pages KV，手机读 KV 秒开 ====================
+    // 背景：飞书题库图多为手机实拍原图（4032×3024，10-20MB），手机无 localhost 线路走 Pages 下 15MB 极易超时。
+    // 主电脑压缩后仅 60-200KB，写 KV（sync_ 前缀复用 /data 路由），手机 photoTag 优先查 KV。
+    var _qbKVQueue = [];
+    var _qbKVTimer = null;
+    var _qbKVInflight = {};
+    function _qbKVEnqueue(token, dataUrl) {
+        if (!FEISHU_PAGES_PROXY_URL || !dataUrl || dataUrl.indexOf('data:image') !== 0) return;
+        if (dataUrl.length > 5000000) return; // 超 5MB 不入 KV
+        _qbKVQueue.push({ key: 'qbimg_' + token, v: dataUrl, t: new Date().toISOString() });
+        if (_qbKVQueue.length >= 10) _qbKVFlush(); // 凑 10 张批量写一次（KV 免费写额度 1000/天，单张写 1269 次会超）
+        if (_qbKVTimer) clearTimeout(_qbKVTimer);
+        _qbKVTimer = setTimeout(_qbKVFlush, 5000);
+    }
+    function _qbKVFlush() {
+        if (_qbKVTimer) { clearTimeout(_qbKVTimer); _qbKVTimer = null; }
+        if (_qbKVQueue.length === 0) return;
+        var items = _qbKVQueue.splice(0);
+        fetch(FEISHU_PAGES_PROXY_URL + '/data', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'x-yxt-secret': 'yxt-feishu-2026' },
+            body: JSON.stringify({ items: items })
+        }).then(function(r) { return r.json(); }).then(function(j) {
+            if (j && j.written) console.log('📦 压缩图已同步 KV: ' + j.written + '/' + items.length + ' 张');
+        }).catch(function() {});
+    }
+    // 从 Pages KV 读共享压缩图（手机无本地库时优先走这里，命中后本地化，不触发 15MB 原图下载）
+    function _qbImgGetFromKV(token) {
+        var key = _qbImgKey(token);
+        if (window._imageCache && window._imageCache[key]) return Promise.resolve(window._imageCache[key]);
+        if (_qbKVInflight[token]) return _qbKVInflight[token];
+        if (!FEISHU_PAGES_PROXY_URL) return Promise.resolve(null);
+        var p = fetch(FEISHU_PAGES_PROXY_URL + '/data?key=' + key, {
+            headers: { 'x-yxt-secret': 'yxt-feishu-2026' }
+        }).then(function(r) { return r.json(); }).then(function(j) {
+            if (!j || !j.value) return null;
+            try {
+                var o = JSON.parse(j.value);
+                if (o && o.v && o.v.indexOf('data:image') === 0) { window._imageCache[key] = o.v; return o.v; }
+            } catch(e) {}
+            return null;
+        }).catch(function() { return null; });
+        _qbKVInflight[token] = p;
+        p.then(function() { delete _qbKVInflight[token]; });
+        return p;
     }
     function _qbImgGetAsync(token) {
         var key = _qbImgKey(token);
@@ -9342,6 +9395,7 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
     // 预热队列：静默逐个下载本地化（1.5s/张慢速，避免飞书限流），失败最多重试3次
     function _qbWarmupAdd(token) {
         if (!token || typeof token !== 'string' || token.length < 5) return;
+        if (_qbWarmupFail[token] >= 5) return; // 已重试多次仍失败的 token 不再自动入队（可能是飞书源文件已删）
         if (_qbWarmupList.indexOf(token) >= 0) return;
         if (_photoCache[token] || (window._imageCache && window._imageCache[_qbImgKey(token)])) return;
         _qbWarmupList.push(token);
@@ -9364,7 +9418,13 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
                     console.log('📦 题库图片已本地化: ' + token);
                 } else {
                     _qbWarmupFail[token] = (_qbWarmupFail[token] || 0) + 1;
-                    if (_qbWarmupFail[token] < 3) _qbWarmupList.push(token);
+                    // 失败不立即重试：等 60 秒跨过线路熔断窗口再入队（立即重试只会撞在同一熔断窗口内白白浪费）
+                    if (_qbWarmupFail[token] < 5) {
+                        setTimeout(function() {
+                            if (_qbWarmupList.indexOf(token) < 0) _qbWarmupList.push(token);
+                            _qbWarmupKick();
+                        }, 60000);
+                    }
                 }
                 await new Promise(function(r) { setTimeout(r, 1500); });
             }
@@ -9427,16 +9487,31 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
             if (window._imageCache && window._imageCache[thumbKey]) {
                 return '<img src="' + window._imageCache[thumbKey] + '" style="max-width:' + maxW + 'px;max-height:' + maxH + 'px;border-radius:8px;border:1px solid #e2e8f0;object-fit:cover;cursor:pointer;margin:2px;" title="点击查看原图" onclick="event.stopPropagation();window._loadFullPhoto(this,\'' + token + '\')">';
             }
-            // 4. 无缓存：占位符 + 后台自动加载 + 预热队列本地化；异步查 IndexedDB 完整图（本地有则立即换上）
-            _scheduleAutoLoad(token);
+            // 4. 无缓存：占位符。优先查 Pages KV 共享压缩图（手机跨设备共享，避免重下 15MB 原图）；
+            // KV 未命中才走飞书下载 + 本地 IndexedDB 兜底
             _qbWarmupAdd(token);
-            _qbImgGetAsync(token).then(function(v) {
-                if (!v) return;
-                window._imageCache[qbKey] = v;
-                document.querySelectorAll('[data-ftoken="' + token + '"]').forEach(function(el) {
-                    if (el.className && String(el.className).indexOf('photo-loadable') >= 0) {
-                        el.outerHTML = '<img src="' + v + '" style="max-width:' + maxW + 'px;max-height:' + maxH + 'px;border-radius:8px;border:1px solid #e2e8f0;object-fit:cover;cursor:pointer;margin:2px;" onclick="event.stopPropagation();showImageViewer(this.src)">';
-                    }
+            _qbImgGetFromKV(token).then(function(v) {
+                if (v) {
+                    // KV 命中：本地化（IndexedDB + 内存），后续零网络
+                    _photoCache[token] = v;
+                    _qbImgPut(token, v);
+                    document.querySelectorAll('[data-ftoken="' + token + '"]').forEach(function(el) {
+                        if (el.className && String(el.className).indexOf('photo-loadable') >= 0) {
+                            el.outerHTML = '<img src="' + v + '" style="max-width:' + maxW + 'px;max-height:' + maxH + 'px;border-radius:8px;border:1px solid #e2e8f0;object-fit:cover;cursor:pointer;margin:2px;" onclick="event.stopPropagation();showImageViewer(this.src)">';
+                        }
+                    });
+                    return;
+                }
+                // KV 未命中：占位 + 飞书下载 + 异步查本地 IndexedDB
+                _scheduleAutoLoad(token);
+                _qbImgGetAsync(token).then(function(v2) {
+                    if (!v2) return;
+                    window._imageCache[qbKey] = v2;
+                    document.querySelectorAll('[data-ftoken="' + token + '"]').forEach(function(el) {
+                        if (el.className && String(el.className).indexOf('photo-loadable') >= 0) {
+                            el.outerHTML = '<img src="' + v2 + '" style="max-width:' + maxW + 'px;max-height:' + maxH + 'px;border-radius:8px;border:1px solid #e2e8f0;object-fit:cover;cursor:pointer;margin:2px;" onclick="event.stopPropagation();showImageViewer(this.src)">';
+                        }
+                    });
                 });
             });
             return '<div class="photo-loadable" data-ftoken="' + token + '" style="width:' + Math.min(maxW, 100) + 'px;height:' + Math.min(maxH, 80) + 'px;background:#f1f5f9;border-radius:8px;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;border:1px dashed #cbd5e1;margin:2px;flex-shrink:0;" onclick="event.stopPropagation();loadPhotoToken(this,\'' + token + '\')"><span style="font-size:1.2rem;">📷</span></div>';
@@ -9482,10 +9557,13 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
         if (!url) return url;
         if (url.indexOf('data:') === 0) return url;
         try {
-            var token = getErrorDashboardToken();
+            var token = null;
+            if (_imgAuthToken && Date.now() < _imgAuthTokenExp) token = _imgAuthToken;
+            if (!token) token = getErrorDashboardToken();
+            if (!token) token = await getFeishuToken();
             if (!token) token = await feishuRefreshToken();
             if (!token) token = await getCloudToken();
-            if (!token) token = await getFeishuToken();
+            if (token) { _imgAuthToken = token; _imgAuthTokenExp = Date.now() + 600000; }
             // 飞书内部图片：通过下载API获取
             var targetUrl = url;
             if (url.indexOf('open.feishu.cn') >= 0 && url.indexOf('/download') < 0) {
@@ -9498,7 +9576,7 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
             };
             if (token) headers['x-target-auth'] = 'Bearer ' + token;
             var resp = null;
-            try { resp = await fetchViaProxy(headers, null, 30000, _qbImgRespValid); } catch(e) { console.warn('[飞书图片] 代理全线路失败: ' + e.message); }
+            try { resp = await fetchViaProxy(headers, null, 120000, _qbImgRespValid); } catch(e) { console.warn('[飞书图片] 代理全线路失败: ' + e.message); }
             if (!resp || !resp.ok) {
                 console.warn('[飞书图片] 代理返回' + (resp ? resp.status : '异常') + '，尝试直连...');
                 if (token) {
@@ -16229,12 +16307,16 @@ async function importQBFromFeishu() {
         return list;
     }
     // 按线路顺序尝试代理请求，全部失败才抛错；返回第一个成功的响应
-    async function fetchViaProxy(proxyHeaders, options, timeoutMs, validate) {
+    // 熔断时长（2026-09-05）：localhost 本机故障多为瞬时（重启/阻塞），只熔断 15 秒；云线路 5 分钟
+    async function fetchViaProxy(proxyHeaders, options, timeoutMs, validate, _retried) {
         var urls = getProxyUrlList();
         var lastErr = null;
+        var triedAny = false;
         for (var i = 0; i < urls.length; i++) {
             var pu = urls[i];
             if (_proxyDownUntil[pu] && Date.now() < _proxyDownUntil[pu]) continue;
+            triedAny = true;
+            var downMs = (pu.indexOf('localhost') >= 0) ? 15000 : 300000;
             try {
                 // Cloudflare 线路超时缩短到 5 秒（workers.dev 间歇性网络时快速跳过，不拖慢页面）
                 var puTimeout = (pu.indexOf('workers.dev') >= 0) ? 5000 : (timeoutMs || 20000);
@@ -16248,17 +16330,23 @@ async function importQBFromFeishu() {
                     // 熔断后继续下一条，避免坏线路挡住后面的好线路
                     if (!validate || await validate(resp)) { if (_proxyDownUntil[pu]) delete _proxyDownUntil[pu]; return resp; }
                     lastErr = new Error('线路响应内容异常: ' + pu);
-                    _proxyDownUntil[pu] = Date.now() + 300000;
+                    _proxyDownUntil[pu] = Date.now() + downMs;
                     continue;
                 }
                 var _et = '';
                 try { _et = await resp.text(); } catch(e) {}
                 lastErr = new Error('代理请求失败: ' + resp.status + (_et ? ' ' + _et.substring(0, 120) : ''));
-                _proxyDownUntil[pu] = Date.now() + 300000; // 熔断 5 分钟
+                _proxyDownUntil[pu] = Date.now() + downMs; // 熔断
             } catch(e) {
                 lastErr = e;
-                _proxyDownUntil[pu] = Date.now() + 300000;
+                _proxyDownUntil[pu] = Date.now() + downMs;
             }
+        }
+        // 所有线路都在熔断中（2026-09-05 修复）：熔断本来是为了快速失败，结果全断连尝试都没有、
+        // 图片只能干等 5 分钟。此时重置熔断表重新探路一轮，恢复的线路立刻可用
+        if (!triedAny && !_retried) {
+            _proxyDownUntil = {};
+            return fetchViaProxy(proxyHeaders, options, timeoutMs, validate, true);
         }
         throw lastErr || new Error('代理请求失败: 所有线路不可用');
     }
