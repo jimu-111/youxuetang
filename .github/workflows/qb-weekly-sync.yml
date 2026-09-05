@@ -1,0 +1,21 @@
+name: 题库定期同步
+
+on:
+  workflow_dispatch:
+  # 周一/周三/周五/周日 8:00 北京时间 = UTC 0:00（GitHub Actions cron 为 UTC）
+  schedule:
+    - cron: "0 0 * * 1,3,5,0"
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: 读飞书总表 7 品类 → 全量覆盖源区（保留手动区）
+        run: node qb-weekly-sync.js
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
