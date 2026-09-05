@@ -2094,6 +2094,9 @@
                 if (added > 0) {
                     savePanzeCache(list);
                     renderPanzeData(list);
+                } else {
+                    // 云端/KV 均无新增数据（可能 KV 最终一致延迟或读取路径异常）→ 本地兜底再补一次
+                    fetchPanzeLocal();
                 }
             }).catch(function(){ fetchPanzeLocal(); });
         }
@@ -8922,9 +8925,9 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
                     if (count > 0) console.log('📦 已迁移 ' + count + ' 张图片到 IndexedDB，释放 localStorage 空间');
                 };
             }
-            // 预加载全部图片到内存缓存
+            // 预加载全部图片到内存缓存（qbimg_ 完整图较大，跳过预加载，按需异步读；thumb_ 缩略图照常）
             var tx2 = db.transaction(STORE, 'readonly'), store2 = tx2.objectStore(STORE), req = store2.openCursor(), loaded = 0;
-            req.onsuccess = function(e) { var c = e.target.result; if (c) { window._imageCache[c.key] = c.value; loaded++; c.continue(); } else { window._imageCacheReady = true; console.log('📦 已加载 ' + loaded + ' 张图片缓存'); } };
+            req.onsuccess = function(e) { var c = e.target.result; if (c) { if (c.key.indexOf('qbimg_') !== 0) { window._imageCache[c.key] = c.value; loaded++; } c.continue(); } else { window._imageCacheReady = true; console.log('📦 已加载 ' + loaded + ' 张图片缓存'); } };
             req.onerror = function() { window._imageCacheReady = true; };
             // 保存 db 引用供后续写操作复用
             window._imageDB = db;
@@ -9200,6 +9203,18 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
         for (var i = 0; i < bytes.length; i++) s += String.fromCharCode(bytes[i]);
         return btoa(s);
     }
+    // 图片代理响应校验（2026-09-05）：image/* 直接放行；JSON 必须 { 开头（_raw/base64 包装或错误信息）；
+    // 其余（旧版代理把二进制当字符串传坏的响应）判为坏线路，熔断后换下一条
+    async function _qbImgRespValid(r) {
+        var _vct = r.headers.get('content-type') || '';
+        if (_vct.indexOf('image/') === 0) return true;
+        if (_vct.indexOf('json') < 0) return false;
+        try {
+            var _head = await r.clone().arrayBuffer();
+            var _u8 = new Uint8Array(_head);
+            return _head.byteLength > 0 && _u8[0] === 123;
+        } catch(e) { return true; }
+    }
     async function fetchFeishuImage(fileToken) {
         if (!fileToken) return null;
         try {
@@ -9215,14 +9230,16 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
             };
             if (token) headers['x-target-auth'] = 'Bearer ' + token;
             var resp = null;
-            try { resp = await fetchViaProxy(headers, null, 30000); } catch(e) { console.warn('[飞书图片] 代理全线路失败: ' + e.message); }
+            try {
+                resp = await fetchViaProxy(headers, null, 30000, _qbImgRespValid);
+            } catch(e) { console.warn('[飞书图片] 代理全线路失败: ' + e.message); }
             if (!resp || !resp.ok) {
                 console.warn('[飞书图片] 代理返回' + (resp ? resp.status : '异常') + '，尝试直连...');
                 if (token) {
                     var _dr = await fetch('https://open.feishu.cn/open-apis/drive/v1/medias/' + fileToken + '/download', {
                         headers: { 'Authorization': 'Bearer ' + token }
                     });
-                    if (_dr.ok) { var _db = await _dr.arrayBuffer(); if (_db && _db.byteLength > 0) return URL.createObjectURL(new Blob([_db], { type: 'image/png' })); }
+                    if (_dr.ok) { var _db = await _dr.arrayBuffer(); if (_db && _db.byteLength > 0) { var _dt = 'image/png'; try { var _dct = _dr.headers.get('content-type') || ''; if (_dct.indexOf('image/') === 0) _dt = _dct; } catch(e) {} return URL.createObjectURL(new Blob([_db], { type: _dt })); } }
                 }
                 throw new Error('状态:' + (resp ? resp.status : '全线路失败') + '（直连也失败）');
             }
@@ -9248,7 +9265,9 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
                 } catch(e) {}
                 return null;
             }
-            return URL.createObjectURL(new Blob([buf], { type: 'image/png' }));
+            var imgType = 'image/png';
+            try { var _ct = resp.headers.get('content-type') || ''; if (_ct.indexOf('image/') === 0) imgType = _ct; } catch(e) {}
+            return URL.createObjectURL(new Blob([buf], { type: imgType }));
         } catch(e) { console.log('图片下载失败:', fileToken, e.message); }
         return null;
     }
@@ -9257,8 +9276,9 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
     var _pendingPhotoTokens = [];
     var _autoLoadTimer = null;
     // 缩略图生成（200px，JPEG 60%质量，约10-20KB）
-    function _generateThumbnail(imgSrc, maxSize) {
+    function _generateThumbnail(imgSrc, maxSize, quality) {
         maxSize = maxSize || 200;
+        quality = quality || 0.6;
         return new Promise(function(resolve) {
             var img = new Image();
             img.onload = function() {
@@ -9268,19 +9288,96 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
                 canvas.width = w; canvas.height = h;
                 var ctx = canvas.getContext('2d');
                 ctx.drawImage(img, 0, 0, w, h);
-                resolve(canvas.toDataURL('image/jpeg', 0.6));
+                resolve(canvas.toDataURL('image/jpeg', quality));
             };
             img.onerror = function() { resolve(null); };
             img.src = imgSrc;
         });
     }
-    // 加载飞书原图（点击缩略图时调用）
+    // ==================== 题库图片本地持久化（2026-09-05，仿培训案例 IndexedDB 模式） ====================
+    // 思路：飞书图下载成功后完整图压缩存 IndexedDB qbimg_<token>（培训案例 ci_/ki_ 同款），
+    // 之后显示走本地不再依赖飞书实时下载；未下载的由后台预热队列慢速补全本地化。
+    var _photoInflight = {}; // 同一 token 单飞，避免自动加载与预热重复下载
+    var _qbWarmupList = []; var _qbWarmupFail = {}; var _qbWarmupRunning = false;
+
+    function _qbImgKey(token) { return 'qbimg_' + token; }
+    function _qbImgPut(token, dataUrl) {
+        var key = _qbImgKey(token);
+        window._imageCache[key] = dataUrl;
+        if (window._imageDB) _idbPut_inline(window._imageDB, key, dataUrl);
+    }
+    function _qbImgGetAsync(token) {
+        var key = _qbImgKey(token);
+        if (window._imageCache[key]) return Promise.resolve(window._imageCache[key]);
+        if (!window._imageDB) return Promise.resolve(null);
+        return new Promise(function(resolve) {
+            try {
+                var tx = window._imageDB.transaction('imgs', 'readonly');
+                var req = tx.objectStore('imgs').get(key);
+                req.onsuccess = function() { var v = req.result; if (v) window._imageCache[key] = v; resolve(v || null); };
+                req.onerror = function() { resolve(null); };
+            } catch(e) { resolve(null); }
+        });
+    }
+    // 下载 + 持久化：缩略图 thumb_ + 完整图压缩版 qbimg_（900px JPEG 80%，约60-150KB），返回可显示图
+    async function _qbFetchImagePersist(token) {
+        if (_photoCache[token]) return _photoCache[token];
+        if (_photoInflight[token]) return _photoInflight[token];
+        var p = (async function() {
+            var img = await fetchFeishuImage(token);
+            if (!img || (img.indexOf('data:image') !== 0 && img.indexOf('blob:') !== 0)) return null;
+            _photoCache[token] = img;
+            try {
+                var thumb = await _generateThumbnail(img, 200, 0.6);
+                if (thumb) { var tKey = 'thumb_' + token; window._imageCache[tKey] = thumb; if (window._imageDB) _idbPut_inline(window._imageDB, tKey, thumb); }
+                var full = await _generateThumbnail(img, 900, 0.8);
+                if (full) _qbImgPut(token, full);
+            } catch(e) {}
+            return img;
+        })();
+        _photoInflight[token] = p;
+        p.then(function(){ delete _photoInflight[token]; }, function(){ delete _photoInflight[token]; });
+        return p;
+    }
+    // 预热队列：静默逐个下载本地化（1.5s/张慢速，避免飞书限流），失败最多重试3次
+    function _qbWarmupAdd(token) {
+        if (!token || typeof token !== 'string' || token.length < 5) return;
+        if (_qbWarmupList.indexOf(token) >= 0) return;
+        if (_photoCache[token] || (window._imageCache && window._imageCache[_qbImgKey(token)])) return;
+        _qbWarmupList.push(token);
+        _qbWarmupKick();
+    }
+    function _qbWarmupKick() {
+        if (_qbWarmupRunning) return;
+        _qbWarmupRunning = true;
+        (async function loop() {
+            while (_qbWarmupList.length > 0) {
+                var token = _qbWarmupList.shift();
+                if (_photoCache[token] || (window._imageCache && window._imageCache[_qbImgKey(token)])) continue;
+                var img = await _qbFetchImagePersist(token);
+                if (img) {
+                    document.querySelectorAll('[data-ftoken="' + token + '"]').forEach(function(el) {
+                        if (el.className && String(el.className).indexOf('photo-loadable') >= 0) {
+                            el.outerHTML = '<img src="' + img + '" style="max-width:150px;max-height:150px;border-radius:8px;border:1px solid #e2e8f0;object-fit:cover;cursor:pointer;margin:2px;" onclick="event.stopPropagation();showImageViewer(this.src)">';
+                        }
+                    });
+                    console.log('📦 题库图片已本地化: ' + token);
+                } else {
+                    _qbWarmupFail[token] = (_qbWarmupFail[token] || 0) + 1;
+                    if (_qbWarmupFail[token] < 3) _qbWarmupList.push(token);
+                }
+                await new Promise(function(r) { setTimeout(r, 1500); });
+            }
+            _qbWarmupRunning = false;
+        })();
+    }
+    // 加载原图（点击缩略图时调用）：本地完整图优先（培训案例模式）→ 无则下载并持久化
     window._loadFullPhoto = async function(thumbEl, token) {
         thumbEl.style.opacity = '0.5'; thumbEl.style.cursor = 'wait';
         try {
-            var full = await fetchFeishuImage(token);
+            var full = await _qbImgGetAsync(token);
+            if (!full) full = await _qbFetchImagePersist(token);
             if (full && (full.indexOf('data:image') === 0 || full.indexOf('blob:') === 0)) {
-                _photoCache[token] = full;
                 showImageViewer(full);
             } else {
                 alert('原图加载失败，请稍后重试');
@@ -9311,7 +9408,7 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
         if (_autoLoadTimer) clearTimeout(_autoLoadTimer);
         _autoLoadTimer = setTimeout(_autoLoadPhotos, 200);
     }
-    // 渲染照片标签：缩略图优先（IndexedDB持久化）→ 飞书 token 自动加载
+    // 渲染照片标签：本地完整图（IndexedDB qbimg_，培训案例模式）→ 会话缓存 → 缩略图 → 飞书下载
     function photoTag(p, maxW, maxH) {
         maxW = maxW || 150; maxH = maxH || 150;
         if (typeof p === 'object' && p.t) {
@@ -9320,13 +9417,28 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
             if (_photoCache[token]) {
                 return '<img src="' + _photoCache[token] + '" style="max-width:' + maxW + 'px;max-height:' + maxH + 'px;border-radius:8px;border:1px solid #e2e8f0;object-fit:cover;cursor:pointer;margin:2px;" onclick="event.stopPropagation();showImageViewer(this.src)">';
             }
-            // 2. IndexedDB 持久化缩略图（跨会话秒开）
+            // 2. IndexedDB 完整图（本地持久化，零网络，点击即看）
+            var qbKey = _qbImgKey(token);
+            if (window._imageCache && window._imageCache[qbKey]) {
+                return '<img src="' + window._imageCache[qbKey] + '" style="max-width:' + maxW + 'px;max-height:' + maxH + 'px;border-radius:8px;border:1px solid #e2e8f0;object-fit:cover;cursor:pointer;margin:2px;" onclick="event.stopPropagation();showImageViewer(this.src)">';
+            }
+            // 3. IndexedDB 持久化缩略图（跨会话秒开）
             var thumbKey = 'thumb_' + token;
             if (window._imageCache && window._imageCache[thumbKey]) {
                 return '<img src="' + window._imageCache[thumbKey] + '" style="max-width:' + maxW + 'px;max-height:' + maxH + 'px;border-radius:8px;border:1px solid #e2e8f0;object-fit:cover;cursor:pointer;margin:2px;" title="点击查看原图" onclick="event.stopPropagation();window._loadFullPhoto(this,\'' + token + '\')">';
             }
-            // 3. 无缓存：占位符 + 后台自动加载
+            // 4. 无缓存：占位符 + 后台自动加载 + 预热队列本地化；异步查 IndexedDB 完整图（本地有则立即换上）
             _scheduleAutoLoad(token);
+            _qbWarmupAdd(token);
+            _qbImgGetAsync(token).then(function(v) {
+                if (!v) return;
+                window._imageCache[qbKey] = v;
+                document.querySelectorAll('[data-ftoken="' + token + '"]').forEach(function(el) {
+                    if (el.className && String(el.className).indexOf('photo-loadable') >= 0) {
+                        el.outerHTML = '<img src="' + v + '" style="max-width:' + maxW + 'px;max-height:' + maxH + 'px;border-radius:8px;border:1px solid #e2e8f0;object-fit:cover;cursor:pointer;margin:2px;" onclick="event.stopPropagation();showImageViewer(this.src)">';
+                    }
+                });
+            });
             return '<div class="photo-loadable" data-ftoken="' + token + '" style="width:' + Math.min(maxW, 100) + 'px;height:' + Math.min(maxH, 80) + 'px;background:#f1f5f9;border-radius:8px;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;border:1px dashed #cbd5e1;margin:2px;flex-shrink:0;" onclick="event.stopPropagation();loadPhotoToken(this,\'' + token + '\')"><span style="font-size:1.2rem;">📷</span></div>';
         }
         if (typeof p === 'string' && (p.indexOf('ci_') === 0 || p.indexOf('ki_') === 0)) {
@@ -9337,17 +9449,8 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
     async function loadPhotoToken(el, token) {
         el.innerHTML = '<span style="font-size:0.8rem;">⏳</span>'; el.style.cursor = 'wait'; el.dataset.loading = '1'; if(el.onclick)el.onclick=function(e){e.stopPropagation();loadPhotoToken(el,token);};
         try {
-            var img = await fetchFeishuImage(token);
+            var img = await _qbFetchImagePersist(token);
             if (img && (img.indexOf('data:image') === 0 || img.indexOf('blob:') === 0)) {
-                _photoCache[token] = img;
-                // 生成缩略图持久化到 IndexedDB（下次打开秒显示）
-                _generateThumbnail(img, 200).then(function(thumb) {
-                    if (thumb) {
-                        var thumbKey = 'thumb_' + token;
-                        window._imageCache[thumbKey] = thumb;
-                        if (window._imageDB) { try { var tx = window._imageDB.transaction('imgs','readwrite'); tx.objectStore('imgs').put(thumb, thumbKey); } catch(e) {} }
-                    }
-                });
                 el.outerHTML = '<img src="' + img + '" style="max-width:150px;max-height:150px;border-radius:8px;border:1px solid #e2e8f0;object-fit:cover;cursor:pointer;margin:2px;" onclick="event.stopPropagation();showImageViewer(this.src)">';
             } else {
                 // 第一次失败：2秒后自动重试
@@ -9395,7 +9498,7 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
             };
             if (token) headers['x-target-auth'] = 'Bearer ' + token;
             var resp = null;
-            try { resp = await fetchViaProxy(headers, null, 30000); } catch(e) { console.warn('[飞书图片] 代理全线路失败: ' + e.message); }
+            try { resp = await fetchViaProxy(headers, null, 30000, _qbImgRespValid); } catch(e) { console.warn('[飞书图片] 代理全线路失败: ' + e.message); }
             if (!resp || !resp.ok) {
                 console.warn('[飞书图片] 代理返回' + (resp ? resp.status : '异常') + '，尝试直连...');
                 if (token) {
@@ -11510,6 +11613,83 @@ URL.revokeObjectURL(url);
     document.addEventListener('DOMContentLoaded', loadData);
     // ==================== 题库模块 ====================
     const QB_STORAGE_KEY = 'questionBankData';
+    // 8 类固定品类（2026-09-05 改版：7 源品类 + 手动录入题目；key = 品类中文名，source=true 为飞书源区）
+    const QB_DEFAULT_CATEGORIES = {
+        '手机': { name: '手机', key: 'phone', order: 1, source: true },
+        '平板': { name: '平板', key: 'tablet', order: 2, source: true },
+        '笔记本': { name: '笔记本', key: 'laptop', order: 3, source: true },
+        '手表': { name: '手表', key: 'watch', order: 4, source: true },
+        '耳机': { name: '耳机', key: 'earphone', order: 5, source: true },
+        '相机&镜头': { name: '相机&镜头', key: 'camera', order: 6, source: true },
+        '游戏机&游戏卡带': { name: '游戏机&游戏卡带', key: 'console', order: 7, source: true },
+        '手动录入题目': { name: '手动录入题目', key: 'manual', order: 8, source: false }
+    };
+    // 失误品类名 → 品类 key（出卷品类边界用）
+    const QB_PRODUCT_TO_KEY = {
+        '手机': 'phone', '手机/iphone': 'phone', 'iphone': 'phone', '苹果手机': 'phone', '手机类': 'phone',
+        '平板': 'tablet', 'ipad': 'tablet', '平板电脑': 'tablet', '平板类': 'tablet',
+        '笔记本': 'laptop', '笔记本类': 'laptop', '笔记本/台式': 'laptop',
+        '手表': 'watch', '手表类': 'watch',
+        '耳机': 'earphone', '耳机/耳麦': 'earphone', '耳麦': 'earphone', '耳机类': 'earphone',
+        '相机&镜头': 'camera', '相机': 'camera', '镜头': 'camera', '相机机身&镜头': 'camera',
+        '游戏机&游戏卡带': 'console', '游戏机': 'console', '游戏卡带': 'console'
+    };
+    // 品类中文名 → key
+    function qbCatKey(catName) {
+        var c = QB_DEFAULT_CATEGORIES[catName];
+        return c ? c.key : (QB_PRODUCT_TO_KEY[catName] || null);
+    }
+    // 失误品类名归一化为品类 key（未知返回 null）
+    function qbProductKey(product) {
+        if (!product) return null;
+        var p = String(product).trim();
+        if (QB_PRODUCT_TO_KEY[p]) return QB_PRODUCT_TO_KEY[p];
+        var pl = p.toLowerCase();
+        for (var k in QB_PRODUCT_TO_KEY) {
+            if (pl.indexOf(k.toLowerCase()) >= 0 || k.toLowerCase().indexOf(pl) >= 0) return QB_PRODUCT_TO_KEY[k];
+        }
+        return null;
+    }
+    // 品类 key → 中文名
+    function qbKeyName(key) {
+        for (var k in QB_DEFAULT_CATEGORIES) { if (QB_DEFAULT_CATEGORIES[k].key === key) return k; }
+        return key || '';
+    }
+    // 选项文字提取（兼容字符串数组与对象数组 {key,text,images}）
+    function optText(o) {
+        if (o === undefined || o === null) return '';
+        if (typeof o === 'string') return o;
+        if (typeof o === 'object' && o.text !== undefined) return String(o.text);
+        return '';
+    }
+    // 选项图片 tokens（对象数组才有；字符串数组返回空）
+    function optImages(o) {
+        if (o && typeof o === 'object' && Array.isArray(o.images)) return o.images;
+        return [];
+    }
+    // 题目全文（题干+答案+解析+选项文字），用于主题词匹配（2026-09-05：不止题干）
+    function qbFullText(q) {
+        var parts = [q.question || '', q.answer || '', q.explanation || ''];
+        (q.options || []).forEach(function(o) { parts.push(optText(o)); });
+        return parts.join(' ');
+    }
+    // 确保 8 类结构存在（旧数据/空数据预置）
+    function ensureQBCategories(data) {
+        data.categories = data.categories || {};
+        var orderMax = 100;
+        for (var k in QB_DEFAULT_CATEGORIES) {
+            if (!data.categories[k]) {
+                var d = QB_DEFAULT_CATEGORIES[k];
+                data.categories[k] = { name: d.name, key: d.key, order: d.order, source: d.source, createdAt: new Date().toISOString() };
+            } else {
+                if (!data.categories[k].order) data.categories[k].order = QB_DEFAULT_CATEGORIES[k].order;
+                if (data.categories[k].source === undefined) data.categories[k].source = QB_DEFAULT_CATEGORIES[k].source;
+                if (!data.categories[k].key) data.categories[k].key = QB_DEFAULT_CATEGORIES[k].key;
+                if (data.categories[k].order > orderMax) orderMax = data.categories[k].order;
+            }
+        }
+        return data;
+    }
     // 按答案推断题型：答案只有1个选项=单选，多个选项=多选；判断；其余视为问答题
     function inferQuestionType(typeColVal, answerStr) {
         typeColVal = String(typeColVal || '').trim();
@@ -11550,7 +11730,7 @@ URL.revokeObjectURL(url);
     function getQuestionBank() {
         try {
             var local = localStorage.getItem(QB_STORAGE_KEY);
-            if (local) return migrateQBTypes(JSON.parse(local));
+            if (local) return migrateQBTypes(ensureQBCategories(JSON.parse(local)));
             // Supabase 兜底：本地没有则尝试从云端加载
             var key = QB_STORAGE_KEY;
             var xhr = new XMLHttpRequest();
@@ -11563,15 +11743,43 @@ URL.revokeObjectURL(url);
                 if (rows && rows.length > 0 && rows[0].value) {
                     var data = JSON.parse(rows[0].value);
                     localStorage.setItem(QB_STORAGE_KEY, rows[0].value);
-                    return migrateQBTypes(data);
+                    return migrateQBTypes(ensureQBCategories(data));
                 }
             }
-            return {categories:{},questions:[]};
-        } catch(e) { return {categories:{},questions:[]}; }
+            return ensureQBCategories({categories:{},questions:[]});
+        } catch(e) { return ensureQBCategories({categories:{},questions:[]}); }
     }
-    function saveQuestionBank(data) {
-        localStorage.setItem(QB_STORAGE_KEY, JSON.stringify(data));
-        // 同步到 Supabase
+    // 从云端/KV 拉取题库（fetch 包装：Supabase 失败自动转 KV 兜底读）；手动同步按钮 + 本地空题库自愈共用
+    function _pullRemoteQB(callback) {
+        fetch(SUPABASE_URL + '/rest/v1/app_data?select=value&key=eq.' + encodeURIComponent(QB_STORAGE_KEY) + '&limit=1', {
+            headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY }
+        }).then(function(r) { return r.json(); }).then(function(rows) {
+            var data = null;
+            if (Array.isArray(rows) && rows.length > 0 && rows[0].value) {
+                try { data = JSON.parse(rows[0].value); } catch(e) { data = null; }
+            }
+            if (data && (data.questions || []).length > 0) {
+                localStorage.setItem(QB_STORAGE_KEY, JSON.stringify(data));
+                if (callback) callback(data);
+            } else if (callback) callback(null);
+        }).catch(function() { if (callback) callback(null); });
+    }
+    // 本地题库为空时后台自愈拉取（打开题库模块/页面加载时触发，防重入）
+    function _qbSelfHeal() {
+        if (window._qbPullBusy) return;
+        var qb = getQuestionBank();
+        if ((qb.questions || []).length > 0) return;
+        window._qbPullBusy = true;
+        _pullRemoteQB(function(data) {
+            window._qbPullBusy = false;
+            if (data) {
+                showToast('✅ 已从云端同步题库 ' + data.questions.length + ' 题', 'success');
+                if (currentNav === 'questionBank') renderQuestionBank();
+            }
+        });
+    }
+    // 题库写云端（POST app_data；402 期间 fetch 包装自动镜像 KV）
+    function _qbPostSave(data) {
         try {
             var val = JSON.stringify(data);
             fetch(SUPABASE_URL + '/rest/v1/app_data', {
@@ -11580,6 +11788,26 @@ URL.revokeObjectURL(url);
                 body: JSON.stringify({ key: QB_STORAGE_KEY, value: val, updated_at: new Date().toISOString() })
             }).catch(function(){});
         } catch(e) {}
+    }
+    function saveQuestionBank(data) {
+        ensureQBCategories(data);
+        localStorage.setItem(QB_STORAGE_KEY, JSON.stringify(data));
+        // 2026-09-05 防覆盖守卫：本地源区为空时（旧空缓存/尚未自愈），先拉远端合并——远端源区 + 本地手动区
+        // 防止 KV 兜底期的 1302 题源数据被本地空缓存覆盖（12:22 事件）
+        var localSrc = (data.questions || []).filter(function(q) { return q.categoryId !== 'manual' && q.category !== '手动录入题目'; });
+        if (localSrc.length > 0) { _qbPostSave(data); return; }
+        _pullRemoteQB(function(remote) {
+            if (remote && (remote.questions || []).length > 0) {
+                var remoteSrc = (remote.questions || []).filter(function(q) { return q.categoryId !== 'manual' && q.category !== '手动录入题目'; });
+                var localManual = (data.questions || []).filter(function(q) { return q.categoryId === 'manual' || q.category === '手动录入题目'; });
+                var merged = { categories: remote.categories || data.categories, questions: remoteSrc.concat(localManual) };
+                ensureQBCategories(merged);
+                localStorage.setItem(QB_STORAGE_KEY, JSON.stringify(merged));
+                _qbPostSave(merged);
+            } else {
+                _qbPostSave(data);
+            }
+        });
     }
 
     let currentQBCategory = 'all';
@@ -11610,17 +11838,19 @@ URL.revokeObjectURL(url);
         } else {
             catCards = categories.map(cat => {
                 const count = allQuestions.filter(q => q.category === cat).length;
-                const iconMap = { '判错责任方':'⚖️','未达标准':'📏','拍照取证不规范':'📷','备注失误':'📝','跨等级灰度':'🎚️','组合项未同步判责':'🔗','SKU':'🏷️','功能问题':'🔧','键盘轻微油光':'⌨️','系统信息':'💻','标准差异':'📐','拆修浸液':'🔨','明显失误':'⚠️' };
+                // 2026-09-05 改版：8 品类固定图标；source=true 源区只读（飞书同步管理），手动区全功能
+                const iconMap = { '手机':'📱','平板':'🖥️','笔记本':'💻','手表':'⌚','耳机':'🎧','相机&镜头':'📷','游戏机&游戏卡带':'🎮','手动录入题目':'✍️' };
                 const icon = iconMap[cat] || '📋';
+                const isSource = qb.categories[cat] && qb.categories[cat].source === true;
                 const safeCat = escapeHtml(cat).replace(/'/g, "\\'");
                 return `<div class="qb-cat-card">
                     <div class="qb-cat-icon">${icon}</div>
-                    <div class="qb-cat-name">${escapeHtml(cat)}</div>
+                    <div class="qb-cat-name">${escapeHtml(cat)}${isSource ? ' <span style="font-size:0.6rem;opacity:0.75;">(同步)</span>' : ''}</div>
                     <div class="qb-cat-count">${count} 题</div>
                     <div class="qb-cat-actions">
                         <button class="qb-card-btn qb-card-view" onclick="event.stopPropagation();openQBDetailModal('${safeCat}', getAllQBQuestions().filter(q=>q.category==='${safeCat}'))">👁️ 查看</button>
-                        <button class="qb-card-btn qb-card-add admin-only" onclick="event.stopPropagation();openAddQModal('${safeCat}')">✍️ 录题</button>
-                        <button class="qb-card-btn qb-card-clear admin-only" onclick="event.stopPropagation();clearCatQuestions('${safeCat}')">🗑️ 清空</button>
+                        ${isSource ? '' : `<button class="qb-card-btn qb-card-add admin-only" onclick="event.stopPropagation();openAddQModal('${safeCat}')">✍️ 录题</button>
+                        <button class="qb-card-btn qb-card-clear admin-only" onclick="event.stopPropagation();clearCatQuestions('${safeCat}')">🗑️ 清空</button>`}
                     </div>
                 </div>`;
             }).join('');
@@ -11680,11 +11910,10 @@ URL.revokeObjectURL(url);
             <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;margin-bottom:16px;">
                 <h2 style="font-size:1.2rem;font-weight:700;color:#2d5a3f;margin:0;">📝 题库管理</h2>
                 <div class="qb-toolbar" style="margin-bottom:0;">
-                    <button class="qb-btn-add admin-only" id="openAddQBBtn">➕ 添加题目</button>
-                    <button class="qb-btn-upload admin-only" id="uploadQBBtn">📤 上传题库</button>
-                    <button class="qb-btn-feishu admin-only" id="importQBFeishuBtn" style="background:#e67e22;color:white;border-color:#d4741a;padding:6px 14px;border-radius:20px;cursor:pointer;font-size:0.8rem;font-weight:600;">📥 从飞书导入</button>
+                    <button class="qb-btn-add admin-only" id="syncQBBtn">🔄 同步题库</button>
+                    <button class="qb-btn-add admin-only" id="openAddQBBtn">➕ 添加题目（手动区）</button>
                     <button class="qb-btn-download admin-only" id="downloadQBBtn">📥 下载题库</button>
-                    <button class="qb-btn-download admin-only" id="clearQBBtn" style="color:#c0392b;border-color:#e8c7c7 !important;">🗑️ 清空题库</button>
+                    <button class="qb-btn-download admin-only" id="clearQBBtn" style="color:#c0392b;border-color:#e8c7c7 !important;">🗑️ 清空手动题</button>
                     <input type="file" id="qbFileInput" accept=".xlsx,.xls,.csv,.txt,.json" style="display:none">
                 </div>
             </div>
@@ -11702,8 +11931,8 @@ URL.revokeObjectURL(url);
                     <div class="qb-cat-count">${uniqueQBQuestions.length} 题</div>
                     <div class="qb-cat-actions">
                         <button class="qb-card-btn qb-card-view-all" onclick="event.stopPropagation();openQBDetailModal('全部题目', window._uniqueQBQuestions||[])">👁️ 查看</button>
-                        <button class="qb-card-btn qb-card-add-all admin-only" onclick="event.stopPropagation();openAddQModal()">✍️ 录题</button>
-                        <button class="qb-card-btn qb-card-clear-all admin-only" onclick="event.stopPropagation();clearQuestionBank()">🗑️ 清空</button>
+                        <button class="qb-card-btn qb-card-add-all admin-only" onclick="event.stopPropagation();openAddQModal('手动录入题目')">✍️ 录题</button>
+                        <button class="qb-card-btn qb-card-clear-all admin-only" onclick="event.stopPropagation();clearQuestionBank()">🗑️ 清空手动题</button>
                     </div>
                 </div>
                 ${catCards}
@@ -11714,13 +11943,25 @@ URL.revokeObjectURL(url);
         setTimeout(() => {
             var qbSearchInput = document.getElementById('qbGlobalSearch');
             if(qbSearchInput){qbSearchInput.addEventListener('input',function(){handleQBGlobalSearch(this.value);});}
-            document.getElementById('openAddQBBtn').onclick = openAddQModal;
-            document.getElementById('uploadQBBtn').onclick = () => document.getElementById('qbFileInput').click();
-            document.getElementById('qbFileInput').onchange = handleQBFileUpload;
+            document.getElementById('syncQBBtn').onclick = function() {
+                var btn = this;
+                btn.textContent = '⏳ 同步中…'; btn.disabled = true;
+                _pullRemoteQB(function(data) {
+                    btn.textContent = '🔄 同步题库'; btn.disabled = false;
+                    if (data) {
+                        showToast('✅ 同步成功 ' + data.questions.length + ' 题', 'success');
+                        renderQuestionBank();
+                    } else {
+                        showAlert('云端与 KV 都没有题库数据，请先在本地导入或等待周一自动同步', '⚠️');
+                    }
+                });
+            };
+            document.getElementById('openAddQBBtn').onclick = () => openAddQModal('手动录入题目');
             document.getElementById('downloadQBBtn').onclick = downloadQuestionBank;
             document.getElementById('clearQBBtn').onclick = clearQuestionBank;
-            document.getElementById('importQBFeishuBtn').onclick = importQBFromFeishu;
         }, 50);
+        // 本地题库为空时自动从云端/KV 自愈拉取
+        _qbSelfHeal();
     }
 
     // 去重辅助：对比新题目与已有题目，返回 { unique, duplicates }
@@ -11804,17 +12045,19 @@ URL.revokeObjectURL(url);
 
     async function clearQuestionBank() {
         const qb = getQuestionBank();
-        const total = (qb.questions || []).length;
-        if (total === 0) { alert('题库已为空，无需清空'); return; }
-        if (!await showConfirm('⚠️ 确定要清空全部题库吗？\n\n当前共有 ' + total + ' 道题目、' + Object.keys(qb.categories).length + ' 个分类。\n\n此操作不可撤销！', '🗑️', true)) return;
-        if (!await showConfirm('⚠️ 再次确认：所有题目和分类数据将被永久删除！', '🗑️', true)) return;
+        // 2026-09-05 改版：只清空「手动录入题目」区，7 个源品类由飞书同步管理、界面不可清
+        const manualQ = (qb.questions || []).filter(q => q.category === '手动录入题目');
+        const total = manualQ.length;
+        if (total === 0) { alert('手动录入题目区已为空，无需清空'); return; }
+        if (!await showConfirm('⚠️ 确定要清空「手动录入题目」吗？\n\n当前共有 ' + total + ' 道手动题。\n\n（7 个源品类题目由飞书同步管理，不受影响）此操作不可撤销！', '🗑️', true)) return;
         const pwd = await showPrompt('🔐 请输入管理密码以确认清空操作：', 'password');
         if (pwd === null) return;
         if (pwd !== ADMIN_PASSWORD) { alert('❌ 密码错误，操作已取消'); return; }
-        // 执行清空
-        localStorage.setItem(QB_STORAGE_KEY, JSON.stringify({ categories: {}, questions: [] }));
-        logAdminAction('题库', '清空题库', total + '题');
-        alert('✅ 题库已清空（共删除 ' + total + ' 道题目）');
+        // 执行清空：仅删手动区题目
+        qb.questions = (qb.questions || []).filter(q => q.category !== '手动录入题目');
+        saveQuestionBank(qb);
+        logAdminAction('题库', '清空手动录入题目', total + '题');
+        alert('✅ 手动录入题目已清空（共删除 ' + total + ' 道题目）');
         renderQuestionBank();
     }
 
@@ -12055,6 +12298,8 @@ async function importQBFromFeishu() {
     }
 
     async function clearCatQuestions(catName) {
+        // 2026-09-05 改版：源品类只读，只有手动区可清空
+        if (qbCatKey(catName) !== 'manual') { alert('该品类由飞书同步管理，不可清空（改动请直接修改源文档）'); return; }
         const qb = getQuestionBank();
         const count = (qb.questions || []).filter(q => q.category === catName).length;
         if (count === 0) { alert('该分类下无题目'); return; }
@@ -12106,17 +12351,19 @@ async function importQBFromFeishu() {
             } else {
                 catCards = categories.map(cat => {
                     const count = allQuestions.filter(q => q.category === cat).length;
-                    const iconMap = { '判错责任方':'⚖️','未达标准':'📏','拍照取证不规范':'📷','备注失误':'📝','跨等级灰度':'🎚️','组合项未同步判责':'🔗','SKU':'🏷️','功能问题':'🔧','键盘轻微油光':'⌨️','系统信息':'💻','标准差异':'📐','拆修浸液':'🔨','明显失误':'⚠️' };
+                    const iconMap = { '手机':'📱','平板':'🖥️','笔记本':'💻','手表':'⌚','耳机':'🎧','相机&镜头':'📷','游戏机&游戏卡带':'🎮','手动录入题目':'✍️' };
                     const icon = iconMap[cat] || '📋';
+                    const isSource = qb.categories[cat] && qb.categories[cat].source === true;
                     const safeCat = escapeHtml(cat).replace(/'/g, "\\'");
                     return '<div class="qb-cat-card">' +
                         '<div class="qb-cat-icon">' + icon + '</div>' +
-                        '<div class="qb-cat-name">' + escapeHtml(cat) + '</div>' +
+                        '<div class="qb-cat-name">' + escapeHtml(cat) + (isSource ? ' <span style="font-size:0.6rem;opacity:0.75;">(同步)</span>' : '') + '</div>' +
                         '<div class="qb-cat-count">' + count + ' 题</div>' +
                         '<div class="qb-cat-actions">' +
                             '<button class="qb-card-btn qb-card-view" onclick="event.stopPropagation();openQBDetailModal(\'' + safeCat + '\', getAllQBQuestions().filter(q=>q.category===\'' + safeCat + '\'))">👁️ 查看</button>' +
+                            (isSource ? '' :
                             '<button class="qb-card-btn qb-card-add admin-only" onclick="event.stopPropagation();openAddQModal(\'' + safeCat + '\')">✍️ 录题</button>' +
-                            '<button class="qb-card-btn qb-card-clear admin-only" onclick="event.stopPropagation();clearCatQuestions(\'' + safeCat + '\')">🗑️ 清空</button>' +
+                            '<button class="qb-card-btn qb-card-clear admin-only" onclick="event.stopPropagation();clearCatQuestions(\'' + safeCat + '\')">🗑️ 清空</button>') +
                         '</div></div>';
                 }).join('');
             }
@@ -12137,7 +12384,7 @@ async function importQBFromFeishu() {
             (q.answer && q.answer.toLowerCase().includes(kw)) ||
             (q.category && q.category.toLowerCase().includes(kw)) ||
             (q.explanation && q.explanation.toLowerCase().includes(kw)) ||
-            (q.options && q.options.some(o => o.toLowerCase().includes(kw)))
+            (q.options && q.options.some(o => optText(o).toLowerCase().includes(kw)))
         );
 
         grid.style.display = 'none';
@@ -12187,7 +12434,8 @@ async function importQBFromFeishu() {
         ov.innerHTML = '<div class="modal-container" style="max-width:650px;"><div class="modal-header"><span>📋 题目详情</span><button class="modal-close-btn" id="qbsClose">✕</button></div><div class="modal-body" style="max-height:70vh;overflow-y:auto;padding:20px;">' +
             '<div style="margin-bottom:12px;"><span class="qb-tag '+(t.type==='choice'?'qb-tag-choice':(t.type==='multi'?'qb-tag-choice':(t.type==='judge'?'qb-tag-judge':'qb-tag-qa')))+'">'+tl+'</span><span class="qb-tag category" style="background:#f1f5f9;color:#5e6f8d;margin-left:6px;">'+escapeHtml(t.category||'未分类')+'</span></div>' +
             '<div style="font-weight:700;font-size:1rem;color:#1f3a6b;margin-bottom:12px;line-height:1.6;">'+escapeHtml(t.question)+'</div>' +
-            (t.options && t.options.length>0 ? '<div style="margin-bottom:10px;">' + t.options.map(function(o,i){ return '<div style="padding:6px 0;font-size:0.88rem;">'+String.fromCharCode(65+i)+'. '+escapeHtml(o)+'</div>'; }).join('') + '</div>' : '') +
+            ((t.images && t.images.length) ? '<div style="margin-bottom:10px;text-align:center;">' + t.images.map(function(tk){ return photoTag({t:tk},300,250); }).join('') + '</div>' : '') +
+            (t.options && t.options.length>0 ? '<div style="margin-bottom:10px;">' + t.options.map(function(o,i){ var l=(o&&typeof o==='object'&&o.key)?o.key:String.fromCharCode(65+i); var ims=optImages(o).map(function(tk){return photoTag({t:tk},60,60);}).join(''); return '<div style="padding:6px 0;font-size:0.88rem;">'+l+'. '+escapeHtml(optText(o))+ims+'</div>'; }).join('') + '</div>' : '') +
             '<div style="background:#f0fdf4;border-radius:12px;padding:14px;border:1px solid #bbf7d0;margin-bottom:10px;"><div style="font-weight:600;color:#166534;margin-bottom:4px;">📌 答案</div><div style="font-size:0.88rem;color:#1a5c38;">'+escapeHtml(t.answer||'暂无')+'</div></div>' +
             (t.explanation ? '<div style="background:#f8fafc;border-radius:12px;padding:14px;border:1px solid #eef2f6;margin-bottom:10px;"><div style="font-weight:600;color:#1f3a6b;margin-bottom:4px;">💡 解析</div><div style="font-size:0.85rem;color:#5e6f8d;line-height:1.7;white-space:pre-wrap;">'+t.explanation+'</div></div>' : '') +
             (t.screenshot ? '<div style="margin-top:10px;text-align:center;">'+photoTag(t.screenshot, 300, 250)+'</div>' : '') +
@@ -12226,6 +12474,22 @@ async function importQBFromFeishu() {
                 var ef = q.explanation||'';
                 var ap = af.length>50?af.substring(0,50)+'...':af;
                 var qi = (q.id||'').replace(/'/g,"\\'");
+                var isManual = q.category && qbCatKey(q.category) === 'manual';
+                // 选项渲染：兼容字符串数组与对象数组（源题 {key,text,images}）
+                var optsHtml = '';
+                if (q.options && q.options.length > 0) {
+                    optsHtml = '<div style="font-size:0.72rem;color:#64748b;margin-bottom:2px;">选项：' + q.options.map(function(o,i){
+                        var l = (o && typeof o === 'object' && o.key) ? o.key : String.fromCharCode(65+i);
+                        var txt = optText(o);
+                        var ims = optImages(o);
+                        var im = ims.map(function(tk){ return photoTag({t:tk},60,60); }).join('');
+                        return '<span>' + l + '. ' + escapeHtml(txt) + im + '</span>';
+                    }).join(' ｜ ') + '</div>';
+                }
+                // 题目图（源题 fileToken 拉飞书原图，手动题截图直接显示）
+                var qImgHtml = '';
+                var qImgs = (q.images && q.images.length) ? q.images.map(function(tk){ return photoTag({t:tk},80,80); }).join('') : '';
+                if (qImgs) qImgHtml = '<div style="margin-bottom:4px;">' + qImgs + '</div>';
                 return `<div class="qb-modal-question" id="qcard-${qi}">
                     <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;">
                         <div style="flex:1;min-width:0;cursor:pointer;" onclick="toggleQDetail('${qi}')">
@@ -12236,19 +12500,22 @@ async function importQBFromFeishu() {
                                 <span style="font-size:0.65rem;color:#cbd5e1;margin-left:4px;">▸ 点击展开详情</span>
                             </div>
                             <div style="font-weight:600;font-size:0.85rem;color:#1e2a3a;margin-bottom:4px;">${escapeHtml(q.question)}</div>
-                            ${q.options&&q.options.length>0?`<div style="font-size:0.72rem;color:#64748b;margin-bottom:2px;">选项：${q.options.map(function(o,i){var l=String.fromCharCode(65+i);var im=(q.optionImages&&q.optionImages[i])?photoTag(q.optionImages[i],60,60):'';return'<span>'+l+'. '+escapeHtml(o)+im+'</span>';}).join(' ｜ ')}</div>`:''}
+                            ${qImgHtml}
+                            ${optsHtml}
                             <div style="font-size:0.72rem;color:#2a5298;">📌 答案：${escapeHtml(ap)}</div>
                         </div>
                         <div style="display:flex;gap:4px;flex-shrink:0;">
-                            <button class="action-btn admin-only" style="font-size:0.7rem;padding:4px 10px;background:#eef2ff;color:#2a5298;" onclick="event.stopPropagation();openEditQModal('${qi}')" title="编辑">✏️</button>
-                            <button class="action-btn danger admin-only" style="font-size:0.7rem;padding:4px 10px;" onclick="event.stopPropagation();deleteQBFromDetail('${qi}')" title="删除">🗑️</button>
+                            ${isManual?`<button class="action-btn admin-only" style="font-size:0.7rem;padding:4px 10px;background:#eef2ff;color:#2a5298;" onclick="event.stopPropagation();openEditQModal('${qi}')" title="编辑">✏️</button>
+                            <button class="action-btn danger admin-only" style="font-size:0.7rem;padding:4px 10px;" onclick="event.stopPropagation();deleteQBFromDetail('${qi}')" title="删除">🗑️</button>`:''}
                         </div>
                     </div>
                     <div id="qdetail-${qi}" style="display:none;margin-top:10px;padding-top:10px;border-top:1px dashed #eef2f6;">
                         <div style="font-size:0.75rem;color:#1e2a3a;margin-bottom:6px;"><strong>📌 完整答案：</strong>${escapeHtml(af)}</div>
                         ${ef?`<div style="font-size:0.75rem;color:#5e6f8d;background:#f8fafc;padding:10px;border-radius:8px;"><strong>💡 解析：</strong>${ef}</div>`:''}
                         ${q.screenshot?`<div style="margin-top:6px;">${photoTag(q.screenshot,150,120)}</div>`:''}
-                        <div style="font-size:0.65rem;color:#94a3b8;margin-top:6px;">${q.productCategory?'🏷️ '+escapeHtml(q.productCategory)+' | ':''}分类：${escapeHtml(q.category||'未分类')} | 难度：${escapeHtml(q.difficulty||'中等')} | 创建：${(q.createdAt||'').substring(0,10)}</div>
+                        ${(q.images&&q.images.length)?`<div style="margin-top:6px;">${q.images.map(function(tk){return photoTag({t:tk},150,120);}).join('')}</div>`:''}
+                        ${(q.analysisImages&&q.analysisImages.length)?`<div style="margin-top:6px;">${q.analysisImages.map(function(tk){return photoTag({t:tk},150,120);}).join('')}</div>`:''}
+                        <div style="font-size:0.65rem;color:#94a3b8;margin-top:6px;">${q.productCategory?'🏷️ '+escapeHtml(q.productCategory)+' | ':''}分类：${escapeHtml(q.category||'未分类')} | 难度：${escapeHtml(q.difficulty||'中等')} | 创建：${(q.createdAt||'').substring(0,10)}${q.sourceId?' | 源ID：'+escapeHtml(q.sourceId):''}</div>
                     </div>
                 </div>`;
             }).join('');
@@ -12298,8 +12565,10 @@ async function importQBFromFeishu() {
     }
 
     async function deleteQBFromDetail(id) {
-        if (!await confirmDelete('该题目')) return;
         const qb = getQuestionBank();
+        const delQ = qb.questions.find(q => q.id === id);
+        if (delQ && delQ.category && qbCatKey(delQ.category) !== 'manual') { alert('该题属于源品类，由飞书同步管理，不可删除（改动请直接修改源文档）'); return; }
+        if (!await confirmDelete('该题目')) return;
         qb.questions = qb.questions.filter(q => q.id !== id);
         saveQuestionBank(qb);
         logAdminAction('题库', '删除题目', qbDetailCat || '');
@@ -12346,9 +12615,7 @@ async function importQBFromFeishu() {
             <div class="modal-header"><span>✏️ 编辑题目</span><button class="modal-close-btn">✕</button></div>
             <div class="modal-body" style="max-height:75vh;overflow-y:auto;">
                 <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:12px;">
-                    <select id="editQCategory" style="padding:8px 12px;border:1px solid #cbd5e1;border-radius:8px;font-size:0.85rem;flex:1;min-width:140px;">
-                        ${categories.map(c => '<option value="' + escapeHtml(c) + '" ' + (c === q.category ? 'selected' : '') + '>' + escapeHtml(c) + '</option>').join('')}
-                    </select>
+                    <div style="padding:8px 12px;background:#f1f5f9;border-radius:8px;font-size:0.85rem;color:#2a5298;font-weight:600;flex:1;min-width:140px;">📂 ${escapeHtml(q.category || '手动录入题目')}</div>
                     <select id="editQType" style="padding:8px 12px;border:1px solid #cbd5e1;border-radius:8px;font-size:0.85rem;">
                         <option value="choice" ${q.type==='choice'?'selected':''}>选择题</option>
                         <option value="multi" ${q.type==='multi'?'selected':''}>多选题</option>
@@ -12386,8 +12653,10 @@ async function importQBFromFeishu() {
         const qb = getQuestionBank();
         const q = qb.questions.find(x => x.id === qid);
         if (!q) { alert('题目未找到'); return; }
+        // 2026-09-05 改版：只有手动区题可编辑；分类保持不动（不可挪入源品类）
+        if (q.category && qbCatKey(q.category) !== 'manual') { alert('该题属于源品类，由飞书同步管理，不可编辑'); return; }
 
-        const category = overlay.querySelector('#editQCategory').value;
+        const category = q.category || '手动录入题目';
         const type = overlay.querySelector('#editQType').value;
         const difficulty = overlay.querySelector('#editQDifficulty').value;
         const question = overlay.querySelector('#editQQuestion').value.trim();
@@ -12397,11 +12666,6 @@ async function importQBFromFeishu() {
         if (!question) { alert('请输入题目内容'); return; }
         if (!answer) { alert('请输入答案'); return; }
         if (!category) { alert('请选择分类'); return; }
-
-        if (!qb.categories[category]) {
-            const maxOrder = Math.max(0, ...Object.values(qb.categories).map(c => c.order || 0));
-            qb.categories[category] = { name: category, createdAt: new Date().toISOString(), order: maxOrder + 1 };
-        }
 
         let options = [];
         if (type === 'choice' || type === 'multi') {
@@ -12447,7 +12711,7 @@ async function importQBFromFeishu() {
                     (x.question && x.question.toLowerCase().includes(kw)) ||
                     (x.answer && x.answer.toLowerCase().includes(kw)) ||
                     (x.explanation && x.explanation.toLowerCase().includes(kw)) ||
-                    (x.options && x.options.some(o => o.toLowerCase().includes(kw)))
+                    (x.options && x.options.some(o => optText(o).toLowerCase().includes(kw)))
                 );
             } else if (qbDetailCat) {
                 qbDetailQuestions = getQuestionBank().questions.filter(x =>
@@ -12455,7 +12719,7 @@ async function importQBFromFeishu() {
                         (x.question && x.question.toLowerCase().includes(kw)) ||
                         (x.answer && x.answer.toLowerCase().includes(kw)) ||
                         (x.explanation && x.explanation.toLowerCase().includes(kw)) ||
-                        (x.options && x.options.some(o => o.toLowerCase().includes(kw)))
+                        (x.options && x.options.some(o => optText(o).toLowerCase().includes(kw)))
                     )
                 );
             }
@@ -12490,12 +12754,7 @@ async function importQBFromFeishu() {
                     <button class="analysis-type-btn" data-addtype="file" style="font-size:0.8rem;">📎 文件上传</button>
                 </div>
                 <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:12px;">
-                    <select id="newQCategory" style="padding:8px 12px;border:1px solid #cbd5e1;border-radius:8px;font-size:0.85rem;flex:1;min-width:140px;">
-                        <option value="">选择分类</option>
-                        ${categories.map(c => '<option value="' + escapeHtml(c) + '"' + (c === preSelCat ? ' selected' : '') + '>' + escapeHtml(c) + '</option>').join('')}
-                        <option value="__new__">➕ 新建分类</option>
-                    </select>
-                    <input type="text" id="newQCategoryInput" placeholder="新分类名称" style="display:none;padding:8px 12px;border:1px solid #cbd5e1;border-radius:8px;font-size:0.85rem;flex:1;min-width:140px;">
+                    <div style="padding:8px 12px;background:#f1f5f9;border-radius:8px;font-size:0.85rem;color:#2a5298;font-weight:600;flex:1;min-width:140px;">📂 手动录入题目（独立区，不被飞书同步覆盖）</div>
                     <select id="newQType" style="padding:8px 12px;border:1px solid #cbd5e1;border-radius:8px;font-size:0.85rem;">
                         <option value="choice">选择题</option>
                         <option value="multi">多选题</option>
@@ -12549,9 +12808,6 @@ async function importQBFromFeishu() {
         overlay.querySelector('#newQType').onchange = function() {
             overlay.querySelector('#newQOptionsArea').style.display = (this.value === 'choice' || this.value === 'multi') ? 'block' : 'none';
         };
-        overlay.querySelector('#newQCategory').onchange = function() {
-            overlay.querySelector('#newQCategoryInput').style.display = this.value === '__new__' ? 'inline-block' : 'none';
-        };
         overlay.querySelector('#addQuestionBtn').onclick = () => addQuestionFromModal(overlay);
         overlay.querySelector('#fileUploadAreaQB').onclick = () => overlay.querySelector('#fileInputQB').click();
         overlay.querySelector('#fileInputQB').onchange = (e) => handleQBFileAddModal(e, overlay);
@@ -12602,14 +12858,9 @@ async function importQBFromFeishu() {
 
     function addQuestionFromModal(overlay) {
         const qb = getQuestionBank();
-        let category = overlay.querySelector('#newQCategory').value;
-        if (category === '__new__') {
-            category = overlay.querySelector('#newQCategoryInput').value.trim();
-            if (!category) { alert('请输入新分类名称'); return; }
-            if (!qb.categories[category]) { const mo = Math.max(0, ...Object.values(qb.categories).map(c => c.order || 0)); qb.categories[category] = { name: category, createdAt: new Date().toISOString(), order: mo + 1 }; }
-        }
-        if (!category) { alert('请选择或新建分类'); return; }
-        if (!qb.categories[category]) { const mo = Math.max(0, ...Object.values(qb.categories).map(c => c.order || 0)); qb.categories[category] = { name: category, createdAt: new Date().toISOString(), order: mo + 1 }; }
+        // 2026-09-05 改版：手动题固定进「手动录入题目」区
+        let category = '手动录入题目';
+        if (!qb.categories[category]) { qb.categories[category] = { name: category, key: 'manual', source: false, createdAt: new Date().toISOString(), order: 8 }; }
 
         const question = overlay.querySelector('#newQQuestion').value.trim();
         if (!question) { alert('请输入题目内容'); return; }
@@ -12834,9 +13085,10 @@ async function importQBFromFeishu() {
     }
 
     async function deleteQBQuestion(id) {
-        if (!await confirmDelete('该题目')) return;
         const qb = getQuestionBank();
         const delQ = qb.questions.find(q => q.id === id);
+        if (delQ && delQ.category && qbCatKey(delQ.category) !== 'manual') { alert('该题属于源品类，由飞书同步管理，不可删除（改动请直接修改源文档）'); return; }
+        if (!await confirmDelete('该题目')) return;
         qb.questions = qb.questions.filter(q => q.id !== id);
         saveQuestionBank(qb);
         logAdminAction('题库', '删除题目', delQ ? delQ.category : '');
@@ -14746,45 +14998,24 @@ async function importQBFromFeishu() {
         const person = top5Data.find(p => p.name === reviewerName);
         if (!person) { alert('未找到该初审数据'); return; }
         const qb = getQuestionBank();
-        let allQuestions = qb.questions || [];
-        if (allQuestions.length === 0) { alert('题库为空，请先在题库模块中添加题目'); return; }
-        // 排除被反馈且未解决的试题
-        var reportedCount1 = 0;
-        allQuestions = allQuestions.filter(function(q) { if (isQuestionReported(q.id)) { reportedCount1++; return false; } return true; });
+        if ((qb.questions || []).length === 0) { alert('题库为空，请先同步源题库'); return; }
 
-        const categoryKeys = Object.keys(person.categories);
-        let matchedQuestions = [];
-        categoryKeys.forEach(cat => {
-            const catLower = cat.toLowerCase();
-            const matched = allQuestions.filter(q => {
-                const qCat = (q.category || '').toLowerCase();
-                return qCat.includes(catLower) || catLower.includes(qCat);
-            });
-            matchedQuestions.push(...matched);
-        });
-
-        // 提取该初审人涉及的品类列表
+        // 主题词来源：优先该初审人在当前时间维度的失误记录；无则退回画像类别词（collectTopicWords 类别词置顶加权）
         const reviewerErrors = getFilteredErrors().filter(function(e) {
             return (e.reviewer || '').replace(/解答失误|解答/g, '').trim() === reviewerName;
         });
-        const reviewerProducts = [...new Set(reviewerErrors.map(function(e) { return e.product; }).filter(Boolean))];
-
-        if (matchedQuestions.length < 30) {
-            const remaining = allQuestions.filter(q => {
-                if (matchedQuestions.find(m => m.id === q.id)) return false;
-                if (!reviewerProducts.length) return true;
-                const qProd = (q.productCategory || '').toLowerCase();
-                return qProd === '全品类' || reviewerProducts.some(function(p) {
-                    return qProd.includes(p.toLowerCase()) || p.toLowerCase().includes(qProd);
-                });
+        let topicErrors = reviewerErrors;
+        if (topicErrors.length === 0) {
+            topicErrors = Object.keys(person.categories).map(function(c) {
+                return { category: c, note: c, product: '' };
             });
-            const shuffled = remaining.sort(() => Math.random() - 0.5);
-            matchedQuestions.push(...shuffled.slice(0, 30 - matchedQuestions.length));
         }
 
-        const shuffled = [...new Set(matchedQuestions)].sort(() => Math.random() - 0.5);
-        const selectedQuestions = shuffled.slice(0, 30);
-        if (selectedQuestions.length < 5) { alert('匹配到的题目不足5题，请扩充题库'); return; }
+        chooseExamCategories(function(catNames) {
+        const selKeys = catNames.map(c => qbCatKey(c)).filter(Boolean);
+        const result = generateExamByTopics(topicErrors, { catKeys: selKeys });
+        if (!result) return;
+        const selectedQuestions = result.selected;
 
         const examData = getExamHistory();
         const examId = 'exam_' + Date.now();
@@ -14793,7 +15024,7 @@ async function importQBFromFeishu() {
             id: examId, examCode, reviewerName,
             questions: selectedQuestions.filter(function(q){ return q.type !== 'qa'; }), generatedAt: new Date().toISOString(),
             source: '失误前五警示画像',
-            mistakeCategories: categoryKeys, status: 'pending', attempts: 0, records: [],
+            mistakeCategories: result.topicList.map(function(t) { return t.w; }), status: 'pending', attempts: 0, records: [],
             timeLimit: 40, maxAttempts: 2, wrongAnswers: []
         };
         examData[examId] = examRecord;
@@ -14814,6 +15045,7 @@ async function importQBFromFeishu() {
                 <div style="text-align:center;margin-bottom:12px;">
                     <div style="font-size:1.3rem;font-weight:700;color:#1f3a6b;">考试码：<span style="color:#c0392b;font-size:1.8rem;">${examCode}</span></div>
                     <div style="font-size:0.85rem;color:#5e6f8d;margin-top:4px;">初审：${escapeHtml(fmtRvGlobal(reviewerName))} | 共 ${examRecord.questions.length} 题 | 100分制 | ⏱️ 30分钟 | 支持1次补考</div>
+                    <div style="font-size:0.7rem;color:#94a3b8;margin-top:4px;">主题词分布：${escapeHtml(result.topicList.length > 0 ? result.topicList.slice(0, 6).map(t => t.w + '(' + t.n + '题)').join(' / ') : '（无主题词命中，随机选题）')}</div>
                 </div>
                 <div id="examPushStatus" style="font-size:0.85rem;font-weight:600;color:#e67e22;background:#fff8e1;border-radius:8px;padding:8px 12px;margin-bottom:12px;">⏳ 正在推送飞书…</div>
                 <div style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:12px;">
@@ -14868,6 +15100,7 @@ async function importQBFromFeishu() {
                 qrContainer.appendChild(canvas);
             }
         }, 300);
+        }); // chooseExamCategories
     }
 
     // ==================== 知识库模块 ====================
@@ -15988,14 +16221,15 @@ async function importQBFromFeishu() {
     var FEISHU_PAGES_PROXY_URL = 'https://yxt-feishu.pages.dev'; // Cloudflare Pages 代理地址（workers.dev 被屏蔽时的免费线路，2026-09-04）
     var _proxyDownUntil = {}; // 线路熔断表：地址 -> 恢复时间戳
     function getProxyUrlList() {
-        var list = [FEISHU_PROXY_URL];
+        // 线路优先级（2026-09-05 重排）：本机零延迟零限额最优先 → Pages → Supabase（402 期间秒失败）→ workers.dev（国内常超时，放最后）
+        var list = ['http://localhost:3456/feishu-proxy'];
         if (FEISHU_PAGES_PROXY_URL) list.push(FEISHU_PAGES_PROXY_URL);
+        list.push(FEISHU_PROXY_URL);
         if (FEISHU_CLOUDFLARE_PROXY_URL) list.push(FEISHU_CLOUDFLARE_PROXY_URL);
-        list.push('http://localhost:3456/feishu-proxy');
         return list;
     }
     // 按线路顺序尝试代理请求，全部失败才抛错；返回第一个成功的响应
-    async function fetchViaProxy(proxyHeaders, options, timeoutMs) {
+    async function fetchViaProxy(proxyHeaders, options, timeoutMs, validate) {
         var urls = getProxyUrlList();
         var lastErr = null;
         for (var i = 0; i < urls.length; i++) {
@@ -16009,7 +16243,14 @@ async function importQBFromFeishu() {
                     headers: proxyHeaders,
                     body: (options && options.body) || undefined
                 }, puTimeout);
-                if (resp.ok) { if (_proxyDownUntil[pu]) delete _proxyDownUntil[pu]; return resp; }
+                if (resp.ok) {
+                    // 可选响应校验（2026-09-05）：200 但内容不合法（如旧版代理把图片二进制传坏）也视为线路失败，
+                    // 熔断后继续下一条，避免坏线路挡住后面的好线路
+                    if (!validate || await validate(resp)) { if (_proxyDownUntil[pu]) delete _proxyDownUntil[pu]; return resp; }
+                    lastErr = new Error('线路响应内容异常: ' + pu);
+                    _proxyDownUntil[pu] = Date.now() + 300000;
+                    continue;
+                }
                 var _et = '';
                 try { _et = await resp.text(); } catch(e) {}
                 lastErr = new Error('代理请求失败: ' + resp.status + (_et ? ' ' + _et.substring(0, 120) : ''));
@@ -17217,107 +17458,222 @@ async function importQBFromFeishu() {
         overlay.onclick = function(e) { if (e.target === overlay) { overlay.remove(); window._renderNoteTable = null; window._personWeeks = null; window._personSwitchWeek = null; window._personSelectCat = null; } };
     }
 
-    // 按失误类别比例出卷（30题）
-    function generateExamFromErrors() {
-        var filtered = getFilteredErrors();
-        if (filtered.length === 0) { showAlert('当前筛选条件下无失误记录', '⚠️'); return; }
-        var qb = getQuestionBank();
-        var allQuestions = qb.questions || [];
-        if (allQuestions.length === 0) { showAlert('题库为空，请先在题库模块中添加题目', '⚠️'); return; }
-        // 排除被反馈且未解决的试题
-        allQuestions = allQuestions.filter(function(q) { return !isQuestionReported(q.id); });
-
-        // 统计失误类别数量
-        var catCounts = {};
-        filtered.forEach(function(e) {
-            catCounts[e.category] = (catCounts[e.category] || 0) + 1;
-        });
-        var totalErrors = filtered.length;
-        var TOTAL_QUESTIONS = 30;
-
-        // 按比例分配题目数（每个类别至少1题）
-        var categories = Object.entries(catCounts).sort(function(a, b) { return b[1] - a[1]; });
-        var catQuestions = {};
-        var assignedCount = 0;
-        categories.forEach(function(entry, i) {
-            var cat = entry[0];
-            var ratio = entry[1] / totalErrors;
-            var count = Math.max(1, Math.round(ratio * TOTAL_QUESTIONS));
-            catQuestions[cat] = count;
-            assignedCount += count;
-        });
-        // 调整总数到30
-        var diff = TOTAL_QUESTIONS - assignedCount;
-        if (diff !== 0) {
-            for (var i = 0; i < Math.abs(diff); i++) {
-                var idx = i % categories.length;
-                if (diff > 0) catQuestions[categories[idx][0]]++;
-                else if (catQuestions[categories[idx][0]] > 1) catQuestions[categories[idx][0]]--;
+    // ==================== 主题词出卷引擎（2026-09-05 改版：按主题词分配 + 品类做边界 + 题目/解析/选项全文匹配） ====================
+    // 主题词黑名单：高频通用描述词，不出现在主题词里（品类名也排除——品类是边界不是主题）
+    const QB_TOPIC_BLACKLIST = ['正常','情况','实际','查询','本机','不符','属于','存在','涉嫌','需要','修改','检查','显示','订单','检测','异常','问题','相关','进行','结果','图片','照片','拍摄','配件','盒子','外壳','版本','序列号','型号','状态','数据','系统','页面','记录','说明','备注','内容','方式','操作','流程','标准','要求','应该','可能','发现','导致','造成','出现','描述','核实','确认','反馈','处理','外观','机器','设备','产品','用户','客户','手机','平板','电脑','笔记本','耳机','手表','相机','镜头','游戏机','卡带','价格','差价','缺失','错误','正确','遗漏','填写','位置','截图','附件','与','的','及','或','和','被','有','不','未','非','已','了','等','是','在','中','个'];
+    // 文本拆 2-6 字滑动关键词（黑名单词先整词删除；长词优先；已被更长词覆盖的区间不再产碎片词）
+    function extractSlidingKeywordsQB(text) {
+        if (!text) return [];
+        var clean = text.replace(/[，、。；：！？“”‘’（）【】《》\s,.\/;:!?()\[\]{}]/g, '');
+        // 黑名单词从文本整词删除（按词长降序，避免「笔记本」先被「本机」拆掉）
+        var sortedBL = QB_TOPIC_BLACKLIST.slice().sort(function(a, b) { return b.length - a.length; });
+        for (var bi = 0; bi < sortedBL.length; bi++) {
+            clean = clean.split(sortedBL[bi]).join('');
+        }
+        var kws = [];
+        var covered = []; // 已保留词的区间，落在其中的更短窗口跳过
+        for (var len = Math.min(6, clean.length); len >= 2; len--) {
+            for (var i = 0; i <= clean.length - len; i++) {
+                var coveredFlag = false;
+                for (var ci = 0; ci < covered.length; ci++) {
+                    if (i >= covered[ci][0] && i + len <= covered[ci][1]) { coveredFlag = true; break; }
+                }
+                if (coveredFlag) continue;
+                var w = clean.substring(i, i + len);
+                if (kws.indexOf(w) < 0) kws.push(w);
+                covered.push([i, i + len]);
             }
         }
-
-        // 按类别匹配题目
-        var selectedQuestions = [];
-        var usedIds = {};
-        // 提取当前筛选范围内的品类列表
-        var relevantProducts = [...new Set(filtered.map(function(e) { return e.product; }).filter(Boolean))];
-        categories.forEach(function(entry) {
-            var cat = entry[0];
-            var needed = catQuestions[cat] || 0;
-            var catLower = cat.toLowerCase();
-            var matched = allQuestions.filter(function(q) {
-                if (usedIds[q.id]) return false;
-                var qCat = (q.category || '').toLowerCase();
-                return qCat.includes(catLower) || catLower.includes(qCat);
+        return kws;
+    }
+    // 失误列表 → 主题词统计 { 词: { w: 权重(词长加权), p: {品类key: 次数} } }；失误类别词置顶加权
+    function collectTopicWords(errors) {
+        var topics = {};
+        errors.forEach(function(e) {
+            var kws = extractSlidingKeywordsQB(e.note || '');
+            var pk = qbProductKey(e.product);
+            var seen = {};
+            kws.forEach(function(kw) {
+                if (seen[kw]) return; seen[kw] = true;
+                if (!topics[kw]) topics[kw] = { w: 0, p: {} };
+                topics[kw].w += kw.length; // 长词权重高
+                if (pk) topics[kw].p[pk] = (topics[kw].p[pk] || 0) + 1;
             });
-            // 不够则按品类补齐（不限定失误类别，但不跨品类）
-            if (matched.length < needed) {
-                var fillQs = allQuestions.filter(function(q) {
-                    if (usedIds[q.id]) return false;
-                    if (matched.find(function(m) { return m.id === q.id; })) return false;
-                    if (!relevantProducts.length) return true;
-                    var qProd = (q.productCategory || '').toLowerCase();
-                    return qProd === '全品类' || relevantProducts.some(function(p) {
-                        return qProd.includes(p.toLowerCase()) || p.toLowerCase().includes(qProd);
-                    });
-                });
-                var shuffledFill = fillQs.sort(function() { return Math.random() - 0.5; });
-                matched = matched.concat(shuffledFill.slice(0, needed - matched.length));
+            // 失误类别词置顶加权（×2，变相保留失误类别维度）
+            var cat = (e.category || '').trim();
+            if (cat && cat !== '-' && cat.length >= 2 && QB_TOPIC_BLACKLIST.indexOf(cat) < 0) {
+                if (!topics[cat]) topics[cat] = { w: 0, p: {} };
+                topics[cat].w += cat.length * 2;
+                if (pk) topics[cat].p[pk] = (topics[cat].p[pk] || 0) + 2;
             }
-            var shuffledMatched = matched.sort(function() { return Math.random() - 0.5; });
-            var picked = shuffledMatched.slice(0, needed);
-            picked.forEach(function(q) { usedIds[q.id] = true; });
-            selectedQuestions = selectedQuestions.concat(picked);
         });
-
-        if (selectedQuestions.length < 5) { showAlert('匹配到的题目不足5题，请扩充题库', '⚠️'); return; }
-
-        // 生成考试
+        return topics;
+    }
+    // 最大余数法：按权重比例分配 total 个名额
+    function allocateByWeight(topics, total) {
+        var entries = Object.keys(topics).map(function(w) { return { word: w, w: topics[w].w, p: topics[w].p }; })
+            .sort(function(a, b) { return b.w - a.w; });
+        if (entries.length === 0) return [];
+        var sum = entries.reduce(function(s, x) { return s + x.w; }, 0);
+        var assigned = 0;
+        entries.forEach(function(x) {
+            var exact = x.w / sum * total;
+            x.n = Math.floor(exact);
+            x.frac = exact - x.n;
+            assigned += x.n;
+        });
+        entries.sort(function(a, b) { return b.frac - a.frac; });
+        for (var i = 0; i < total - assigned && i < entries.length; i++) entries[i].n++;
+        entries.sort(function(a, b) { return b.w - a.w; });
+        return entries.map(function(x) { return { word: x.word, n: x.n, p: x.p }; });
+    }
+    // 主题词选题：品类边界内，全文匹配（题干+答案+解析+选项文字），长词命中优先
+    function pickByTopic(word, boundaryKey, usedIds, allQuestions) {
+        var pool = allQuestions.filter(function(q) {
+            if (usedIds[q.id]) return false;
+            if (boundaryKey) {
+                if (q.categoryId) return q.categoryId === boundaryKey;
+                return qbProductKey(q.productCategory) === boundaryKey;
+            }
+            return true;
+        });
+        if (pool.length === 0) return null;
+        var wl = word.toLowerCase();
+        var scored = pool.map(function(q) {
+            return { q: q, s: qbFullText(q).toLowerCase().indexOf(wl) >= 0 ? word.length : 0 };
+        });
+        scored.sort(function(a, b) { if (b.s !== a.s) return b.s - a.s; return Math.random() - 0.5; });
+        var picked = scored[0].q;
+        usedIds[picked.id] = true;
+        return picked;
+    }
+    // 主题词出卷主流程：范围过滤 → 主题词配额 → 边界选题 → 随机补齐；返回 {selected, topicSummary}
+    function generateExamByTopics(errors, opts) {
+        opts = opts || {};
+        var qb = getQuestionBank();
+        var allQuestions = (qb.questions || []).filter(function(q) { return !isQuestionReported(q.id); });
+        if (allQuestions.length === 0) { showAlert('题库为空，请先同步源题库', '⚠️'); return null; }
+        // 出题范围品类（catKeys = 品类 key 数组；空数组/null = 全部）
+        if (opts.catKeys && opts.catKeys.length > 0) {
+            allQuestions = allQuestions.filter(function(q) {
+                var k = q.categoryId || qbProductKey(q.productCategory);
+                return k && opts.catKeys.indexOf(k) >= 0;
+            });
+            if (allQuestions.length === 0) { showAlert('所选品类下无题目', '⚠️'); return null; }
+        }
+        var TOTAL = 30;
+        var cap = Math.min(TOTAL, allQuestions.length);
+        var topics = collectTopicWords(errors);
+        var quota = allocateByWeight(topics, cap);
+        var selected = [];
+        var usedIds = {};
+        var topicSummary = [];
+        quota.forEach(function(item) {
+            var boundaryKeys = Object.keys(item.p || {});
+            boundaryKeys.sort(function(a, b) { return item.p[b] - item.p[a]; });
+            var mainKey = boundaryKeys.length > 0 ? boundaryKeys[0] : null;
+            var pickedN = 0;
+            // 词配额内：先主品类边界命中匹配，不够再试次品类边界
+            for (var tk = 0; tk < boundaryKeys.length && pickedN < item.n; tk++) {
+                var pk = pickByTopic(item.word, boundaryKeys[tk], usedIds, allQuestions);
+                if (pk) { selected.push(pk); topicSummary.push(item.word); pickedN++; }
+            }
+            // 主品类边界内随机补齐
+            var remaining = item.n - pickedN;
+            if (remaining > 0) {
+                var fillPool = allQuestions.filter(function(q) {
+                    if (usedIds[q.id]) return false;
+                    if (mainKey) {
+                        if (q.categoryId) return q.categoryId === mainKey;
+                        return qbProductKey(q.productCategory) === mainKey;
+                    }
+                    return true;
+                }).sort(function() { return Math.random() - 0.5; });
+                for (var fi = 0; fi < Math.min(remaining, fillPool.length); fi++) {
+                    usedIds[fillPool[fi].id] = true;
+                    selected.push(fillPool[fi]);
+                }
+            }
+        });
+        // 总量补齐到上限（范围允许内随机）
+        if (selected.length < cap) {
+            var rest = allQuestions.filter(function(q) { return !usedIds[q.id]; }).sort(function() { return Math.random() - 0.5; });
+            for (var ri = 0; ri < rest.length && selected.length < cap; ri++) {
+                usedIds[rest[ri].id] = true;
+                selected.push(rest[ri]);
+            }
+        }
+        if (selected.length < 5) { showAlert('匹配到的题目不足5题，请扩充题库', '⚠️'); return null; }
+        // 主题词题量汇总（展示用）
+        var topicCount = {};
+        topicSummary.forEach(function(w) { topicCount[w] = (topicCount[w] || 0) + 1; });
+        var topicList = Object.keys(topicCount).map(function(w) { return { w: w, n: topicCount[w] }; })
+            .sort(function(a, b) { return b.n - a.n; });
+        return { selected: selected, topicList: topicList };
+    }
+    // 出卷品类范围选择弹窗（8 类复选，默认全选）
+    function chooseExamCategories(callback) {
+        var qb = getQuestionBank();
+        var cats = Object.keys(qb.categories).sort(function(a, b) { return (qb.categories[a].order || 0) - (qb.categories[b].order || 0); });
+        var items = cats.map(function(c) {
+            var count = (qb.questions || []).filter(function(q) { return q.category === c; }).length;
+            return '<label style="display:flex;align-items:center;gap:8px;padding:8px 12px;background:#f8fafc;border-radius:10px;border:1px solid #eef2f6;cursor:pointer;margin:0;">' +
+                '<input type="checkbox" class="exam-cat-cb" value="' + escapeHtml(c) + '" checked style="accent-color:#2a5298;">' +
+                '<span style="font-size:0.85rem;flex:1;">' + escapeHtml(c) + '</span>' +
+                '<span style="font-size:0.7rem;color:#94a3b8;">' + count + ' 题</span></label>';
+        }).join('');
+        var overlay = document.createElement('div');
+        overlay.className = 'modal-overlay'; overlay.style.zIndex = '2500';
+        overlay.innerHTML = '<div class="modal-container" style="max-width:520px;">' +
+            '<div class="modal-header">📚 选择出题品类范围<button class="modal-close-btn" id="cecClose">✕</button></div>' +
+            '<div class="modal-body" style="padding:16px;">' +
+            '<div style="font-size:0.8rem;color:#5e6f8d;margin-bottom:10px;">主题词出卷将在所选品类内匹配题目（默认全部 8 类；品类是边界，主题词按失误备注分配）</div>' +
+            '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;max-height:40vh;overflow-y:auto;margin-bottom:12px;">' + items + '</div>' +
+            '<div style="display:flex;gap:8px;">' +
+            '<button id="cecAll" class="small-outline" style="flex:1;">全选</button>' +
+            '<button id="cecNone" class="small-outline" style="flex:1;">清空</button>' +
+            '<button id="cecGo" class="generate-btn" style="flex:2;">✅ 开始出卷</button>' +
+            '</div></div></div>';
+        document.body.appendChild(overlay);
+        var close = function() { overlay.remove(); };
+        overlay.querySelector('#cecClose').onclick = close;
+        overlay.querySelector('#cecAll').onclick = function() { overlay.querySelectorAll('.exam-cat-cb').forEach(function(cb) { cb.checked = true; }); };
+        overlay.querySelector('#cecNone').onclick = function() { overlay.querySelectorAll('.exam-cat-cb').forEach(function(cb) { cb.checked = false; }); };
+        overlay.querySelector('#cecGo').onclick = function() {
+            var checked = [];
+            overlay.querySelectorAll('.exam-cat-cb').forEach(function(cb) { if (cb.checked) checked.push(cb.value); });
+            close();
+            callback(checked);
+        };
+    }
+    // 生成考试记录 + 弹窗展示（主题词分布），返回 examRecord
+    function showExamGeneratedModal(selectedQuestions, topicList, reviewerName, sourceLabel, titleLabel, pushId) {
         var examData = getExamHistory();
         var examId = 'exam_' + Date.now();
         var examCode = generateExamCode();
         var examRecord = {
-            id: examId, examCode, reviewerName: '通用（按失误类别）',
-            questions: selectedQuestions.filter(function(q){ return q.type !== 'qa'; }), generatedAt: new Date().toISOString(),
-            source: '失误分析看板',
-            mistakeCategories: categories.map(function(e) { return e[0]; }),
+            id: examId, examCode, reviewerName: reviewerName,
+            questions: selectedQuestions.filter(function(q) { return q.type !== 'qa'; }), generatedAt: new Date().toISOString(),
+            source: sourceLabel,
+            mistakeCategories: topicList.map(function(t) { return t.w; }),
             status: 'pending', attempts: 0, records: [],
             timeLimit: 40, maxAttempts: 2, wrongAnswers: []
         };
         examData[examId] = examRecord;
-
-        // 弹窗显示考试码+链接+二维码
         var baseUrl = window.location.href.split('?')[0];
         var examUrl = baseUrl + '?exam=' + examCode;
+        var topicStr = topicList.length > 0
+            ? topicList.slice(0, 6).map(function(t) { return t.w + '(' + t.n + '题)'; }).join(' / ')
+            : '（无主题词命中，随机选题）';
         var overlay = document.createElement('div');
         overlay.className = 'modal-overlay';
         overlay.style.zIndex = '2000';
         overlay.innerHTML = '<div class="modal-container" style="max-width:650px;">' +
-            '<div class="modal-header">📝 按失误比例出卷<button class="modal-close-btn" id="genExamClose">✕</button></div>' +
+            '<div class="modal-header">📝 ' + escapeHtml(titleLabel) + '<button class="modal-close-btn" id="genExamClose">✕</button></div>' +
             '<div class="modal-body" style="text-align:center;">' +
                 '<div style="font-size:1.3rem;font-weight:700;color:#1f3a6b;">考试码：<span style="color:#c0392b;font-size:1.8rem;">' + examCode + '</span></div>' +
                 '<div style="font-size:0.85rem;color:#5e6f8d;margin-top:4px;">共 ' + selectedQuestions.length + ' 题 | 100分制 | ⏱️40分钟 | 支持补考</div>' +
-                '<div style="font-size:0.75rem;color:#94a3b8;margin-top:4px;">' + categories.slice(0, 5).map(function(e) { return e[0] + '(' + (catQuestions[e[0]] || 0) + '题)'; }).join(' / ') + '</div>' +
+                '<div style="font-size:0.75rem;color:#94a3b8;margin-top:4px;">主题词分布：' + escapeHtml(topicStr) + '</div>' +
                 '<div style="background:#f8fafc;border-radius:14px;padding:14px;border:1px solid #eef2f6;text-align:center;">' +
                     '<div style="font-weight:700;color:#1f3a6b;margin-bottom:8px;font-size:0.85rem;">🔗 考试链接</div>' +
                     '<div style="background:white;border:1px solid #eef2f6;border-radius:8px;padding:8px;font-size:0.65rem;word-break:break-all;color:#5e6f8d;margin-bottom:6px;">' + DEPLOYED_URL + '?exam=' + examCode + '</div>' +
@@ -17332,271 +17688,129 @@ async function importQBFromFeishu() {
         document.body.appendChild(overlay);
         overlay.querySelector('#genExamClose').onclick = function() { overlay.remove(); };
         overlay.onclick = function(e) { if (e.target === overlay) overlay.remove(); };
-        overlay.querySelector('.goto-exam-btn').onclick = function(){ overlay.remove(); switchNav('examSystem'); };
+        overlay.querySelector('.goto-exam-btn').onclick = function() { overlay.remove(); switchNav('examSystem'); };
         var examPushBtn = overlay.querySelector('.push-exam-btn');
-        if (isPushedThisPeriod('通用出卷', 'exam')) {
+        if (isPushedThisPeriod(pushId, 'exam')) {
             examPushBtn.textContent = '✅ 已推送'; examPushBtn.style.background = '#27ae60';
         }
         examPushBtn.onclick = function() {
             var btn = this;
-            confirmRepush('通用出卷', 'exam', function() {
+            confirmRepush(pushId, 'exam', function() {
                 btn.textContent = '⏳ 推送中…'; btn.style.background = '#e67e22';
                 feishuPushWorkflow('exam', {
-                    pushId: '通用出卷',
-                    title: '按比例出卷',
+                    pushId: pushId,
+                    title: titleLabel,
                     examCode: examCode,
                     questionCount: selectedQuestions.length,
                     examUrl: DEPLOYED_URL + '?exam=' + examCode
                 }, {
                     onSuccess: function() {
                         saveExamHistory(examData);
-                        logAdminAction('考试', '生成试卷并推送飞书', '按比例出卷 · ' + examCode);
+                        logAdminAction('考试', '生成试卷并推送飞书', titleLabel + ' · ' + examCode);
                         btn.textContent = '✅ 已推送'; btn.style.background = '#27ae60';
                     }
                 });
             });
         };
+        return examRecord;
     }
 
-    // 精准出卷：根据某人失误画像匹配题目
+    // 按失误主题词出卷（2026-09-05 重写：品类选择 → 主题词分配 → 品类边界 + 全文匹配）
+    function generateExamFromErrors() {
+        var filtered = getFilteredErrors();
+        if (filtered.length === 0) { showAlert('当前筛选条件下无失误记录', '⚠️'); return; }
+        var qb = getQuestionBank();
+        if ((qb.questions || []).length === 0) { showAlert('题库为空，请先同步源题库', '⚠️'); return; }
+        chooseExamCategories(function(catNames) {
+            var selKeys = catNames.map(function(c) { return qbCatKey(c); }).filter(Boolean);
+            var result = generateExamByTopics(filtered, { catKeys: selKeys });
+            if (!result) return;
+            showExamGeneratedModal(result.selected, result.topicList, '通用（按失误主题）', '失误分析看板', '按失误主题出卷', '通用出卷');
+        });
+    }
+
+    // 精准出卷：根据某人失误主题词出卷（2026-09-05 重写：主题词引擎 + 品类边界）
     function generatePrecisionExam(reviewerName) {
         var filtered = getFilteredErrors();
         var personErrors = filtered.filter(function(e) { return e.reviewer === reviewerName; });
         if (personErrors.length === 0) { showAlert('当前时间维度下「' + reviewerName + '」无失误记录', '⚠️'); return; }
         var qb = getQuestionBank();
-        var allQuestions = qb.questions || [];
-        if (allQuestions.length === 0) { showAlert('题库为空，请先添加题目', '⚠️'); return; }
-        // 排除被反馈且未解决的试题
-        allQuestions = allQuestions.filter(function(q) { return !isQuestionReported(q.id); });
+        if ((qb.questions || []).length === 0) { showAlert('题库为空，请先同步源题库', '⚠️'); return; }
+        chooseExamCategories(function(catNames) {
+            var selKeys = catNames.map(function(c) { return qbCatKey(c); }).filter(Boolean);
+            var result = generateExamByTopics(personErrors, { catKeys: selKeys });
+            if (!result) return;
+            var selected = result.selected;
+            // 静默模式：自动出卷不弹窗（复用原逻辑）
+            if (window._genSilent) { window._genSilent = false; return; }
+            var examData = getExamHistory();
+            var examId = 'exam_' + Date.now();
+            var examCode = generateExamCode();
+            var examRecord = {
+                id: examId, examCode, reviewerName: reviewerName,
+                questions: selected.filter(function(q){ return q.type !== 'qa'; }), generatedAt: new Date().toISOString(),
+                source: '失误画像精准匹配',
+                mistakeCategories: result.topicList.map(function(t) { return t.w; }),
+                status: 'pending', attempts: 0, records: [],
+                timeLimit: 40, maxAttempts: 2, wrongAnswers: []
+            };
+            examData[examId] = examRecord;
 
-        // 统计该人失误品类+类别组合
-        var comboCats = {};
-        personErrors.forEach(function(e) {
-            var key = (e.product||'未知') + '-' + e.category;
-            comboCats[key] = (comboCats[key] || 0) + 1;
-        });
-        // 汇总到失误类别（用于匹配题目）
-        var catCounts = {};
-        Object.entries(comboCats).forEach(function(entry) {
-            var cat = entry[0].split('-').slice(1).join('-'); // 品类-类别 → 类别
-            catCounts[cat] = (catCounts[cat] || 0) + entry[1];
-        });
-        var totalErrors = personErrors.length;
-        var TOTAL_QUESTIONS = 30;
-        var categories = Object.entries(catCounts).sort(function(a, b) { return b[1] - a[1]; });
-
-        // 按比例分配
-        var catQuestions = {};
-        var assigned = 0;
-        categories.forEach(function(entry) {
-            var ratio = entry[1] / totalErrors;
-            var count = Math.max(1, Math.round(ratio * TOTAL_QUESTIONS));
-            catQuestions[entry[0]] = count;
-            assigned += count;
-        });
-        var diff = TOTAL_QUESTIONS - assigned;
-        for (var i = 0; i < Math.abs(diff); i++) {
-            var idx = i % categories.length;
-            if (diff > 0) catQuestions[categories[idx][0]]++;
-            else if (catQuestions[categories[idx][0]] > 1) catQuestions[categories[idx][0]]--;
-        }
-
-        // 判断主品类：若某品类占比≥90%，排除其他品类的题目
-        var productCounts = {};
-        personErrors.forEach(function(e) { var p = e.product||'未知'; productCounts[p] = (productCounts[p]||0)+1; });
-        var dominantProduct = null;
-        Object.entries(productCounts).forEach(function(e) {
-            if (e[1] / totalErrors >= 0.9) dominantProduct = e[0];
-        });
-
-        // 辅助：将文本拆成2-6字滑动关键词（按长度从大到小排序）
-        function extractSlidingKeywords(text) {
-            if (!text) return [];
-            var clean = text.replace(/[，、。；：！？“”‘’（）【】《》\s,.\/;:!?()\[\]{}]/g, '');
-            var kws = [];
-            for (var len = Math.min(6, clean.length); len >= 2; len--) {
-                for (var i = 0; i <= clean.length - len; i++) {
-                    kws.push(clean.substring(i, i + len));
-                }
+            var baseUrl = window.location.href.split('?')[0];
+            var examUrl = baseUrl + '?exam=' + examCode;
+            var topicStr = result.topicList.length > 0
+                ? result.topicList.slice(0, 6).map(function(t) { return t.w + '(' + t.n + '题)'; }).join(' / ')
+                : '（无主题词命中，随机选题）';
+            var modal = document.createElement('div');
+            modal.className = 'modal-overlay';
+            modal.style.zIndex = '2000';
+            modal.innerHTML = '<div class="modal-container" style="max-width:650px;">' +
+                '<div class="modal-header">🎯 ' + escapeHtml(reviewerName) + ' · 精准试卷<button class="modal-close-btn" id="pexamClose">✕</button></div>' +
+                '<div class="modal-body" style="text-align:center;">' +
+                    '<div style="font-size:1.3rem;font-weight:700;color:#1f3a6b;">考试码：<span style="color:#c0392b;font-size:1.8rem;">' + examCode + '</span></div>' +
+                    '<div style="font-size:0.85rem;color:#5e6f8d;margin-top:4px;">' + selected.length + '题 | 100分制 | ⏱️40分钟 | 支持补考</div>' +
+                    '<div style="font-size:0.7rem;color:#94a3b8;margin-top:4px;">主题词分布：' + escapeHtml(topicStr) + '</div>' +
+                    '<div style="background:#f8fafc;border-radius:14px;padding:14px;border:1px solid #eef2f6;text-align:center;">' +
+                        '<div style="font-weight:700;color:#1f3a6b;margin-bottom:8px;font-size:0.85rem;">🔗 考试链接</div>' +
+                        '<div style="background:white;border:1px solid #eef2f6;border-radius:8px;padding:8px;font-size:0.65rem;word-break:break-all;color:#5e6f8d;margin-bottom:6px;">' + DEPLOYED_URL + '?exam=' + examCode + '</div>' +
+                        '<button onclick="navigator.clipboard.writeText(\'' + examUrl.replace(/'/g, "\\'") + '\');this.textContent=\'✅ 已复制\';setTimeout(function(){this.textContent=\'📋 复制链接\'}.bind(this),1500)" style="background:#2a5298;color:white;border:none;padding:6px 14px;border-radius:16px;cursor:pointer;font-size:0.75rem;">📋 复制链接</button>' +
+                    '</div>' +
+                    '<div style="display:flex;gap:8px;margin-top:12px;">' +
+                        '<button class="push-exam-btn admin-only" style="flex:1;background:#e67e22;color:white;border:none;padding:10px 16px;border-radius:20px;cursor:pointer;font-size:0.85rem;font-weight:600;">📤 飞书推送</button>' +
+                        '<button class="goto-exam-btn admin-only" style="flex:1;border:1px solid #e2e8f0;background:#f8fafc;padding:10px 16px;border-radius:20px;cursor:pointer;font-size:0.85rem;">📋 前往考试系统</button>' +
+                    '</div>' +
+                '</div>' +
+            '</div>';
+            document.body.appendChild(modal);
+            modal.querySelector('#pexamClose').onclick = function() { modal.remove(); };
+            modal.onclick = function(e) { if (e.target === modal) modal.remove(); };
+            modal.querySelector('.goto-exam-btn').onclick = function(){ modal.remove(); switchNav('examSystem'); };
+            var pexamPushBtn = modal.querySelector('.push-exam-btn');
+            if (isPushedThisPeriod(reviewerName, 'exam')) {
+                pexamPushBtn.textContent = '✅ 已推送'; pexamPushBtn.style.background = '#27ae60';
             }
-            return kws;
-        }
-
-        // 按失误类别分组，收集每条失误的明细（用于后续关键词匹配）
-        var catErrors = {};
-        personErrors.forEach(function(e) {
-            var cat = e.category;
-            if (!catErrors[cat]) catErrors[cat] = [];
-            catErrors[cat].push(e);
-        });
-
-        var selected = [];
-        var usedIds = {};
-        categories.forEach(function(entry) {
-            var cat = entry[0];
-            var needed = catQuestions[cat] || 0;
-            if (needed <= 0) return;
-            var catLower = cat.toLowerCase();
-
-            // ===== 第1层：失误类别匹配分类 =====
-            var candidates = allQuestions.filter(function(q) {
-                if (usedIds[q.id]) return false;
-                var qCat = (q.category || '').toLowerCase();
-                if (!(qCat.includes(catLower) || catLower.includes(qCat))) return false;
-                if (dominantProduct && q.productCategory && q.productCategory !== '全品类' && q.productCategory !== '全类型' && q.productCategory !== dominantProduct && !q.productCategory.includes(dominantProduct) && !dominantProduct.includes(q.productCategory) && !q.productCategory.replace(/[&、\s]/g,'').includes(dominantProduct.replace(/[&、\s]/g,''))) return false;
-                return true;
-            });
-
-            // ===== 第2层：失误明细2-6字滑动匹配题面/答案/解析 =====
-            var errorsForCat = catErrors[cat] || [];
-            var allNotes = errorsForCat.map(function(e) { return e.note || ''; }).filter(Boolean);
-
-            if (candidates.length > 0 && allNotes.length > 0) {
-                candidates.forEach(function(q) {
-                    var searchText = (q.question + ' ' + (q.answer || '') + ' ' + (q.explanation || '')).toLowerCase();
-                    var maxScore = 0;
-                    for (var ni = 0; ni < allNotes.length; ni++) {
-                        var kws = extractSlidingKeywords(allNotes[ni]);
-                        for (var ki = 0; ki < kws.length; ki++) {
-                            if (searchText.indexOf(kws[ki].toLowerCase()) >= 0) {
-                                maxScore = Math.max(maxScore, kws[ki].length);
-                                break; // 同一条备注取最长匹配
-                            }
-                        }
+            pexamPushBtn.onclick = function(){
+                var btn = this;
+                confirmRepush(reviewerName, 'exam', function() {
+                btn.textContent = '⏳ 推送中…'; btn.style.background = '#e67e22';
+                feishuPushWorkflow('exam', {
+                    pushId: reviewerName,
+                    title: reviewerName + ' · 精准试卷',
+                    examCode: examCode,
+                    questionCount: selected.length,
+                    examUrl: DEPLOYED_URL + '?exam=' + examCode,
+                    reviewerName: reviewerName
+                }, {
+                    reviewerName: reviewerName,
+                    onSuccess: function() {
+                        saveExamHistory(examData);
+                        logAdminAction('考试', '生成试卷并推送飞书', reviewerName + ' · ' + examCode);
+                        btn.textContent = '✅ 已推送'; btn.style.background = '#27ae60';
                     }
-                    q._keywordScore = maxScore;
                 });
-                candidates.sort(function(a, b) {
-                    if (b._keywordScore !== a._keywordScore) return b._keywordScore - a._keywordScore;
-                    return Math.random() - 0.5;
-                });
-            } else {
-                candidates.sort(function() { return Math.random() - 0.5; });
-            }
-
-            var picked = [];
-            var remaining = needed;
-
-            // 先取有关键词匹配的题（长词优先）
-            var kwMatched = candidates.filter(function(q) { return q._keywordScore > 0; }).slice(0, remaining);
-            picked = picked.concat(kwMatched);
-            remaining -= kwMatched.length;
-
-            // 再取同分类下无关键词匹配的题
-            if (remaining > 0) {
-                var rest = candidates.filter(function(q) { return picked.indexOf(q) < 0; }).slice(0, remaining);
-                picked = picked.concat(rest);
-                remaining -= rest.length;
-            }
-
-            // ===== 第3层：补齐 =====
-            // 3a：全品类/全类型 + 该失误类别
-            if (remaining > 0) {
-                var fill1 = allQuestions.filter(function(q) {
-                    if (usedIds[q.id]) return false;
-                    if (picked.indexOf(q) >= 0) return false;
-                    var qCat = (q.category || '').toLowerCase();
-                    if (!(qCat.includes(catLower) || catLower.includes(qCat))) return false;
-                    var qProd = (q.productCategory || '').toLowerCase();
-                    return qProd === '全品类' || qProd === '全类型';
-                }).sort(function() { return Math.random() - 0.5; }).slice(0, remaining);
-                picked = picked.concat(fill1);
-                remaining -= fill1.length;
-            }
-
-            // 3b：全品类/全类型（不限失误类别）
-            if (remaining > 0) {
-                var fill2 = allQuestions.filter(function(q) {
-                    if (usedIds[q.id]) return false;
-                    if (picked.indexOf(q) >= 0) return false;
-                    var qProd = (q.productCategory || '').toLowerCase();
-                    return qProd === '全品类' || qProd === '全类型';
-                }).sort(function() { return Math.random() - 0.5; }).slice(0, remaining);
-                picked = picked.concat(fill2);
-                remaining -= fill2.length;
-            }
-
-            picked.forEach(function(q) { usedIds[q.id] = true; });
-            selected = selected.concat(picked);
+                }); // confirmRepush
+            };
         });
-
-        // 最终补齐到30题：从所有未使用的题目中随机补
-        if (selected.length < TOTAL_QUESTIONS) {
-            var fillAll = allQuestions.filter(function(q) {
-                return usedIds[q.id] !== true;
-            }).sort(function() { return Math.random() - 0.5; }).slice(0, TOTAL_QUESTIONS - selected.length);
-            fillAll.forEach(function(q) { usedIds[q.id] = true; });
-            selected = selected.concat(fillAll);
-        }
-
-        if (selected.length < 5) { showAlert('题库总题数不足5题，请扩充题库', '⚠️'); return; }
-
-        var examData = getExamHistory();
-        var examId = 'exam_' + Date.now();
-        var examCode = generateExamCode();
-        var examRecord = {
-            id: examId, examCode, reviewerName: reviewerName,
-            questions: selected.filter(function(q){ return q.type !== 'qa'; }), generatedAt: new Date().toISOString(),
-            source: '失误画像精准匹配',
-            mistakeCategories: categories.map(function(e) { return e[0]; }),
-            status: 'pending', attempts: 0, records: [],
-            timeLimit: 40, maxAttempts: 2, wrongAnswers: []
-        };
-        examData[examId] = examRecord;
-
-        var baseUrl = window.location.href.split('?')[0];
-        var examUrl = baseUrl + '?exam=' + examCode;
-        var modal = document.createElement('div');
-        modal.className = 'modal-overlay';
-        modal.style.zIndex = '2000';
-        modal.innerHTML = '<div class="modal-container" style="max-width:650px;">' +
-            '<div class="modal-header">🎯 ' + escapeHtml(reviewerName) + ' · 精准试卷<button class="modal-close-btn" id="pexamClose">✕</button></div>' +
-            '<div class="modal-body" style="text-align:center;">' +
-                '<div style="font-size:1.3rem;font-weight:700;color:#1f3a6b;">考试码：<span style="color:#c0392b;font-size:1.8rem;">' + examCode + '</span></div>' +
-                '<div style="font-size:0.85rem;color:#5e6f8d;margin-top:4px;">' + selected.length + '题 | 100分制 | ⏱️40分钟 | 支持补考</div>' +
-                '<div style="font-size:0.7rem;color:#94a3b8;margin-top:4px;">' + categories.map(function(e) { return e[0] + '(' + (catQuestions[e[0]] || 0) + '题)'; }).join(' / ') + '</div>' +
-                '<div style="background:#f8fafc;border-radius:14px;padding:14px;border:1px solid #eef2f6;text-align:center;">' +
-                    '<div style="font-weight:700;color:#1f3a6b;margin-bottom:8px;font-size:0.85rem;">🔗 考试链接</div>' +
-                    '<div style="background:white;border:1px solid #eef2f6;border-radius:8px;padding:8px;font-size:0.65rem;word-break:break-all;color:#5e6f8d;margin-bottom:6px;">' + DEPLOYED_URL + '?exam=' + examCode + '</div>' +
-                    '<button onclick="navigator.clipboard.writeText(\'' + examUrl.replace(/'/g, "\\'") + '\');this.textContent=\'✅ 已复制\';setTimeout(function(){this.textContent=\'📋 复制链接\'}.bind(this),1500)" style="background:#2a5298;color:white;border:none;padding:6px 14px;border-radius:16px;cursor:pointer;font-size:0.75rem;">📋 复制链接</button>' +
-                '</div>' +
-                '<div style="display:flex;gap:8px;margin-top:12px;">' +
-                    '<button class="push-exam-btn admin-only" style="flex:1;background:#e67e22;color:white;border:none;padding:10px 16px;border-radius:20px;cursor:pointer;font-size:0.85rem;font-weight:600;">📤 飞书推送</button>' +
-                    '<button class="goto-exam-btn admin-only" style="flex:1;border:1px solid #e2e8f0;background:#f8fafc;padding:10px 16px;border-radius:20px;cursor:pointer;font-size:0.85rem;">📋 前往考试系统</button>' +
-                '</div>' +
-            '</div>' +
-        '</div>';
-        // 静默模式：自动出卷不弹窗
-        if (window._genSilent) { window._genSilent = false; return; }
-        document.body.appendChild(modal);
-        modal.querySelector('#pexamClose').onclick = function() { modal.remove(); };
-        modal.onclick = function(e) { if (e.target === modal) modal.remove(); };
-        modal.querySelector('.goto-exam-btn').onclick = function(){ modal.remove(); switchNav('examSystem'); };
-        var pexamPushBtn = modal.querySelector('.push-exam-btn');
-        if (isPushedThisPeriod(reviewerName, 'exam')) {
-            pexamPushBtn.textContent = '✅ 已推送'; pexamPushBtn.style.background = '#27ae60';
-        }
-        pexamPushBtn.onclick = function(){
-            var btn = this;
-            confirmRepush(reviewerName, 'exam', function() {
-            btn.textContent = '⏳ 推送中…'; btn.style.background = '#e67e22';
-            feishuPushWorkflow('exam', {
-                pushId: reviewerName,
-                title: reviewerName + ' · 精准试卷',
-                examCode: examCode,
-                questionCount: selected.length,
-                examUrl: DEPLOYED_URL + '?exam=' + examCode,
-                reviewerName: reviewerName
-            }, {
-                reviewerName: reviewerName,
-                onSuccess: function() {
-                    saveExamHistory(examData);
-                    logAdminAction('考试', '生成试卷并推送飞书', reviewerName + ' · ' + examCode);
-                    btn.textContent = '✅ 已推送'; btn.style.background = '#27ae60';
-                }
-            });
-            }); // confirmRepush
-        };
     }
 
     async function openSharedReport(name) {
@@ -20951,10 +21165,11 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
             var optionsHtml = '';
             if (q.options && q.options.length > 0) {
                 optionsHtml = '<div style="margin-bottom:10px;"><strong>选项：</strong>' +
-                    q.options.map(function(o, i) { return '<div style="padding:4px 0;font-size:0.85rem;">' + String.fromCharCode(65+i) + '. ' + escapeHtml(o) + '</div>'; }).join('') + '</div>';
+                    q.options.map(function(o, i) { var l=(o&&typeof o==='object'&&o.key)?o.key:String.fromCharCode(65+i); var ims=optImages(o).map(function(tk){return photoTag({t:tk},60,60);}).join(''); return '<div style="padding:4px 0;font-size:0.85rem;">' + l + '. ' + escapeHtml(optText(o)) + ims + '</div>'; }).join('') + '</div>';
             }
             detailHtml = '<div style="font-weight:600;font-size:0.9rem;margin-bottom:6px;">' + escapeHtml(q.question) + '</div>' +
                 (q.screenshot ? '<div style="margin-bottom:8px;">' + photoTag(q.screenshot, 200, 180) + '</div>' : '') +
+                ((q.images && q.images.length) ? '<div style="margin-bottom:8px;">' + q.images.map(function(tk){ return photoTag({t:tk},200,180); }).join('') + '</div>' : '') +
                 optionsHtml +
                 '<div style="margin-bottom:4px;"><strong>答案：</strong><span style="color:#27ae60;">' + escapeHtml(q.answer || '暂无') + '</span></div>' +
                 (q.explanation ? '<div style="font-size:0.8rem;color:#5e6f8d;"><strong>解析：</strong>' + escapeHtml(q.explanation.substring(0,200)) + '</div>' : '');
@@ -21102,26 +21317,35 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
         currentExamAnswers._questions = questions;
         let questionsHtml = questions.map((q, idx) => {
             let answerArea = '';
+            // 选项渲染：兼容字符串数组与对象数组（源题 {key,text,images}）；选项图挂选项右侧
+            var renderOpt = function(opt, oi) {
+                var l = (opt && typeof opt === 'object' && opt.key) ? opt.key : String.fromCharCode(65+oi);
+                var im = optImages(opt).map(function(tk){ return photoTag({t:tk},50,50); }).join('');
+                if ((q.optionImages && q.optionImages[oi])) im += photoTag(q.optionImages[oi], 50, 50);
+                return l + '. ' + escapeHtml(optText(opt)) + im;
+            };
             if (q.type === 'choice' && q.options && q.options.length > 0) {
                 answerArea = '<div style="margin-top:8px;">' + q.options.map((opt, oi) => {
-                    var im = (q.optionImages && q.optionImages[oi]) ? photoTag(q.optionImages[oi], 50, 50) : '';
-                    return '<div class="exam-option" data-qidx="' + idx + '" data-oidx="' + oi + '">' + String.fromCharCode(65+oi) + '. ' + escapeHtml(opt) + im + '</div>';
+                    return '<div class="exam-option" data-qidx="' + idx + '" data-oidx="' + oi + '">' + renderOpt(opt, oi) + '</div>';
                 }).join('') + '</div>';
             } else if (q.type === 'multi' && q.options && q.options.length > 0) {
                 answerArea = '<div style="margin-top:8px;"><div style="font-size:0.7rem;color:#2a5298;margin-bottom:4px;">（多选题，可多选）</div>' + q.options.map((opt, oi) => {
-                    var im = (q.optionImages && q.optionImages[oi]) ? photoTag(q.optionImages[oi], 50, 50) : '';
-                    return '<div class="exam-option exam-option-multi" data-qidx="' + idx + '" data-oidx="' + oi + '">' + String.fromCharCode(65+oi) + '. ' + escapeHtml(opt) + im + '</div>';
+                    return '<div class="exam-option exam-option-multi" data-qidx="' + idx + '" data-oidx="' + oi + '">' + renderOpt(opt, oi) + '</div>';
                 }).join('') + '</div>';
             } else if (q.type === 'judge') {
                 answerArea = '<div style="margin-top:8px;display:flex;gap:8px;"><div class="exam-option" data-qidx="' + idx + '" data-oidx="0">✅ 正确</div><div class="exam-option" data-qidx="' + idx + '" data-oidx="1">❌ 错误</div></div>';
             } else {
                 answerArea = '<textarea class="exam-answer-text" data-qidx="' + idx + '" placeholder="请输入答案..." style="width:100%;padding:10px;border:1px solid #cbd5e1;border-radius:12px;font-size:0.85rem;min-height:60px;resize:vertical;margin-top:8px;"></textarea>';
             }
+            // 题目图：源题 fileToken 拉飞书原图（做题时放大显示），手动题截图直接显示
+            var qImgHtml = '';
+            if (q.images && q.images.length) qImgHtml = q.images.map(function(tk){ return photoTag({t:tk},280,220); }).join('');
             return `<div class="exam-question-item" id="qitem_${idx}">
                 <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;margin-bottom:4px;">
                     <div style="font-weight:600;flex:1;">${idx+1}. ${escapeHtml(q.question)}</div>
                     <button class="report-question-btn" id="rptbtn_${idx}" data-qid="${escapeHtml(q.id)}" data-qidx="${idx}" onclick="event.stopPropagation();reportQuestionInExam(this)" style="flex-shrink:0;background:transparent;border:1px solid #e67e22;color:#e67e22;padding:1px 8px;border-radius:10px;cursor:pointer;font-size:0.6rem;white-space:nowrap;">⚠️ 试题有问题</button>
                 </div>
+                ${qImgHtml}
                 ${q.screenshot ? photoTag(q.screenshot, 150, 120) : ''}
                 <div style="font-size:0.7rem;color:#94a3b8;">${q.productCategory?'🏷️ '+escapeHtml(q.productCategory)+' | ':''}类型：${q.type==='choice'?'选择题':(q.type==='multi'?'多选题':(q.type==='judge'?'判断题':'问答题'))} | 分类：${escapeHtml(q.category||'未分类')} | 难度：${escapeHtml(q.difficulty||'中等')}</div>
                 ${answerArea}
@@ -21295,7 +21519,7 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
     // 统一解析正确答案索引，兼容所有答案格式：
     // 1) 选项带 ✓ 前缀标记  2) 纯字母答案（A / AC / A、C）  3) 字母引导格式（A. xxx / C. xxx）  4) 文本答案按分隔符匹配选项文字
     function resolveCorrectIndexes(q) {
-        var opts = (q.options || []).map(function(o) { return String(o || '').trim(); });
+        var opts = (q.options || []).map(function(o) { return optText(o).trim(); });
         var ans = String(q.answer || '').trim();
         var idxs = [];
         // 1) 选项 ✓ 前缀标记
@@ -21358,10 +21582,10 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
                         if (/^[A-Fa-f]$/.test(ansC)) {
                             isCorrect = String.fromCharCode(65 + userAnswer) === ansC.toUpperCase();
                         } else if (q.options && q.options[userAnswer] !== undefined) {
-                            isCorrect = String(q.options[userAnswer]).trim() === ansC;
+                            isCorrect = optText(q.options[userAnswer]).trim() === ansC;
                         }
                     }
-                    userAnswerStr = (q.options && q.options[userAnswer] !== undefined) ? (String.fromCharCode(65 + userAnswer) + '. ' + String(q.options[userAnswer]).replace(/^✓\s*/, '')) : String.fromCharCode(65 + userAnswer);
+                    userAnswerStr = (q.options && q.options[userAnswer] !== undefined) ? (String.fromCharCode(65 + userAnswer) + '. ' + optText(q.options[userAnswer]).replace(/^✓\s*/, '')) : String.fromCharCode(65 + userAnswer);
                 }
             } else if (q.type === 'judge') {
                 if (userAnswer !== undefined && userAnswer !== null) {
@@ -21386,7 +21610,7 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
                     }
                     userAnswerStr = userAnswer.map(function(i) { return String.fromCharCode(65 + i); }).join('、');
                     if (q.options && q.options.length > 0) {
-                        userAnswerStr += '（' + userAnswer.map(function(i) { return String(q.options[i] || '').replace(/^✓\s*/, ''); }).join('；') + '）';
+                        userAnswerStr += '（' + userAnswer.map(function(i) { return optText(q.options[i]).replace(/^✓\s*/, ''); }).join('；') + '）';
                     }
                 }
             } else {
@@ -21435,9 +21659,10 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
                     '<div style="font-size:0.75rem;margin-top:4px;color:#c0392b;">❌ 你的答案：' + escapeHtml(wq.userAnswer || '未作答') + '</div>' +
                     '<div style="font-size:0.75rem;color:#27ae60;">✅ 正确答案：' + escapeHtml(wq.answer || '详见解析') + '</div>' +
                     (wq.options ? '<div style="font-size:0.7rem;color:#5e6f8d;margin-top:2px;">' + wq.options.map(function(o,i){
-                        var l = String.fromCharCode(65+i);
-                        var im = (wq.optionImages && wq.optionImages[i]) ? photoTag(wq.optionImages[i], 40, 40) : '';
-                        return l+'. '+escapeHtml((o||'').replace(/^✓\\s*/, ''))+im;
+                        var l = (o && typeof o === 'object' && o.key) ? o.key : String.fromCharCode(65+i);
+                        var im = optImages(o).map(function(tk){ return photoTag({t:tk},40,40); }).join('');
+                        if (wq.optionImages && wq.optionImages[i]) im += photoTag(wq.optionImages[i], 40, 40);
+                        return l+'. '+escapeHtml(optText(o).replace(/^✓\s*/, ''))+im;
                     }).join(' / ') + '</div>' : '') +
                 '</div>'; }).join('')}
             </div>` : '';
@@ -22401,6 +22626,8 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
                 else { renderSubContent('dashboard'); }
             }
         })();
+        // 题库本地为空时自动从云端/KV 自愈拉取（2026-09-05：本地空题库缓存不再挡住 KV 兜底数据）
+        setTimeout(function() { try { _qbSelfHeal(); } catch(e) {} }, 800);
         // 后台静默同步云端数据，有变化再刷新
         _syncPullAll().then(function(count) {
             if (count > 0) { try { loadData(); } catch(e) {} }
