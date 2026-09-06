@@ -11888,7 +11888,9 @@ URL.revokeObjectURL(url);
                 try { data = JSON.parse(rows[0].value); } catch(e) { data = null; }
             }
             if (data && (data.questions || []).length > 0) {
-                localStorage.setItem(QB_STORAGE_KEY, JSON.stringify(data));
+                // 2026-09-06 修复：原 setItem 无 try/catch，配额满时会把「数据已读到但写不进本地」误报成「云端没有数据」
+                try { localStorage.setItem(QB_STORAGE_KEY, JSON.stringify(data)); }
+                catch(e) { console.warn('⚠️ 题库已同步但本地写入失败: ' + e.message); }
                 if (callback) callback(data);
             } else if (callback) callback(null);
         }).catch(function() { if (callback) callback(null); });
@@ -12040,6 +12042,7 @@ URL.revokeObjectURL(url);
                 <h2 style="font-size:1.2rem;font-weight:700;color:#2d5a3f;margin:0;">📝 题库管理</h2>
                 <div class="qb-toolbar" style="margin-bottom:0;">
                     <button class="qb-btn-add admin-only" id="syncQBBtn">🔄 同步题库</button>
+                    <button class="qb-btn-add admin-only" id="gitHubSyncQBBtn" title="打开 GitHub 手动运行「题库定期同步」：从飞书总表拉取最新题目，等同周一自动同步（云端跑约 1-3 分钟，需在 GitHub 点 Run workflow）">⚡ GitHub同步飞书题库</button>
                     <button class="qb-btn-add admin-only" id="openAddQBBtn">➕ 添加题目（手动区）</button>
                     <button class="qb-btn-download admin-only" id="downloadQBBtn">📥 下载题库</button>
                     <button class="qb-btn-download admin-only" id="clearQBBtn" style="color:#c0392b;border-color:#e8c7c7 !important;">🗑️ 清空手动题</button>
@@ -12086,6 +12089,9 @@ URL.revokeObjectURL(url);
                 });
             };
             document.getElementById('openAddQBBtn').onclick = () => openAddQModal('手动录入题目');
+            // GitHub 手动触发飞书全量同步（等同周一自动同步；workflow 已配 workflow_dispatch，跳转后点 Run workflow 即可）
+            var gitHubSyncBtn = document.getElementById('gitHubSyncQBBtn');
+            if (gitHubSyncBtn) gitHubSyncBtn.onclick = function(){ window.open('https://github.com/jimu-111/youxuetang/actions/workflows/qb-weekly-sync.yml', '_blank'); };
             document.getElementById('downloadQBBtn').onclick = downloadQuestionBank;
             document.getElementById('clearQBBtn').onclick = clearQuestionBank;
         }, 50);
