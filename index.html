@@ -442,6 +442,10 @@
         }
 
         // 从 KV 构造 rows（读兜底），按原请求的过滤参数保持语义
+        // 2026-09-06 重构：原实现每请求全量 list + 逐 key GET 全部 KV（209 个），402 期间 5 分钟轮询
+        // 把 KV 免费读限额（10万/天）烧到 50% 触发 429 警告。改为：list 缓存 60 秒 + 只读命中 keyConds 的 key
+        var _kvListCache = null; var _kvListCacheTs = 0;
+        var _kvRowsCache = {}; // url -> { ts, rows }：45 秒结果缓存吸收轮询重读
         function kvFetchRows(url) {
             var q = {};
             (url.split('?')[1] || '').split('&').forEach(function(pair){
@@ -468,32 +472,50 @@
                 }
                 return true; // 未识别的操作符宽松放行（KV 兜底不追求完美语义）
             }
-            return _origFetch(KV_PAGES + '/data/list', { headers: { 'x-yxt-secret': KV_SECRET } })
-                .then(function(r){ return r.json(); })
-                .then(function(j){
-                    var keys = ((j && j.keys) || []).map(function(it){ return it.key; });
-                    // 合并本设备脏列表：刚写入的 key，KV list 有最终一致延迟，可能还没可见
-                    kvDirtyKeys().forEach(function(k){ if (keys.indexOf(k) < 0) keys.push(k); });
-                    return Promise.all(keys.map(function(k2){
-                        return _origFetch(KV_PAGES + '/data?key=' + encodeURIComponent(k2), { headers: { 'x-yxt-secret': KV_SECRET } })
-                            .then(function(r){ return r.json(); })
-                            .then(function(vj){
-                                var row = null;
-                                try { var o = JSON.parse(vj.value); row = { key: k2, value: o.v, updated_at: o.t }; } catch(e) {}
-                                return row;
-                            }).catch(function(){ return null; });
-                    }));
-                })
-                .then(function(rows){
-                    return rows.filter(function(row){
-                        if (!row || row.key === 'generatedReports') return false;
-                        for (var i = 0; i < keyConds.length; i++) {
-                            if (!matchKeyCond(keyConds[i], row.key)) return false;
-                        }
+            // 45 秒结果缓存：判责量/看板 5 分钟轮询同 URL 时直接复用，不重复打 KV
+            var cacheKey = url;
+            if (_kvRowsCache[cacheKey] && Date.now() - _kvRowsCache[cacheKey].ts < 45000) {
+                return Promise.resolve(_kvRowsCache[cacheKey].rows);
+            }
+            // list 只打一次，60 秒缓存
+            var listP = null;
+            if (_kvListCache && Date.now() - _kvListCacheTs < 60000) listP = Promise.resolve(_kvListCache);
+            else listP = _origFetch(KV_PAGES + '/data/list', { headers: { 'x-yxt-secret': KV_SECRET } })
+                .then(function(r){ return r.json(); }).then(function(j){
+                    _kvListCache = (j && j.keys) || []; _kvListCacheTs = Date.now();
+                    return _kvListCache;
+                }).catch(function(){ return null; });
+            return listP.then(function(list){
+                var allKeys = (list || []).map(function(it){ return it.key; });
+                // 合并本设备脏列表：刚写入的 key，KV list 有最终一致延迟，可能还没可见
+                kvDirtyKeys().forEach(function(k){ if (allKeys.indexOf(k) < 0) allKeys.push(k); });
+                // 关键优化：先用 keyConds 过滤出候选 key，只 GET 命中的（判责量增量查询通常只命中 1-2 个新日期 key）
+                var want = allKeys.filter(function(k){
+                    if (k === 'generatedReports') return false;
+                    for (var i = 0; i < keyConds.length; i++) {
+                        if (!matchKeyCond(keyConds[i], k)) return false;
+                    }
+                    return true;
+                });
+                if (keyConds.length === 0) want = allKeys; // 无 key 条件：维持全量语义
+                return Promise.all(want.map(function(k2){
+                    return _origFetch(KV_PAGES + '/data?key=' + encodeURIComponent(k2), { headers: { 'x-yxt-secret': KV_SECRET } })
+                        .then(function(r){ return r.json(); })
+                        .then(function(vj){
+                            var row = null;
+                            try { var o = JSON.parse(vj.value); row = { key: k2, value: o.v, updated_at: o.t }; } catch(e) {}
+                            return row;
+                        }).catch(function(){ return null; });
+                })).then(function(rows){
+                    var out = rows.filter(function(row){
+                        if (!row) return false;
                         if (q['updated_at'] && q['updated_at'].indexOf('gt.') === 0) return (row.updated_at || '') > q['updated_at'].slice(3);
                         return true;
                     });
-                }).catch(function(){ return []; });
+                    _kvRowsCache[cacheKey] = { ts: Date.now(), rows: out };
+                    return out;
+                });
+            }).catch(function(){ return []; });
         }
 
         // 探测 Supabase 是否恢复（直连，几字节，不包装）
@@ -9305,6 +9327,31 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
     // 之后显示走本地不再依赖飞书实时下载；未下载的由后台预热队列慢速补全本地化。
     var _photoInflight = {}; // 同一 token 单飞，避免自动加载与预热重复下载
     var _qbWarmupList = []; var _qbWarmupFail = {}; var _qbWarmupRunning = false;
+    // KV 图片查询开关（2026-09-06 KV 读限额 50% 事件后加）：
+    // KV 图片查询是为手机（无 localhost 线路）设计的，主电脑有 localhost 直连飞书，查 KV 纯浪费读限额。
+    // 启动探活一次 localhost：可用 → 主电脑，图片一律不再查 KV；不可用 → 手机，保留 KV 查询。
+    var _qbLocalOK = null; // null=探测中(先按手机处理，防首屏撞 15MB 原图) true=主电脑 false=手机
+    var _qbKVMiss = {}; // token -> 时间：KV 查无此图的记忆，600 秒内不重复查
+    function _qbShouldUseKV() { return _qbLocalOK !== true; }
+    function _qbProbeLocal() {
+        if (_qbLocalOK !== null) return;
+        fetch('http://localhost:3456/panze-local?after=2099-01-01').then(function(r) {
+            if (r.ok) {
+                _qbLocalOK = true;
+                console.log('[题库图片] 检测到本机代理，图片走直连，不查 KV（省读限额）');
+                // 主电脑补偿：把页面上现有占位图全部加入预热队列（探测前跳过的）
+                document.querySelectorAll('[data-ftoken]').forEach(function(el) {
+                    if (el.className && String(el.className).indexOf('photo-loadable') >= 0) _qbWarmupAdd(el.dataset.ftoken);
+                });
+            } else { _qbLocalOK = false; }
+        }).catch(function() {
+            _qbLocalOK = false;
+            console.log('[题库图片] 无本机代理，走 KV 压缩图查询（手机模式）');
+        });
+    }
+    // 手机预热无意义（会去下 15MB 原图拖垮设备），只有主电脑才预热
+    function _qbCanWarmup() { return _qbLocalOK === true; }
+    setTimeout(_qbProbeLocal, 1500);
 
     function _qbImgKey(token) { return 'qbimg_' + token; }
     function _qbImgPut(token, dataUrl) {
@@ -9344,15 +9391,18 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
         var key = _qbImgKey(token);
         if (window._imageCache && window._imageCache[key]) return Promise.resolve(window._imageCache[key]);
         if (_qbKVInflight[token]) return _qbKVInflight[token];
-        if (!FEISHU_PAGES_PROXY_URL) return Promise.resolve(null);
+        if (!FEISHU_PAGES_PROXY_URL || !_qbShouldUseKV()) return Promise.resolve(null);
+        // 查空记忆：600 秒内不重复查同一 token（KV 没有就是没有，别反复碰运气烧读限额）
+        if (_qbKVMiss[token] && Date.now() - _qbKVMiss[token] < 600000) return Promise.resolve(null);
         var p = fetch(FEISHU_PAGES_PROXY_URL + '/data?key=' + key, {
             headers: { 'x-yxt-secret': 'yxt-feishu-2026' }
         }).then(function(r) { return r.json(); }).then(function(j) {
-            if (!j || !j.value) return null;
+            if (!j || !j.value) { _qbKVMiss[token] = Date.now(); return null; }
             try {
                 var o = JSON.parse(j.value);
                 if (o && o.v && o.v.indexOf('data:image') === 0) { window._imageCache[key] = o.v; return o.v; }
             } catch(e) {}
+            _qbKVMiss[token] = Date.now();
             return null;
         }).catch(function() { return null; });
         _qbKVInflight[token] = p;
@@ -9395,6 +9445,7 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
     // 预热队列：静默逐个下载本地化（1.5s/张慢速，避免飞书限流），失败最多重试3次
     function _qbWarmupAdd(token) {
         if (!token || typeof token !== 'string' || token.length < 5) return;
+        if (!_qbCanWarmup()) return; // 手机不预热（下 15MB 原图拖垮设备还烧 KV/流量）
         if (_qbWarmupFail[token] >= 5) return; // 已重试多次仍失败的 token 不再自动入队（可能是飞书源文件已删）
         if (_qbWarmupList.indexOf(token) >= 0) return;
         if (_photoCache[token] || (window._imageCache && window._imageCache[_qbImgKey(token)])) return;
@@ -21869,6 +21920,52 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
     }
     _updateSyncBadge();
 
+    // ==================== localStorage 容量护栏（2026-09-06） ====================
+    // 背景：旧版题库图缓存写 localStorage 曾把配额顶满 → 题库等大键写入失败（QuotaExceededError）→ 页面"题库 0 题"
+    // 护栏：大键写入前检查剩余空间，不足时自动清理可再生物（图片缓存残留/旧报告/可重建快照）；核心业务数据绝不自动删
+    var _lsGuardTs = 0;
+    function _lsGuard() {
+        var now = Date.now();
+        if (now - _lsGuardTs < 10000) return; // 10 秒节流，避免频繁全量遍历卡顿
+        _lsGuardTs = now;
+        var used = 0, over = false;
+        try {
+            for (var i = 0; i < _realLS.length; i++) {
+                var k2 = _realLS.key(i), v2 = _realLS.getItem(k2);
+                if (k2 && typeof v2 === 'string') used += v2.length + k2.length + 2;
+                if (used > 4100000) { over = true; break; } // 剩余不足约 90 万字符即触发清理
+            }
+        } catch(e) {}
+        if (over) _lsCleanup();
+    }
+    function _lsCleanup() {
+        try {
+            // ① 图片缓存残留（qbimg_ 旧版题库图 / thumb_ 缩略图；IndexedDB 有副本，删了会自动重建，零风险）
+            var rm = [];
+            for (var i = 0; i < _realLS.length; i++) {
+                var k3 = _realLS.key(i);
+                if (k3 && (k3.indexOf('qbimg_') === 0 || k3.indexOf('thumb_') === 0)) rm.push(k3);
+            }
+            rm.forEach(function(k) { try { _realLS.removeItem(k); } catch(e) {} });
+            if (rm.length > 0) { console.log('🧹 容量护栏: 已清理图片缓存 ' + rm.length + ' 条'); return; }
+            // ② generatedReports 只保留最近 3 份（云端/KV 有镜像，删旧报告零风险）
+            try {
+                var gr = JSON.parse(_realLS.getItem('generatedReports') || '{}');
+                if (gr && typeof gr === 'object') {
+                    var gnames = Object.keys(gr);
+                    if (gnames.length > 3) {
+                        gnames.sort();
+                        gnames.slice(0, gnames.length - 3).forEach(function(n) { delete gr[n]; });
+                        _realLS.setItem('generatedReports', JSON.stringify(gr));
+                        console.log('🧹 容量护栏: 已裁剪旧报告至 3 份');
+                    }
+                }
+            } catch(e) {}
+            // ③ samplingCardCache 抽查卡 HTML 快照（可重建）
+            try { _realLS.removeItem('samplingCardCache'); console.log('🧹 容量护栏: 已清抽查卡快照'); } catch(e) {}
+        } catch(e) {}
+    }
+
     function _syncFlush() {
         var keys = Object.keys(_syncQueue);
         if (keys.length === 0) return;
@@ -21911,6 +22008,7 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
     });
 
     function _syncSetItem(key, value) {
+        if (key && typeof value === 'string' && value.length > 200000) _lsGuard(); // 大键写入前先过容量护栏（2026-09-06）
         _realLS.setItem(key, value);
         if (key && !key.startsWith('_')) {
             _syncQueue[key] = value;
