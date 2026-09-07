@@ -592,7 +592,10 @@
             setTimeout(probeLoop, 5 * 60 * 1000);
         }
 
-        // 首次运行：全量快照镜像 KV（保证读兜底有断流前历史数据）
+        // 首次运行：只镜像核心大 key 到 KV（2026-09-07 KV put 限额修复：原全量快照几百 key，
+        // 新设备/清缓存后一次就烧几百次 put；KV 仅是 402 兜底中转，历史数据以 Supabase 为准）
+        // 白名单=读兜底真正需要的核心数据；其余 key 402 期间按需随写入镜像
+        var KV_INIT_KEYS = ['trainee_full_admin_backup', 'questionBankData', 'learningPlanData', 'examHistoryData', 'trainingPushRecords', 'learnPlanPushRecords', 'adminPersonSiteMap'];
         function kvInitMirror() {
             try {
                 if (localStorage.getItem(KV_INIT_KEY)) return;
@@ -601,7 +604,7 @@
             var items = [];
             for (var i = 0; i < localStorage.length; i++) {
                 var k = localStorage.key(i);
-                if (k && !k.startsWith('_') && k !== 'generatedReports' && k !== 'feishu_token') {
+                if (k && KV_INIT_KEYS.indexOf(k) >= 0 && localStorage.getItem(k)) {
                     items.push({ key: k, v: localStorage.getItem(k), t: new Date().toISOString() });
                 }
             }
@@ -625,16 +628,23 @@
             }
             if (method === 'POST') {
                 var p = _origFetch.apply(this, arguments);
-                p.then(function(){
-                    try { kvMirrorWrite(init.body ? JSON.parse(init.body) : null); } catch(e) {}
+                p.then(function(resp){
+                    // 仅 Supabase 写入失败（402 配额耗尽等）时镜像 KV（2026-09-07 KV put 限额修复：
+                    // 原实现无条件镜像 → Supabase 正常时每台设备每次 flush 都烧 KV put，多设备一天超 1000 限额）
+                    // KV 只是 402 兜底中转站，Supabase 写成功时无需镜像
+                    if (!resp || !resp.ok) {
+                        try { kvMirrorWrite(init.body ? JSON.parse(init.body) : null); } catch(e) {}
+                    }
                 }).catch(function(){});
                 return p;
             }
             if (method === 'DELETE') {
                 var pd = _origFetch.apply(this, arguments);
-                pd.then(function(){
-                    var m = url.match(/key=eq\.([^&]+)/);
-                    if (m) kvMirrorWrite([{ key: decodeURIComponent(m[1]), value: null, updated_at: new Date().toISOString() }]);
+                pd.then(function(resp){
+                    if (!resp || !resp.ok) {
+                        var m = url.match(/key=eq\.([^&]+)/);
+                        if (m) kvMirrorWrite([{ key: decodeURIComponent(m[1]), value: null, updated_at: new Date().toISOString() }]);
+                    }
                 }).catch(function(){});
                 return pd;
             }
