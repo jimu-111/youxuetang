@@ -470,6 +470,22 @@
                     var re = new RegExp('^' + pat.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*') + '$');
                     return re.test(key);
                 }
+                // 2026-09-07 游客白名单流量优化：not.in./not.like./in. 三种过滤在 KV 兜底侧同样生效
+                if (cond.indexOf('not.in.') === 0) {
+                    var nv = cond.slice(7);
+                    if (nv.charAt(0) === '(' && nv.charAt(nv.length - 1) === ')') nv = nv.slice(1, -1);
+                    return nv.split(',').indexOf(key) < 0;
+                }
+                if (cond.indexOf('not.like.') === 0) {
+                    var npat = cond.slice(9);
+                    var nre = new RegExp('^' + npat.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*') + '$');
+                    return !nre.test(key);
+                }
+                if (cond.indexOf('in.') === 0) {
+                    var iv = cond.slice(3);
+                    if (iv.charAt(0) === '(' && iv.charAt(iv.length - 1) === ')') iv = iv.slice(1, -1);
+                    return iv.split(',').indexOf(key) >= 0;
+                }
                 return true; // 未识别的操作符宽松放行（KV 兜底不追求完美语义）
             }
             // 45 秒结果缓存：判责量/看板 5 分钟轮询同 URL 时直接复用，不重复打 KV
@@ -4308,6 +4324,66 @@
         }
     }
     // ===== Supabase 判责量结束 =====
+
+    // 按周期懒拉判责量（2026-09-07 流量优化）：游客启动不再预取全部判责日期，
+    // 看板分析切周期时只拉该周期内本地缺失的日期（in. 批量，100 天一块并行），拉过的日期本地缓存不再重复下载
+    var _panzeRangeFetching = null;
+    function ensurePanzeRange(startDate, endDate) {
+        if (!startDate || !endDate) return Promise.resolve(false);
+        if (_panzeRangeFetching) return _panzeRangeFetching;
+        var dayStrs = [];
+        var cur = new Date(startDate); var end = new Date(endDate);
+        while (cur <= end) {
+            dayStrs.push(cur.getFullYear() + '-' + String(cur.getMonth() + 1).padStart(2, '0') + '-' + String(cur.getDate()).padStart(2, '0'));
+            cur.setDate(cur.getDate() + 1);
+        }
+        var have = {};
+        (window._panzeAllData || []).forEach(function(d){ have[d.date] = true; });
+        var missing = dayStrs.filter(function(ds){ return !have[ds]; });
+        if (missing.length === 0) return Promise.resolve(false);
+        var chunks = [];
+        for (var ci = 0; ci < missing.length; ci += 100) chunks.push(missing.slice(ci, ci + 100));
+        _panzeRangeFetching = Promise.all(chunks.map(function(chunk){
+            var filter = 'key=in.(' + chunk.map(function(ds){ return 'feishu_panze_' + ds; }).join(',') + ')';
+            return fetch(SUPABASE_URL + '/rest/v1/app_data?' + filter + '&select=key,value', {
+                headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY }
+            }).then(function(r){ return r.json(); }).then(function(rows){
+                if (!Array.isArray(rows)) return 0;
+                var added = 0;
+                rows.forEach(function(row){
+                    try {
+                        var pd = JSON.parse(row.value);
+                        var ds = row.key.replace('feishu_panze_', '');
+                        if (ds === 'latest' || !pd.map) return;
+                        var existed = false;
+                        for (var i = 0; i < window._panzeAllData.length; i++) {
+                            if (window._panzeAllData[i].date === ds) {
+                                window._panzeAllData[i] = { date: ds, count: Object.keys(pd.map).length, total: panzeMapTotal(pd.map), map: pd.map };
+                                existed = true; break;
+                            }
+                        }
+                        if (!existed) window._panzeAllData.push({ date: ds, count: Object.keys(pd.map).length, total: panzeMapTotal(pd.map), map: pd.map });
+                        added++;
+                    } catch(e) {}
+                });
+                return added;
+            }).catch(function(){ return 0; });
+        })).then(function(results){
+            var total = results.reduce(function(a, b){ return a + b; }, 0);
+            if (total > 0) {
+                window._panzeAllData.sort(function(a, b){ return b.date.localeCompare(a.date); });
+                // 与 savePanzeCache 同格式（该函数在管理后台作用域内，此处直接写）
+                // 用 _realLS 纯本地写：不走同步代理，避免游客部分缓存 LWW 覆盖云端管理员全量缓存
+                try {
+                    var clean = window._panzeAllData.filter(function(it){ return it && /^\d{4}-\d{2}-\d{2}$/.test(it.date || ''); });
+                    _realLS.setItem('panzeSyncCacheV1', JSON.stringify({ fetchedAt: Date.now(), data: clean }));
+                } catch(e) {}
+            }
+            _panzeRangeFetching = null;
+            return total > 0;
+        }).catch(function(){ _panzeRangeFetching = null; return false; });
+        return _panzeRangeFetching;
+    }
 
     // ===== 从飞书拉取线上/实物抽检总量（与品控周报分析的抽检覆盖率数据源一致）=====
     // 抽检量 = 线上+实物抽检表（D6FewOnrhiyLX7kuNFEcdHSZntx）中周期内、站点按当前筛选口径的行数
@@ -8267,7 +8343,11 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
                 dateRange = customRange;
                 reportTitle = siteLabel + ' · ' + dateRange.start + ' 至 ' + dateRange.end;
             }
-            
+
+            // 判责量按周期懒拉（2026-09-07 流量优化）：游客启动不再预取全部判责日期，
+            // 分析切周期时只拉该周期内本地缺失的日期，拉完再继续分析（本地已缓存的日期 0 下载）
+            try { await ensurePanzeRange(dateRange.startDate, dateRange.endDate); } catch(e) {}
+
             const baseDate = dateRange.startDate;
             const periodRanges = [];
             
@@ -11881,7 +11961,8 @@ URL.revokeObjectURL(url);
                 var rows = JSON.parse(xhr.responseText);
                 if (rows && rows.length > 0 && rows[0].value) {
                     var data = JSON.parse(rows[0].value);
-                    localStorage.setItem(QB_STORAGE_KEY, rows[0].value);
+                    // 2026-09-07 流量优化：拉取写缓存用纯本地写，避免题库被镜像回云端（浪费出站流量）
+                    try { _realLS.setItem(QB_STORAGE_KEY, rows[0].value); } catch(e) {}
                     return migrateQBTypes(ensureQBCategories(data));
                 }
             }
@@ -11899,7 +11980,8 @@ URL.revokeObjectURL(url);
             }
             if (data && (data.questions || []).length > 0) {
                 // 2026-09-06 修复：原 setItem 无 try/catch，配额满时会把「数据已读到但写不进本地」误报成「云端没有数据」
-                try { localStorage.setItem(QB_STORAGE_KEY, JSON.stringify(data)); }
+                // 2026-09-07 流量优化：改纯本地写，避免题库被镜像回云端（游客设备拉取即推回，浪费出站流量）
+                try { _realLS.setItem(QB_STORAGE_KEY, JSON.stringify(data)); }
                 catch(e) { console.warn('⚠️ 题库已同步但本地写入失败: ' + e.message); }
                 if (callback) callback(data);
             } else if (callback) callback(null);
@@ -11956,6 +12038,8 @@ URL.revokeObjectURL(url);
     const QB_PAGE_SIZE = 20;
 
     function renderQuestionBank() {
+        // 题库懒加载（2026-09-07 流量优化）：点入题库页时本地为空才从云端/KV 拉，不再启动全量下载
+        try { _qbSelfHeal(); } catch(e) {}
         const container = document.getElementById('mainContent');
         const qb = getQuestionBank();
         // 按 order 字段排序分类（保持上传时的顺序）
@@ -21426,6 +21510,8 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
             var replacedCount = 0;
             var qb = getQuestionBank();
             var allQ = qb.questions || [];
+            // 2026-09-07 流量优化：题库懒拉后，补考替换题时本地可能无题库缓存——后台自愈拉取
+            if (allQ.length === 0) { try { _qbSelfHeal(); } catch(e) {} }
             var usedIds = {};
             wqs.forEach(function(wq) { usedIds[wq.id] = true; });
             wqs.forEach(function(wq) {
@@ -22062,14 +22148,26 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
         }
     }
 
-    function _syncPullAll(force) {
+    function _syncPullAll(force, mode) {
         // 云端权威同步（2026-09-07 重写）：拉取到的云端行一律覆盖本地，裁决依据=云端 updated_at（最后写云端者胜）
         // force=true（手动点 ☁️ 同步）→ 全量拉取（不用增量起点，保证任何设备点同步后看到的都是同一份云端内容）
-        // force 缺省（页面打开静默同步）→ 增量拉取，只下载自上次同步后有变化的数据（2026-09-03 流量优化）
-        // generatedReports（整份HTML报告）排除，打开报告链接时按需单拉（openSharedReport）
+        // mode='guest'（游客启动，2026-09-07 流量优化）→ 白名单：排除题库/判责/管理专属大 key，独立游标增量
+        // mode='exam'（考试直链 ?exam=）→ 只拉考试相关 key（学员答题不下载题库/学员全量）
+        // 其余（管理员启动/登录补拉/手动同步）→ 全表增量（原行为）
+        var _GUEST_EXCLUDE_LIST = 'questionBankData,generatedReports,adminAuditLog,trainingPushRecords,learnPlanPushRecords,samplingModule3Data,samplingModule3MistakeMap,reviewerTotalMistakeMap,newcomerAnalysisData,newcomerGlobalData,adminPersonSiteMap,biweeklyCases,knowledgeCases,autoPushQueue,departedReviewers,onboardingReviewers,panzeSyncCacheV1';
+        var _EXAM_KEYS_LIST = 'examHistoryData,reportedQuestions,reportedTraining,feishu_token,feishu_tenant_token';
+        // 游客与管理员各自独立增量游标：游客白名单拉取不推进管理员游标，登录后管理员增量不会漏掉「比白名单最新行更旧」的管理 key
+        var _cursorKey = (mode === 'guest' || mode === 'exam') ? '_lastGuestSyncAt' : '_lastCloudSyncAt';
         var _lastSyncAt = null;
-        try { _lastSyncAt = _realLS.getItem('_lastCloudSyncAt'); } catch(e) {}
-        var _pullUrl = SUPABASE_URL + '/rest/v1/app_data?select=*&order=updated_at.desc&key=neq.generatedReports';
+        try { _lastSyncAt = _realLS.getItem(_cursorKey); } catch(e) {}
+        var _pullUrl = SUPABASE_URL + '/rest/v1/app_data?select=*&order=updated_at.desc';
+        if (mode === 'guest') {
+            _pullUrl += '&key=not.in.(' + _GUEST_EXCLUDE_LIST + ')&key=not.like.feishu_panze*&key=not.like.auto_push_*';
+        } else if (mode === 'exam') {
+            _pullUrl += '&key=in.(' + _EXAM_KEYS_LIST + ')';
+        } else {
+            _pullUrl += '&key=neq.generatedReports';
+        }
         if (!force && _lastSyncAt) _pullUrl += '&updated_at=gt.' + encodeURIComponent(_lastSyncAt);
         var _maxCloudUpdated = null;
         return fetch(_pullUrl, {
@@ -22148,12 +22246,29 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
                     if (row.key && row.value !== null) _realLS.setItem(row.key, row.value);
                 });
             }
-            // 写回本次同步时间（增量拉取的下一次起点）
+            // 写回本次同步时间（增量拉取的下一次起点；游客写游客游标，管理员写管理员游标）
             if (_maxCloudUpdated) {
-                try { _realLS.setItem('_lastCloudSyncAt', _maxCloudUpdated); } catch(e) {}
+                try { _realLS.setItem(_cursorKey, _maxCloudUpdated); } catch(e) {}
             }
             return rows ? rows.length : 0;
         }).then(function(n){ _updateSyncBadge(); return n || 0; }).catch(function(){ _updateSyncBadge(); return 0; });
+    }
+
+    // 管理员登录补拉（2026-09-07 流量优化）：游客期间只同步了白名单数据，
+    // 登录后按本地完整性决定——老管理员设备（管理 key 齐全）走全表增量（没变≈0下载）；
+    // 新设备/清过缓存（缺管理专属 key）才 force 全量一次补齐。题库单独按需自愈
+    function _syncAfterAdminLogin() {
+        var _complete = false;
+        try {
+            _complete = !!(_realLS.getItem('adminAuditLog') && _realLS.getItem('adminPersonSiteMap') && _realLS.getItem('trainingPushRecords'));
+        } catch(e) {}
+        _syncPullAll(!_complete).then(function(count) {
+            if (count > 0) {
+                try { loadData(); } catch(e) {}
+                if (typeof currentNav !== 'undefined' && currentNav) { try { renderSubContent(currentNav); } catch(e) {} }
+            }
+        });
+        setTimeout(function() { try { _qbSelfHeal(); } catch(e) {} }, 500);
     }
 
     function _syncRemoveItem(key) {
@@ -22770,7 +22885,10 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
                 switchNav('dashboard');
             } else {
                 showLoginDialog().then(function(ok) {
-                    if (ok) { updateAdminUI(); buildSidebarAccordion(); switchNav('dashboard'); }
+                    if (ok) {
+                        updateAdminUI(); buildSidebarAccordion(); switchNav('dashboard');
+                        _syncAfterAdminLogin();
+                    }
                 });
             }
         });
@@ -22803,10 +22921,14 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
                 else { renderSubContent('dashboard'); }
             }
         })();
-        // 题库本地为空时自动从云端/KV 自愈拉取（2026-09-05：本地空题库缓存不再挡住 KV 兜底数据）
-        setTimeout(function() { try { _qbSelfHeal(); } catch(e) {} }, 800);
-        // 后台静默同步云端数据，有变化再刷新
-        _syncPullAll().then(function(count) {
+        // 题库自愈（2026-09-07 流量优化）：管理员启动才自愈；游客点入题库页时触发（renderQuestionBank 入口），不再全员启动拉题库
+        // 管理员或考试直链：提前自愈题库（补考替换错题时用得上）
+        if (isAdminMode() || initParams.get('exam')) setTimeout(function() { try { _qbSelfHeal(); } catch(e) {} }, 800);
+        // 后台静默同步云端数据，有变化再刷新（2026-09-07 流量优化：按模式过滤）
+        // 游客启动=白名单增量；考试直链=只拉考试 key；管理员启动=全表增量（原行为）
+        var _bootExam = initParams.get('exam');
+        var _bootPullMode = isAdminMode() ? 'all' : (_bootExam ? 'exam' : 'guest');
+        _syncPullAll(false, _bootPullMode).then(function(count) {
             if (count > 0) { try { loadData(); } catch(e) {} }
             // 学习计划同走云端权威覆盖（2026-09-07 统一语义）；分享链接场景渲染先于拉取完成、且不触发重渲染，不受影响
             if (initLearnPlan) { return; }
@@ -22815,9 +22937,10 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
                 try { renderSubContent(currentNav); } catch(e) {}
             }
         });
-        // 打开页面立刻后台预加载（不等云端同步，让失误看板秒开）
-        // 先确保token就绪，再加载数据
+        // 打开页面后台预加载（2026-09-07 流量优化：仅管理员启动预取判责量/自动推送/学习地图/失误看板；
+        // 游客点入对应页面时按需拉取，不再每次打开都全量下载）
         setTimeout(function(){
+            if (!isAdminMode()) return;
             migrateOldPushRecords();
             initAutoPush();
             // 自动加载每日判责量数据（无需进管理后台，增量：只拉比缓存最新日期新的，2026-09-03 流量优化）
