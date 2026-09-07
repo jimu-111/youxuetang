@@ -21920,6 +21920,14 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
     const _realLS = window.localStorage;
     let _syncQueue = {};
     let _syncTimer = null;
+    // 恢复上次未推送的队列（2026-09-07：Supabase 402 期间刷新页面不丢待推送改动；_ 前缀不经 proxy 不触发循环入队）
+    try {
+        var _savedQ = JSON.parse(_realLS.getItem('_syncPendingQueue') || '{}');
+        if (_savedQ && typeof _savedQ === 'object') {
+            Object.keys(_savedQ).forEach(function(k){ _syncQueue[k] = _savedQ[k]; });
+            if (Object.keys(_syncQueue).length > 0) setTimeout(function(){ _syncFlush().catch(function(){}); }, 5000);   // 启动 5 秒后补推
+        }
+    } catch(e) {}
 
     function _updateSyncBadge(){
         var t = localStorage.getItem('trainee_data_sync_time');
@@ -21983,24 +21991,30 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
     }
 
     var _syncRetryTimer = null;
+    var _syncRetryDelay = 60000;   // 重试退避起点 1 分钟（2026-09-07：30 秒太勤会推高 Cloudflare 请求数）
     function _syncFlush() {
         var keys = Object.keys(_syncQueue);
         if (keys.length === 0) return Promise.resolve(true);
         var batch = keys.map(function(k) { return { key: k, value: String(_syncQueue[k]), updated_at: new Date().toISOString() }; });
         _syncQueue = {};
+        try { _realLS.setItem('_syncPendingQueue', '{}'); } catch(e) {}
         return fetch(SUPABASE_URL + '/rest/v1/app_data', {
             method: 'POST',
             headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY, 'Content-Type': 'application/json', 'Prefer': 'resolution=merge-duplicates' },
             body: JSON.stringify(batch)
         }).then(function(r) {
             if (!r.ok) throw new Error('HTTP ' + r.status);
+            _syncRetryDelay = 60000;   // 成功重置退避
             return true;
         }).catch(function(err) {
-            // 推送失败：放回队列（离线/限流时不丢本地改动），30 秒后自动重试
+            // 推送失败：放回队列并持久化（402/离线时不丢本地改动，刷新页面也能恢复），指数退避重试
             batch.forEach(function(it) { if (_syncQueue[it.key] === undefined) _syncQueue[it.key] = it.value; });
+            try { _realLS.setItem('_syncPendingQueue', JSON.stringify(_syncQueue)); } catch(e) {}
             if (_syncRetryTimer) clearTimeout(_syncRetryTimer);
-            _syncRetryTimer = setTimeout(function(){ _syncFlush().catch(function(){}); }, 30000);
-            console.warn('⚠️ 云端推送失败，已暂存待重试: ' + (err && err.message));
+            var retryIn = _syncRetryDelay;
+            _syncRetryDelay = Math.min(_syncRetryDelay * 2, 600000);   // 1分钟→2→4→8→10分钟封顶
+            _syncRetryTimer = setTimeout(function(){ _syncFlush().catch(function(){}); }, retryIn);
+            console.warn('⚠️ 云端推送失败，已暂存待重试（' + Math.round(retryIn / 60000) + ' 分钟后重试）: ' + (err && err.message));
             return false;
         }).then(function(ok){ _updateSyncBadge(); return ok; });
     }
@@ -22042,6 +22056,7 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
         _realLS.setItem(key, value);
         if (key && !key.startsWith('_')) {
             _syncQueue[key] = value;
+            try { _realLS.setItem('_syncPendingQueue', JSON.stringify(_syncQueue)); } catch(e) {}   // 队列持久化（2026-09-07）
             if (_syncTimer) clearTimeout(_syncTimer);
             _syncTimer = setTimeout(_syncFlush, 2000);
         }
