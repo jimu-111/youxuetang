@@ -21972,16 +21972,27 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
         } catch(e) {}
     }
 
+    var _syncRetryTimer = null;
     function _syncFlush() {
         var keys = Object.keys(_syncQueue);
-        if (keys.length === 0) return;
+        if (keys.length === 0) return Promise.resolve(true);
         var batch = keys.map(function(k) { return { key: k, value: String(_syncQueue[k]), updated_at: new Date().toISOString() }; });
         _syncQueue = {};
-        fetch(SUPABASE_URL + '/rest/v1/app_data', {
+        return fetch(SUPABASE_URL + '/rest/v1/app_data', {
             method: 'POST',
             headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY, 'Content-Type': 'application/json', 'Prefer': 'resolution=merge-duplicates' },
             body: JSON.stringify(batch)
-        }).then(function(){ _updateSyncBadge(); }).catch(function(){ _updateSyncBadge(); });
+        }).then(function(r) {
+            if (!r.ok) throw new Error('HTTP ' + r.status);
+            return true;
+        }).catch(function(err) {
+            // 推送失败：放回队列（离线/限流时不丢本地改动），30 秒后自动重试
+            batch.forEach(function(it) { if (_syncQueue[it.key] === undefined) _syncQueue[it.key] = it.value; });
+            if (_syncRetryTimer) clearTimeout(_syncRetryTimer);
+            _syncRetryTimer = setTimeout(function(){ _syncFlush().catch(function(){}); }, 30000);
+            console.warn('⚠️ 云端推送失败，已暂存待重试: ' + (err && err.message));
+            return false;
+        }).then(function(ok){ _updateSyncBadge(); return ok; });
     }
 
     function _syncPushAll() {
@@ -21999,11 +22010,14 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
             body: JSON.stringify(batch)
         });
     }
-    // 侧边栏同步按钮点击事件（先拉后推，双向同步）
+    // 侧边栏同步按钮点击事件（2026-09-07 统一语义：云端权威）
+    // ① 先把本机未推送的改动推上云端（防丢）→ ② 全量拉取云端 → ③ 云端内容覆盖本地 → ④ 刷新显示云端最新
     document.getElementById('sidebarSyncBadge').addEventListener('click', function(){
         var badge = document.getElementById('sidebarSyncBadge');
         if (badge) { badge.textContent = '☁️ 同步中…'; badge.style.color = '#4fc3f7'; }
-        _syncPullAll().then(function(){
+        _syncFlush().then(function(){
+            return _syncPullAll(true);
+        }).then(function(){
             localStorage.setItem('trainee_data_sync_time', new Date().toISOString());
             _updateSyncBadge();
             location.reload();
@@ -22023,13 +22037,15 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
         }
     }
 
-    function _syncPullAll() {
-        // 增量拉取：只下载自上次同步后有变化的数据（2026-09-03 流量优化）
+    function _syncPullAll(force) {
+        // 云端权威同步（2026-09-07 重写）：拉取到的云端行一律覆盖本地，裁决依据=云端 updated_at（最后写云端者胜）
+        // force=true（手动点 ☁️ 同步）→ 全量拉取（不用增量起点，保证任何设备点同步后看到的都是同一份云端内容）
+        // force 缺省（页面打开静默同步）→ 增量拉取，只下载自上次同步后有变化的数据（2026-09-03 流量优化）
         // generatedReports（整份HTML报告）排除，打开报告链接时按需单拉（openSharedReport）
         var _lastSyncAt = null;
         try { _lastSyncAt = _realLS.getItem('_lastCloudSyncAt'); } catch(e) {}
         var _pullUrl = SUPABASE_URL + '/rest/v1/app_data?select=*&order=updated_at.desc&key=neq.generatedReports';
-        if (_lastSyncAt) _pullUrl += '&updated_at=gt.' + encodeURIComponent(_lastSyncAt);
+        if (!force && _lastSyncAt) _pullUrl += '&updated_at=gt.' + encodeURIComponent(_lastSyncAt);
         var _maxCloudUpdated = null;
         return fetch(_pullUrl, {
             headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY }
@@ -22046,67 +22062,21 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
                         try { cloudToken = JSON.parse(row.value); } catch(e) {}
                         if (localToken && cloudToken && localToken.expiresAt > cloudToken.expiresAt) return;
                     }
-                    // 学习计划数据不被云端旧数据覆盖
-                    if (row.key === 'learningPlanData') {
-                        var existingLP = _realLS.getItem('learningPlanData');
-                        if (existingLP) {
-                            try {
-                                var curLP = JSON.parse(existingLP);
-                                var cloudLP = JSON.parse(row.value);
-                                if (Object.keys(curLP).length >= Object.keys(cloudLP).length) return;
-                            } catch(e) {}
-                        }
-                    }
-                    // 学员数据：时间戳同步，老数据无时间戳时推本地到云端兜底
+                    // 学员数据：云端权威覆盖本地（2026-09-07 统一语义：拉取即云端覆盖，时间戳以云端 updated_at 为准）
                     if (row.key === 'trainee_full_admin_backup') {
-                        var localStu = _realLS.getItem('trainee_full_admin_backup');
-                        // 本地无数据 → 从云端拉取（而非跳过）
-                        if (!localStu) {
-                            _realLS.setItem(row.key, row.value);
-                            _realLS.setItem('trainee_data_sync_time', row.updated_at || new Date().toISOString());
-                            return;
-                        }
-                        var cloudTime = row.updated_at ? new Date(row.updated_at).getTime() : 0;
-                        var localTime = _realLS.getItem('trainee_data_sync_time');
-                        localTime = localTime ? new Date(localTime).getTime() : 0;
-                        // 本地无时间戳 → 推本地到云端（初始化）
-                        if (!localTime) {
-                            fetch(SUPABASE_URL + '/rest/v1/app_data', {
-                                method: 'POST',
-                                headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY, 'Content-Type': 'application/json', 'Prefer': 'resolution=merge-duplicates' },
-                                body: JSON.stringify([{ key: 'trainee_full_admin_backup', value: localStu, updated_at: new Date().toISOString() }])
-                            }).catch(function() {});
-                            _realLS.setItem('trainee_data_sync_time', new Date().toISOString());
-                            return;
-                        }
-                        // 云端更新 → 拉云端到本地
-                        if (cloudTime > localTime) {
-                            _realLS.setItem(row.key, row.value);
-                            _realLS.setItem('trainee_data_sync_time', row.updated_at || new Date().toISOString());
-                            return;
-                        }
-                        // 本地更新 → 推本地到云端
-                        if (localTime > cloudTime) {
-                            fetch(SUPABASE_URL + '/rest/v1/app_data', {
-                                method: 'POST',
-                                headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY, 'Content-Type': 'application/json', 'Prefer': 'resolution=merge-duplicates' },
-                                body: JSON.stringify([{ key: 'trainee_full_admin_backup', value: localStu, updated_at: new Date().toISOString() }])
-                            }).catch(function() {});
-                            _realLS.setItem('trainee_data_sync_time', new Date().toISOString());
-                            return;
-                        }
+                        _realLS.setItem(row.key, row.value);
+                        _realLS.setItem('trainee_data_sync_time', row.updated_at || new Date().toISOString());
+                        return;
                     }
-                    // 推送记录/考试历史：比较本地和云端，数据多的为准，少的同步到多的
-                    var syncKeys = ['trainingPushRecords','learnPlanPushRecords','examHistoryData','reportedQuestions','reportedTraining','questionBankData'];
-                    if (syncKeys.indexOf(row.key) >= 0) {
+                    // 考试历史：按考试逐条合并取进度更新的一方（学员端/管理端状态推进，不能裸覆盖丢状态）——唯一保留合并语义的 key（2026-09-07）
+                    if (row.key === 'examHistoryData') {
                         var localRaw = _realLS.getItem(row.key);
                         if (!localRaw) { _realLS.setItem(row.key, row.value); return; }
                         if (localRaw === row.value) return;
                         try {
                             var localData = JSON.parse(localRaw);
                             var cloudData = JSON.parse(row.value);
-                            // 考试历史：按考试逐条合并取进度更新的一方，避免管理端旧数据覆盖学员端已更新的状态
-                            if (row.key === 'examHistoryData' && localData && cloudData && !Array.isArray(localData) && !Array.isArray(cloudData)) {
+                            if (localData && cloudData && !Array.isArray(localData) && !Array.isArray(cloudData)) {
                                 var mergedH = mergeExamHistories(localData, cloudData);
                                 var mergedRaw = JSON.stringify(mergedH);
                                 _realLS.setItem(row.key, mergedRaw);
@@ -22119,22 +22089,14 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
                                 try { _examCloudLastTime = new Date().toISOString(); localStorage.setItem('_examCloudTime', _examCloudLastTime); } catch(e) {}
                                 return;
                             }
-                            var localCount = Array.isArray(localData) ? localData.length : Object.keys(localData).length;
-                            var cloudCount = Array.isArray(cloudData) ? cloudData.length : Object.keys(cloudData).length;
-                            if (localCount >= cloudCount) {
-                                // 本地更多/相等→推本地到云端
-                                fetch(SUPABASE_URL + '/rest/v1/app_data', {
-                                    method: 'POST',
-                                    headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY, 'Content-Type': 'application/json', 'Prefer': 'resolution=merge-duplicates' },
-                                    body: JSON.stringify({ key: row.key, value: localRaw, updated_at: new Date().toISOString() })
-                                }).catch(function() {});
-                            } else {
-                                // 云端更多→拉云端到本地
-                                _realLS.setItem(row.key, row.value);
-                            }
-                        } catch(e) { _realLS.setItem(row.key, row.value); }
+                        } catch(e) {}
+                        // 结构异常兜底：云端覆盖
+                        _realLS.setItem(row.key, row.value);
                         return;
                     }
+                    // 题库/推送记录/上报记录（trainingPushRecords、learnPlanPushRecords、reportedQuestions、
+                    // reportedTraining、questionBankData）：2026-09-07 统一为云端权威覆盖——不再按条数比较、
+                    // 不再本地反向推送（旧设备打开页面也不再把旧快照盖回云端），裁决只看云端 updated_at
                     // 审计日志：云端旧数据裁剪为最近 200 条并回推（2026-09-03 流量优化，云端收敛）
                     if (row.key === 'adminAuditLog') {
                         try {
@@ -22156,8 +22118,8 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
                         if (!_realLS.getItem(row.key)) _realLS.setItem(row.key, row.value);
                         return;
                     }
-                    // 跳过已由上方同步逻辑处理的 key，以及仅本地管理的同步时间
-                    if (row.key === 'trainee_full_admin_backup' || row.key === 'trainee_data_sync_time') return;
+                    // trainee_data_sync_time 是仅本地管理的同步时间戳；其余所有 key 一律云端覆盖本地（2026-09-07 统一语义）
+                    if (row.key === 'trainee_data_sync_time') return;
                     if (row.key && row.value !== null) _realLS.setItem(row.key, row.value);
                 });
             }
@@ -22771,9 +22733,7 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
             if (sbLP) sbLP.style.display = 'none';
             var mcLP = document.getElementById('mainContent');
             if (mcLP) { mcLP.style.padding = '0'; mcLP.style.marginLeft = '0'; }
-            // 先保存本地数据副本，防止云端同步覆盖
-            var _lpBackup = localStorage.getItem('learningPlanData');
-            // 直接从本地读取，不等云端同步
+            // 直接从本地读取渲染（不等云端同步），随后拉取会按云端权威覆盖学习计划数据（2026-09-07）
             setTimeout(function(){ renderLearningPlanView(initLearnPlan); }, 100);
         }
         // 初始化侧边栏手风琴
@@ -22823,8 +22783,7 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
         // 后台静默同步云端数据，有变化再刷新
         _syncPullAll().then(function(count) {
             if (count > 0) { try { loadData(); } catch(e) {} }
-            // 恢复学习计划数据（防止云端同步覆盖本地新数据）
-            if (initLearnPlan && _lpBackup) { localStorage.setItem('learningPlanData', _lpBackup); }
+            // 学习计划同走云端权威覆盖（2026-09-07 统一语义）；分享链接场景渲染先于拉取完成、且不触发重渲染，不受影响
             if (initLearnPlan) { return; }
             // 云端有新数据时静默刷新当前页面
             if (count > 0 && typeof currentNav !== 'undefined' && currentNav) {
