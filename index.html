@@ -1331,7 +1331,7 @@
             const archiveBtn = modalElement.querySelector('#manualArchiveBtn');
             if(archiveBtn) archiveBtn.onclick = async () => {
                 if(await showConfirm("是否将此学员信息归档？", '📦')){
-                    if(student.manualArchiveToGraduation()){ saveToLocal(); modalElement.remove(); renderFrontend(); alert(`学员 "${student.name}" 已手动归档到档案馆`); } 
+                    if(student.manualArchiveToGraduation()){ saveToLocal(); logAdminAction('学员管理', '归档学员', student.name + '（ID ' + student.id + '）→ 档案馆'); modalElement.remove(); renderFrontend(); alert(`学员 "${student.name}" 已手动归档到档案馆`); }
                     else { alert("归档失败"); }
                 }
             };
@@ -1616,7 +1616,10 @@
             <div class="modal-body">
                 <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
                     <div class="city-tabs" id="feAdminCityTabs">${cityBtns}</div>
-                    <button id="feAddStudentBtn" class="primary" style="border-radius:20px;">➕ 添加学员</button>
+                    <div style="display:flex;gap:8px;">
+                        <button id="feRecycleBtn" style="border-radius:20px;background:#fef2f2;border:1px solid #fecaca;color:#c0392b;padding:8px 16px;cursor:pointer;font-size:0.85rem;font-weight:600;">🗑️ 回收站</button>
+                        <button id="feAddStudentBtn" class="primary" style="border-radius:20px;">➕ 添加学员</button>
+                    </div>
                 </div>
                 <div class="admin-table-container"><table class="admin-table"><thead><tr><th>头像</th><th>姓名</th><th>站点</th><th>入职日期</th><th>当前阶段</th><th>操作</th></tr></thead><tbody>${tableRows||'<tr><td colspan="6" style="text-align:center;padding:40px;">暂无学员数据</td></tr>'}</tbody></table></div>
             </div>
@@ -1627,6 +1630,7 @@
         overlay.querySelectorAll('#feAdminCityTabs .city-btn').forEach(btn=>{
             btn.addEventListener('click',()=>{ currentCity=btn.dataset.city; overlay.remove(); showFrontendAdminModal(); });
         });
+        overlay.querySelector('#feRecycleBtn')?.addEventListener('click',()=>{ if(!isAdminMode()){showToast('❌ 请先登录管理员','warning');return;} showRecycleBinModal(overlay); });
         overlay.querySelector('#feAddStudentBtn')?.addEventListener('click',()=>showAddStudentModal(overlay));
         overlay.querySelectorAll('.fe-admin-avatar').forEach(img=>{img.addEventListener('click',()=>showAvatarManageModal(parseInt(img.dataset.id), overlay));});
         overlay.querySelectorAll('.edit-student').forEach(btn=>{btn.addEventListener('click',()=>{if(!isAdminMode()){showToast('❌ 请先登录管理员','warning');return;} showEditStudentModal(parseInt(btn.dataset.id), overlay);});});
@@ -1640,6 +1644,7 @@
                     students=students.filter(function(s){return s.id!==sid;});
                     if(currentPanoramaStudentId===sid) currentPanoramaStudentId=students[0]?.id;
                     saveToLocal();
+                    logAdminAction('学员管理', '删除学员', (stu?stu.name+'':'学员ID '+sid) + '（' + (stu&&stu.site?stu.site:'?') + '，ID '+sid+'）→ 回收站可恢复3天');
                     overlay.remove();
                     showToast('✅ 已删除', 'success');
                     showFrontendAdminModal();
@@ -1725,6 +1730,47 @@
         });
     }
 
+    // 回收站弹窗：列出 3 天内被删学员，可一键恢复（2026-09-08 补，此前只有删除没有恢复入口）
+    function showRecycleBinModal(parentOverlay){
+        cleanExpiredRecycle();
+        const bin = getRecycleBin();
+        const rbOverlay = document.createElement('div');
+        rbOverlay.className = 'modal-overlay';
+        rbOverlay.style.display = 'flex';
+        rbOverlay.style.zIndex = '10001';
+        const rows = bin.length > 0 ? bin.map(s =>
+            '<tr><td style="font-weight:600;color:#1f3a6b;">' + escapeHtml(s.name) + '</td>' +
+            '<td>' + escapeHtml(s.site||'') + '</td>' +
+            '<td>' + escapeHtml(s.joinDate||'') + '</td>' +
+            '<td style="color:#94a3b8;font-size:0.75rem;">' + new Date(s._deletedAt).toLocaleString('zh-CN') + '</td>' +
+            '<td><button class="restore-bin-btn" data-id="' + s.id + '" style="background:#f0fdf4;border:1px solid #86efac;color:#166534;padding:4px 14px;border-radius:16px;cursor:pointer;font-size:0.78rem;font-weight:600;">♻️ 恢复</button></td></tr>'
+        ).join('') : '<tr><td colspan="5" style="text-align:center;padding:30px;color:#94a3b8;">回收站为空（被删学员保留 3 天后自动清除）</td></tr>';
+        rbOverlay.innerHTML = '<div class="modal-container" style="max-width:640px;">' +
+            '<div class="modal-header"><span>🗑️ 回收站（保留 3 天）</span><button class="modal-close-btn">✕</button></div>' +
+            '<div class="modal-body">' +
+                '<div class="admin-table-container"><table class="admin-table"><thead><tr><th>姓名</th><th>站点</th><th>入职日期</th><th>删除时间</th><th>操作</th></tr></thead><tbody>' + rows + '</tbody></table></div>' +
+                '<div style="text-align:center;margin-top:12px;font-size:0.72rem;color:#94a3b8;">恢复后学员回到列表，阶段进度与资料完整保留</div>' +
+            '</div></div>';
+        document.body.appendChild(rbOverlay);
+        rbOverlay.querySelector('.modal-close-btn').onclick = () => rbOverlay.remove();
+        rbOverlay.addEventListener('click', (e) => { if(e.target === rbOverlay) rbOverlay.remove(); });
+        rbOverlay.querySelectorAll('.restore-bin-btn').forEach(btn => {
+            btn.addEventListener('click', async () => {
+                if (!isAdminMode()) { showToast('❌ 请先登录管理员','warning'); return; }
+                const sid = parseInt(btn.dataset.id);
+                const stu = restoreFromRecycle(sid);
+                if (!stu) { showToast('❌ 恢复失败（可能已过期自动清除）','error'); rbOverlay.remove(); showRecycleBinModal(parentOverlay); return; }
+                students.push(stu);
+                saveToLocal();
+                logAdminAction('学员管理', '恢复学员', stu.name + '（ID ' + sid + '，' + (stu.site||'?') + '）← 从回收站恢复');
+                rbOverlay.remove();
+                if (parentOverlay) { parentOverlay.remove(); showFrontendAdminModal(); }
+                renderFrontend();
+                showToast('✅ 已恢复学员 ' + stu.name, 'success');
+            });
+        });
+    }
+
     function showAddStudentModal(parentOverlay){
         let uploadedAvatar = '';
         const addOverlay = document.createElement('div');
@@ -1807,6 +1853,7 @@
             stu.stage = stage;
             students.push(stu);
             saveToLocal();
+            logAdminAction('学员管理', '添加学员', name + '（ID ' + stu.id + '）→ ' + site + '，入职 ' + joinDate + '，初始阶段' + (stage+1));
             // 联动：人员变动（入职）+ 人员管理（站点）+ 邮箱管理（姓名/邮箱），无邮箱发卡片给徐行补录
             linkNewStudent(name, site, joinDate, email);
             addOverlay.remove();
@@ -2783,7 +2830,16 @@
     function addToRecycleBin(stu){var bin=getRecycleBin();stu._deletedAt=Date.now();bin.push(stu);saveRecycleBin(bin);cleanExpiredRecycle();}
     function cleanExpiredRecycle(){var bin=getRecycleBin();var cutoff=Date.now()-3*86400000;bin=bin.filter(function(s){return s._deletedAt>cutoff;});saveRecycleBin(bin);}
     function restoreFromRecycle(sid){var bin=getRecycleBin();var idx=bin.findIndex(function(s){return s.id===sid;});if(idx<0)return null;var stu=bin[idx];bin.splice(idx,1);saveRecycleBin(bin);delete stu._deletedAt;return stu;}
-    cleanExpiredRecycle();    }
+    cleanExpiredRecycle();
+    // 2026-09-08 修复：回收站函数原先定义在 loadData 局部作用域——删除学员按钮/回收站弹窗
+    // 在全局调用 addToRecycleBin 会 ReferenceError（当前线上版删除学员实际是坏的）。
+    // loadData 每次执行都重新定义这批函数，此处挂到全局供删除/恢复按钮调用
+    window.getRecycleBin = getRecycleBin;
+    window.saveRecycleBin = saveRecycleBin;
+    window.addToRecycleBin = addToRecycleBin;
+    window.restoreFromRecycle = restoreFromRecycle;
+    window.cleanExpiredRecycle = cleanExpiredRecycle;
+    }
     
     function initDefault(){
         students=[];
@@ -23597,12 +23653,20 @@ updateAdminUI();
             var errDiv = document.getElementById('editStuError');
             if (!name) { errDiv.textContent = '请输入学员姓名'; errDiv.style.display = 'block'; return; }
             if (!joinDate) { errDiv.textContent = '请选择入职日期'; errDiv.style.display = 'block'; return; }
+            var _eb = { name: stu.name, site: stu.site, joinDate: stu.joinDate, stage: stu.stage };
             stu.name = name;
             stu.site = site;
             stu.joinDate = joinDate;
             stu.stage = stage;
             if (uploadedAvatar) stu.avatar = uploadedAvatar;
             saveToLocal();
+            var _chg = [];
+            if (_eb.name !== name) _chg.push('姓名 ' + _eb.name + '→' + name);
+            if (_eb.site !== site) _chg.push('站点 ' + _eb.site + '→' + site);
+            if (_eb.joinDate !== joinDate) _chg.push('入职 ' + (_eb.joinDate||'空') + '→' + joinDate);
+            if (_eb.stage !== stage) _chg.push('阶段' + (_eb.stage+1) + '→阶段' + (stage+1));
+            if (uploadedAvatar && uploadedAvatar !== _eb.avatar) _chg.push('更换头像');
+            logAdminAction('学员管理', '编辑学员', name + '（ID ' + sid + '）' + (_chg.length ? '：' + _chg.join('；') : '（无字段变化）'));
             // 直连推送云端
             (function(){
                 var url = 'https://zfxwnixlvdxawoylhgxj.supabase.co';
