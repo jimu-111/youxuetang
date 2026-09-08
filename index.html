@@ -428,10 +428,26 @@
             try { localStorage.setItem(KV_DIRTY_KEY, JSON.stringify(list)); } catch(e) {}
         }
 
+        // 防污染守卫（2026-09-08）：空壳/结构空数据禁止镜像 KV——9-07 空缓存设备首次快照把
+        // 空题库(0题)+极少学员覆盖进 KV，防旧覆盖只挡旧时间戳不防空导致污染停留一天
+        function _kvEmptyValue(v, key) {
+            if (v === null || v === undefined) return false; // 墓碑（删除标记）合法放行
+            var tv = String(v).trim();
+            if (!tv || tv === 'null' || tv === '[]' || tv === '{}' || tv === '""') return true;
+            // 结构空特判：题库 0 题（categories:{} + questions:[]）序列化后不是空壳字符串，需解析判断
+            if (key === 'questionBankData') {
+                try { var q = JSON.parse(tv); if (!q || !q.questions || q.questions.length === 0) return true; } catch(e) {}
+            }
+            if (key === 'trainee_full_admin_backup') {
+                try { var a = JSON.parse(tv); if (!Array.isArray(a) || a.length === 0) return true; } catch(e) {}
+            }
+            return false;
+        }
+
         // 镜像写 KV（批量）：body 为数组 [{key,value,updated_at}] 或单对象；排除 generatedReports（HTML 报告太大不进 KV）
         function kvMirrorWrite(rows) {
             var arr = Array.isArray(rows) ? rows : [rows];
-            var items = arr.filter(function(r){ return r && r.key && !String(r.key).startsWith('_') && r.key !== 'generatedReports' && r.key !== 'feishu_token'; })
+            var items = arr.filter(function(r){ return r && r.key && !String(r.key).startsWith('_') && r.key !== 'generatedReports' && r.key !== 'feishu_token' && !_kvEmptyValue(r.value, r.key); })
                 .map(function(r){ return { key: r.key, v: r.value !== undefined && r.value !== null ? String(r.value) : null, t: r.updated_at || new Date().toISOString() }; });
             if (items.length === 0) return;
             _origFetch(KV_PAGES + '/data', {
@@ -621,15 +637,28 @@
             for (var i = 0; i < localStorage.length; i++) {
                 var k = localStorage.key(i);
                 if (k && KV_INIT_KEYS.indexOf(k) >= 0 && localStorage.getItem(k)) {
-                    items.push({ key: k, v: localStorage.getItem(k), t: new Date().toISOString() });
+                    var v = localStorage.getItem(k);
+                    // 防污染加固（2026-09-08）：本地空壳/结构空（如空题库 0 题）不参与首次快照
+                    if (_kvEmptyValue(v, k)) continue;
+                    items.push({ key: k, v: v, t: new Date().toISOString() });
                 }
             }
             if (items.length === 0) return;
-            _origFetch(KV_PAGES + '/data', {
-                method: 'POST',
-                headers: { 'x-yxt-secret': KV_SECRET, 'Content-Type': 'application/json' },
-                body: JSON.stringify({ items: items })
-            }).then(function(resp){ if (resp.ok) kvSetDirty(items.map(function(it){ return it.key; })); }).catch(function(){});
+            // 防污染加固（2026-09-08）：快照前先查 KV 已有版本——已存在的 key 不参与快照
+            // （权威数据已在中转站，等写入方自然更新；防新设备/演示设备本地少量数据覆盖云端权威）
+            _origFetch(KV_PAGES + '/data/list', { headers: { 'x-yxt-secret': KV_SECRET } })
+                .then(function(r){ return r.json(); }).then(function(j){
+                    var exist = {};
+                    ((j && j.keys) || []).forEach(function(it){ exist[it.key] = 1; });
+                    return items.filter(function(it){ return !exist[it.key]; });
+                }).catch(function(){ return items; }).then(function(fresh){
+                    if (!fresh || fresh.length === 0) return;
+                    _origFetch(KV_PAGES + '/data', {
+                        method: 'POST',
+                        headers: { 'x-yxt-secret': KV_SECRET, 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ items: fresh })
+                    }).then(function(resp){ if (resp.ok) kvSetDirty(fresh.map(function(it){ return it.key; })); }).catch(function(){});
+                });
         }
 
         // 包装 fetch：写 app_data 镜像 KV；读 app_data 失败转 KV
