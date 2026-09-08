@@ -22307,18 +22307,45 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
                     // 题库/推送记录/上报记录（trainingPushRecords、learnPlanPushRecords、reportedQuestions、
                     // reportedTraining、questionBankData）：2026-09-07 统一为云端权威覆盖——不再按条数比较、
                     // 不再本地反向推送（旧设备打开页面也不再把旧快照盖回云端），裁决只看云端 updated_at
-                    // 审计日志：云端旧数据裁剪为最近 200 条并回推（2026-09-03 流量优化，云端收敛）
+                    // 审计日志：幂等合并（2026-09-08 事故4 防重演）——旧逻辑云端 ≤200 条会落入下方
+                    // 「云端权威覆盖本地」：Supabase 402 冻结期日志停在旧 200 条，解冻后 force 拉取会把
+                    // 本地 9-08 之后的新日志顶掉，且下次操作把旧版回推 → 污染真云端（KV 事故 4 在 Supabase 重演）。
+                    // 改为：云端 ∪ 本地 → 同 id 去重（后到者带 ip 则补全）→ 按 time 升序取最近 200 →
+                    // 与本地有差异才写本地并回推云端。幂等合并不会循环（两端同内容合并结果相同，无变化不 POST）。
+                    // 对 KV 兜底同样生效：402 期间 fetch 失败自动换 KV rows，走的是同一个 forEach 应用循环。
                     if (row.key === 'adminAuditLog') {
                         try {
                             var _aud = JSON.parse(row.value);
-                            if (Array.isArray(_aud) && _aud.length > 200) {
-                                var _audTrimmed = JSON.stringify(_aud.slice(_aud.length - 200));
-                                _realLS.setItem(row.key, _audTrimmed);
-                                fetch(SUPABASE_URL + '/rest/v1/app_data', {
-                                    method: 'POST',
-                                    headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY, 'Content-Type': 'application/json', 'Prefer': 'resolution=merge-duplicates' },
-                                    body: JSON.stringify({ key: 'adminAuditLog', value: _audTrimmed, updated_at: new Date().toISOString() })
-                                }).catch(function() {});
+                            if (Array.isArray(_aud)) {
+                                if (_aud.length > 200) _aud = _aud.slice(_aud.length - 200);
+                                var _audRaw0 = _realLS.getItem(row.key);
+                                var _audLocal = null;
+                                try { _audLocal = JSON.parse(_audRaw0); } catch(e) {}
+                                if (Array.isArray(_audLocal) && _audLocal.length > 0) {
+                                    var _audMap = {}, _audOrder = [];
+                                    var _audAll = _aud.concat(_audLocal);
+                                    for (var _ai = 0; _ai < _audAll.length; _ai++) {
+                                        var _ae = _audAll[_ai];
+                                        if (!_ae) continue;
+                                        var _ak = String(_ae.id || '') || (String(_ae.time || '') + '|' + String(_ae.action || '') + '|' + String(_ae.target || ''));
+                                        if (!_ak) continue;
+                                        if (_audMap[_ak] === undefined) { _audMap[_ak] = _ae; _audOrder.push(_ak); }
+                                        else if (!_audMap[_ak].ip && _ae.ip) { _audMap[_ak] = _ae; }
+                                    }
+                                    _aud = [];
+                                    for (var _ai2 = 0; _ai2 < _audOrder.length; _ai2++) _aud.push(_audMap[_audOrder[_ai2]]);
+                                    _aud.sort(function(a, b) { return String(a.time) < String(b.time) ? -1 : 1; });
+                                    if (_aud.length > 200) _aud = _aud.slice(_aud.length - 200);
+                                }
+                                var _audFinal2 = JSON.stringify(_aud);
+                                if (!_audRaw0 || _audFinal2 !== _audRaw0) {
+                                    _realLS.setItem(row.key, _audFinal2);
+                                    fetch(SUPABASE_URL + '/rest/v1/app_data', {
+                                        method: 'POST',
+                                        headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY, 'Content-Type': 'application/json', 'Prefer': 'resolution=merge-duplicates' },
+                                        body: JSON.stringify({ key: 'adminAuditLog', value: _audFinal2, updated_at: new Date().toISOString() })
+                                    }).catch(function() {});
+                                }
                                 return;
                             }
                         } catch(e) {}
