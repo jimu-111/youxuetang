@@ -459,7 +459,8 @@
 
         // 从 KV 构造 rows（读兜底），按原请求的过滤参数保持语义
         // 2026-09-06 重构：原实现每请求全量 list + 逐 key GET 全部 KV（209 个），402 期间 5 分钟轮询
-        // 把 KV 免费读限额（10万/天）烧到 50% 触发 429 警告。改为：list 缓存 60 秒 + 只读命中 keyConds 的 key
+        // 把 KV 免费读限额（10万/天）烧到 50% 触发 429 警告。改为：list 缓存 10 分钟 + 只读命中 keyConds 的 key
+        // （2026-09-08 再加 5 分钟结果缓存 + _supDown 短路，90% 限额告警后全面降频）
         var _kvListCache = null; var _kvListCacheTs = 0;
         var _kvRowsCache = {}; // url -> { ts, rows }：45 秒结果缓存吸收轮询重读
         function kvFetchRows(url) {
@@ -504,14 +505,16 @@
                 }
                 return true; // 未识别的操作符宽松放行（KV 兜底不追求完美语义）
             }
-            // 45 秒结果缓存：判责量/看板 5 分钟轮询同 URL 时直接复用，不重复打 KV
+            // 结果缓存：402 期间判责量/看板 5 分钟轮询同 URL 直接复用，不重复打 KV。
+            // 2026-09-08 KV 限额优化：45 秒 → 5 分钟（兜底数据分钟级变化，多设备轮询不再放大 KV 读操作）
             var cacheKey = url;
-            if (_kvRowsCache[cacheKey] && Date.now() - _kvRowsCache[cacheKey].ts < 45000) {
+            if (_kvRowsCache[cacheKey] && Date.now() - _kvRowsCache[cacheKey].ts < 300000) {
                 return Promise.resolve(_kvRowsCache[cacheKey].rows);
             }
-            // list 只打一次，60 秒缓存
+            // list 只打一次，缓存 10 分钟（2026-09-08：60 秒 → 600 秒——KV list 限额 1000/日，
+            // 多设备每 60 秒可各打一次会爆；10 分钟缓存下每页每天最多 ~144 次）
             var listP = null;
-            if (_kvListCache && Date.now() - _kvListCacheTs < 60000) listP = Promise.resolve(_kvListCache);
+            if (_kvListCache && Date.now() - _kvListCacheTs < 600000) listP = Promise.resolve(_kvListCache);
             else listP = _origFetch(KV_PAGES + '/data/list', { headers: { 'x-yxt-secret': KV_SECRET } })
                 .then(function(r){ return r.json(); }).then(function(j){
                     _kvListCache = (j && j.keys) || []; _kvListCacheTs = Date.now();
@@ -694,6 +697,12 @@
                 return pd;
             }
             if (method === 'GET') {
+                // 2026-09-08 KV 限额优化：Supabase 已确认挂断（_supDown）时不再先打必败的 Supabase
+                // 请求（402 期间每页面每次拉取都白打一次 → 多设备轮询放大成上万 Worker/KV 请求），
+                // 直接走 KV 兜底；恢复检测交给 probeLoop（每 5 分钟一次，成功后 _supDown=false 并回灌）
+                if (_supDown) return kvFetchRows(url).then(function(rows){
+                    return new Response(JSON.stringify(rows), { status: 200, headers: { 'Content-Type': 'application/json' } });
+                });
                 return _origFetch.apply(this, arguments).then(function(resp){
                     if (resp.ok) return resp;
                     _supDown = true;
