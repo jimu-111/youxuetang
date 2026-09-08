@@ -2242,6 +2242,7 @@
                 .then(function(result) {
                     if (result.ok) {
                         showToast('✅ ' + result.date + ' 判责量已同步（' + result.count + '人，' + result.total + '次）', 'success');
+                        logAdminAction('判责量', '手动同步', result.date + '（' + result.count + '人，' + result.total + '次，由本地同步服务导入）');
                         refreshPanzeStatus();
                         btn.innerHTML = '✅ 同步完成';
                         btn.style.background = '#d1fae5';
@@ -18672,6 +18673,7 @@ async function importQBFromFeishu() {
         var plans = getLearningPlans();
         plans[planCode] = planData;
         saveLearningPlans(plans);
+        logAdminAction('学习计划', '生成个人学习计划', reviewerName + ' · ' + planCode + '（' + allItems.length + '课，失误画像精准推荐）');
         // 生成链接并弹窗展示
         var shareUrl = location.origin + location.pathname + '?learnPlan=' + planCode;
         showLearningPlanSharePopup(planData, shareUrl);
