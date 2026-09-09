@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <!-- 版本行：每次部署新代码必须 bump 此 content（YYYYMMDD.N），旧设备靠它自检静默升级 -->
-    <meta name="yxt-ver" content="20260909.2">
+    <meta name="yxt-ver" content="20260909.3">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
     <title>优学堂</title>
     <script src="https://cdn.sheetjs.com/xlsx-0.20.2/package/dist/xlsx.full.min.js" defer></script>
@@ -446,16 +446,42 @@
         }
 
         // 镜像写 KV（批量）：body 为数组 [{key,value,updated_at}] 或单对象；排除 generatedReports（HTML 报告太大不进 KV）
+        // 2026-09-09.3 put 限额根修：402 期间同步队列每次页面打开补推 + 每 10 分钟重试一次，每次失败都整批再镜像；
+        // 内容根本没变，服务端 5 分钟去重（且 isolate 回收就丢）兜不住 10 分钟重试间隔 → 一天 1000 次 put 被
+        // 重试风暴烧穿（今天实际只有 18 个 key 内容变化却超 1000 put）。本地记「每 key 最近镜像内容指纹」，
+        // 同 key 同内容不再重复 POST（镜像过的内容 KV 里已有，重复写无意义；跨设备同内容仍由服务端去重）。
+        var _kvFpKey = '_kvMirrorFp';
+        function _kvFpReset() { try { localStorage.removeItem(_kvFpKey); } catch(e) {} }
         function kvMirrorWrite(rows) {
             var arr = Array.isArray(rows) ? rows : [rows];
             var items = arr.filter(function(r){ return r && r.key && !String(r.key).startsWith('_') && r.key !== 'generatedReports' && r.key !== 'feishu_token' && !_kvEmptyValue(r.value, r.key); })
                 .map(function(r){ return { key: r.key, v: r.value !== undefined && r.value !== null ? String(r.value) : null, t: r.updated_at || new Date().toISOString() }; });
             if (items.length === 0) return;
+            var fpMap = {};
+            try { fpMap = JSON.parse(localStorage.getItem(_kvFpKey) || '{}') || {}; } catch(e) { fpMap = {}; }
+            var fresh = [];
+            for (var _fi = 0; _fi < items.length; _fi++) {
+                var _it = items[_fi];
+                var _raw = _it.v === null || _it.v === undefined ? '' : String(_it.v);
+                var _hh = 5381, _step = Math.max(1, Math.floor(_raw.length / 200));
+                for (var _ci = 0; _ci < _raw.length; _ci += _step) { _hh = ((_hh << 5) + _hh + _raw.charCodeAt(_ci)) | 0; }
+                var _hsh = _hh + '_' + _raw.length;
+                if (fpMap[_it.key] === _hsh) continue;   // 同 key 同内容已镜像过 → 跳过（不重复 POST）
+                fpMap[_it.key] = _hsh;
+                fresh.push(_it);
+            }
+            if (fresh.length === 0) return;
+            // 记账放在 POST 成功之后：服务端 429/失败时不得标记「已镜像」，否则额度恢复后的重试会
+            // 被本地指纹误拦，内容永远进不了 KV（今天 429 期间尤其关键）
             _origFetch(KV_PAGES + '/data', {
                 method: 'POST',
                 headers: { 'x-yxt-secret': KV_SECRET, 'Content-Type': 'application/json' },
-                body: JSON.stringify({ items: items })
-            }).then(function(resp){ if (resp.ok) kvSetDirty(items.map(function(it){ return it.key; })); }).catch(function(){});
+                body: JSON.stringify({ items: fresh })
+            }).then(function(resp){
+                if (!resp.ok) return;
+                try { localStorage.setItem(_kvFpKey, JSON.stringify(fpMap)); } catch(e) {}
+                kvSetDirty(fresh.map(function(it){ return it.key; }));
+            }).catch(function(){});
         }
 
         // 从 KV 构造 rows（读兜底），按原请求的过滤参数保持语义
@@ -520,7 +546,8 @@
             // 按每 10 分钟 1 次也会到 900+/上午 → 窗口必须按「设备数 × 全天」倒推）。
             // list 失败（429）时回退共享缓存旧列表（258 个 key 集合稳定，新增 key 最坏晚 2 小时可见；
             // 防「失败当成功返回空」覆盖本地——429 期页面照常工作）。
-            var _yxtListLs = 'yxtKvListCache';
+            // _ 前缀必须保留：无前缀 key 会被同步队列当数据 POST 上云、失败后镜像进 KV（2026-09-09.3 泄漏修复）
+            var _yxtListLs = '_yxtKvListCache';
             function _lsListCache() {
                 try { var o = JSON.parse(localStorage.getItem(_yxtListLs) || 'null'); return o; } catch(e) { return null; }
             }
@@ -554,6 +581,18 @@
                     return true;
                 });
                 if (keyConds.length === 0) want = allKeys; // 无 key 条件：维持全量语义
+                // 2026-09-09.3 增量预剪枝（10 万读限最大烧源的修复）：list 元数据已带每 key 镜像时间 t
+                // （与值内 o.t 同源），带 updated_at=gt.游标 的增量拉取可 GET 前先剔除游标之前未变的 key。
+                // 此前增量拉取也要把全部 KV key（259 个）逐个 GET 回来再客户端过滤 → 每台设备每次
+                // 刷页面/登录补拉 = 259 次 KV 读，页面加载一多就把读限烧到 50%~90%。剪枝后稳态
+                // 增量拉取只 GET 游标后真正变过的少量 key（本设备脏 key 无 t 一律放行）。
+                var _gtC = null;
+                if (typeof q['updated_at'] === 'string' && q['updated_at'].indexOf('gt.') === 0) _gtC = q['updated_at'].slice(3);
+                if (_gtC) {
+                    var _metaT = {};
+                    if (Array.isArray(list)) list.forEach(function(it){ _metaT[it.key] = it.t; });
+                    want = want.filter(function(k){ return !_metaT[k] || String(_metaT[k]) > _gtC; });
+                }
                 return Promise.all(want.map(function(k2){
                     return _origFetch(KV_PAGES + '/data?key=' + encodeURIComponent(k2), { headers: { 'x-yxt-secret': KV_SECRET } })
                         .then(function(r){ return r.json(); })
@@ -592,7 +631,7 @@
                         .catch(function(){ resolve([]); });
                 }, 30000); }); // list 最终一致延迟最长约 60 秒，等 30 秒再读
             return keysPromise.then(function(keys){
-                if (keys.length === 0) { _supDown = false; return 0; }
+                if (keys.length === 0) { _supDown = false; try { _kvFpReset(); } catch(e) {} return 0; }
                 return Promise.all(keys.map(function(k){
                     return _origFetch(KV_PAGES + '/data?key=' + encodeURIComponent(k), { headers: { 'x-yxt-secret': KV_SECRET } })
                         .then(function(r){ return r.json(); })
@@ -638,6 +677,7 @@
                     if (_supDown) {
                         drainKV().then(function(n){
                             _supDown = false;
+                            try { _kvFpReset(); } catch(e) {}   // KV 已回灌清空，镜像指纹失效需重置
                             console.log('[KV兜底] Supabase 已恢复，回灌 ' + n + ' 条，已清空 KV 中转');
                         });
                     }
@@ -672,13 +712,13 @@
             // （权威数据已在中转站，等写入方自然更新；防新设备/演示设备本地少量数据覆盖云端权威）
             // 2026-09-09 限额：复用 kvFetchRows 写的跨标签共享 list 缓存（2 小时内不重复打 list）
             var _yxtLs2 = null;
-            try { _yxtLs2 = JSON.parse(localStorage.getItem('yxtKvListCache') || 'null'); } catch(e) {}
+            try { _yxtLs2 = JSON.parse(localStorage.getItem('_yxtKvListCache') || 'null'); } catch(e) {}
             var _listReq = (_yxtLs2 && Date.now() - _yxtLs2.t < 7200000)
                 ? Promise.resolve(_yxtLs2.k)
                 : _origFetch(KV_PAGES + '/data/list', { headers: { 'x-yxt-secret': KV_SECRET } })
                     .then(function(r){ return r.json(); }).then(function(j){
                         var ks2 = (j && j.keys) || [];
-                        try { localStorage.setItem('yxtKvListCache', JSON.stringify({ t: Date.now(), k: ks2 })); } catch(e) {}
+                        try { localStorage.setItem('_yxtKvListCache', JSON.stringify({ t: Date.now(), k: ks2 })); } catch(e) {}
                         return ks2;
                     }).catch(function(){ return null; });
             _listReq.then(function(kl){
@@ -745,6 +785,8 @@
             return _origFetch.apply(this, arguments);
         };
 
+        // 2026-09-09.3：清理旧版残留的无前缀列表缓存 key（本块先于同步代理执行，直删不触发云端删除）
+        try { if (localStorage.getItem('yxtKvListCache') !== null) localStorage.removeItem('yxtKvListCache'); } catch(e) {}
         kvInitMirror();
         setTimeout(probeLoop, 3000);
         // 调试钩子：控制台手动触发回灌 window._kvDrainNow()
