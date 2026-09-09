@@ -2,7 +2,8 @@
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
-    <!-- v2026-07-25-1150 -->
+    <!-- 版本行：每次部署新代码必须 bump 此 content（YYYYMMDD.N），旧设备靠它自检静默升级 -->
+    <meta name="yxt-ver" content="20260909.1">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
     <title>优学堂</title>
     <script src="https://cdn.sheetjs.com/xlsx-0.20.2/package/dist/xlsx.full.min.js" defer></script>
@@ -505,10 +506,12 @@
                 }
                 return true; // 未识别的操作符宽松放行（KV 兜底不追求完美语义）
             }
-            // 结果缓存：402 期间判责量/看板 5 分钟轮询同 URL 直接复用，不重复打 KV。
-            // 2026-09-08 KV 限额优化：45 秒 → 5 分钟（兜底数据分钟级变化，多设备轮询不再放大 KV 读操作）
+            // 结果缓存：402 期间判责量/看板轮询同 URL 直接复用，不重复打 KV。
+            // 2026-09-09 KV 限额修复：5 分钟 → 10 分钟。原 5 分钟缓存与页面 5 分钟轮询周期相同，
+            // 每轮轮询都恰好在缓存过期边界上（严格 < 比较）→ 缓存永远 miss → 每个 GET 都真实打 KV。
+            // 窗口必须大于轮询周期才有命中率（600s 下 300s 轮询命中率 50%，GET 减半）。
             var cacheKey = url;
-            if (_kvRowsCache[cacheKey] && Date.now() - _kvRowsCache[cacheKey].ts < 300000) {
+            if (_kvRowsCache[cacheKey] && Date.now() - _kvRowsCache[cacheKey].ts < 600000) {
                 return Promise.resolve(_kvRowsCache[cacheKey].rows);
             }
             // list 只打一次，缓存 10 分钟（2026-09-08：60 秒 → 600 秒——KV list 限额 1000/日，
@@ -23722,6 +23725,42 @@ updateAdminUI();
             showToast('✅ ' + name + ' 信息已更新', 'success');
         });
     }
+</script>
+<script>
+// ========== 版本自检测 · 后台静默升级（2026-09-09 加入）==========
+// 目的：旧代码滞留 = 每次部署都要全员手动刷新，且旧缓存逻辑（如 60s list）会继续烧 KV 配额。
+// 原理：每 10 分钟用 Range 轻量拉线上 index.html 前 6KB（约几十毫秒），比对 <head> 的 yxt-ver 版本行；
+// 不一致 → 延迟随机 5-15 秒后台静默刷新到新版本（多标签节流：10 分钟内只检一次）。
+// 部署约定：改完代码必须 bump <meta name="yxt-ver"> 的 content，否则设备不会升级。
+(function() {
+    var CUR = (function(){ var m = document.querySelector('meta[name="yxt-ver"]'); return m ? m.getAttribute('content') : ''; })();
+    if (!CUR) return; // 本地缺版本行（异常拷贝）跳过自检
+    var TS_KEY = '_yxtVerCheckTs';
+    function scheduleReload() {
+        // 延迟随机 5-15s：避开用户正在进行的操作瞬间；数据均实时写 localStorage，刷新不丢
+        setTimeout(function() { location.reload(); }, 5000 + Math.random() * 10000);
+    }
+    function check() {
+        try {
+            var last = parseInt(localStorage.getItem(TS_KEY) || '0', 10);
+            if (Date.now() - last < 600000) return; // 多标签/多定时器节流
+            localStorage.setItem(TS_KEY, String(Date.now()));
+        } catch(e) {}
+        fetch('index.html?vchk=' + Date.now(), { headers: { 'Range': 'bytes=0-6144' } })
+            .then(function(r) { return r.text(); })
+            .then(function(t) {
+                var m = t.match(/name="yxt-ver" content="([^"]+)"/);
+                if (!m) return; // 拉不到版本行（网络/结构异常）静默，下轮再试
+                if (m[1] !== CUR) scheduleReload(); // 线上版本不同 → 升级
+            })
+            .catch(function(){}); // 失败静默不打扰
+    }
+    setTimeout(check, 20000);      // 启动 20s 后首检（避开首屏加载）
+    setInterval(check, 600000);    // 之后每 10 分钟
+    document.addEventListener('visibilitychange', function() {
+        if (document.visibilityState === 'visible') check(); // 切回前台补检一次
+    });
+})();
 </script>
 </body>
 </html>
