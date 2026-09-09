@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <!-- 版本行：每次部署新代码必须 bump 此 content（YYYYMMDD.N），旧设备靠它自检静默升级 -->
-    <meta name="yxt-ver" content="20260909.1">
+    <meta name="yxt-ver" content="20260909.2">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
     <title>优学堂</title>
     <script src="https://cdn.sheetjs.com/xlsx-0.20.2/package/dist/xlsx.full.min.js" defer></script>
@@ -514,15 +514,33 @@
             if (_kvRowsCache[cacheKey] && Date.now() - _kvRowsCache[cacheKey].ts < 600000) {
                 return Promise.resolve(_kvRowsCache[cacheKey].rows);
             }
-            // list 只打一次，缓存 10 分钟（2026-09-08：60 秒 → 600 秒——KV list 限额 1000/日，
-            // 多设备每 60 秒可各打一次会爆；10 分钟缓存下每页每天最多 ~144 次）
+            // list 只打一次：优先 localStorage 跨标签共享缓存（防多标签/多设备各自打 list 放大配额）。
+            // 2026-09-09 90% 告警根因：每页面实例每 600s 一次 list × 多设备多标签 → 逼近 1000/日上限。
+            // 窗口 2 小时 + 跨标签共享 → 每浏览器每天 ~12 次（9-09 实测：20+ 台设备 × 1 标签挂后台
+            // 按每 10 分钟 1 次也会到 900+/上午 → 窗口必须按「设备数 × 全天」倒推）。
+            // list 失败（429）时回退共享缓存旧列表（258 个 key 集合稳定，新增 key 最坏晚 2 小时可见；
+            // 防「失败当成功返回空」覆盖本地——429 期页面照常工作）。
+            var _yxtListLs = 'yxtKvListCache';
+            function _lsListCache() {
+                try { var o = JSON.parse(localStorage.getItem(_yxtListLs) || 'null'); return o; } catch(e) { return null; }
+            }
             var listP = null;
-            if (_kvListCache && Date.now() - _kvListCacheTs < 600000) listP = Promise.resolve(_kvListCache);
-            else listP = _origFetch(KV_PAGES + '/data/list', { headers: { 'x-yxt-secret': KV_SECRET } })
-                .then(function(r){ return r.json(); }).then(function(j){
-                    _kvListCache = (j && j.keys) || []; _kvListCacheTs = Date.now();
-                    return _kvListCache;
-                }).catch(function(){ return null; });
+            var lsList = _lsListCache();
+            if (_kvListCache && Date.now() - _kvListCacheTs < 7200000) listP = Promise.resolve(_kvListCache);
+            else if (lsList && Date.now() - lsList.t < 7200000) { _kvListCache = lsList.k; _kvListCacheTs = lsList.t; listP = Promise.resolve(lsList.k); }
+            else {
+                listP = _origFetch(KV_PAGES + '/data/list', { headers: { 'x-yxt-secret': KV_SECRET } })
+                    .then(function(r){ return r.json(); }).then(function(j){
+                        var ks = (j && j.keys) || [];
+                        _kvListCache = ks; _kvListCacheTs = Date.now();
+                        try { localStorage.setItem(_yxtListLs, JSON.stringify({ t: Date.now(), k: ks })); } catch(e) {}
+                        return ks;
+                    })
+                    .catch(function(){
+                        var fb = _lsListCache();   // 429/失败 → 旧列表兜底，绝不返回空数组当成功
+                        return fb ? fb.k : null;
+                    });
+            }
             return listP.then(function(list){
                 var allKeys = (list || []).map(function(it){ return it.key; });
                 // 合并本设备脏列表：刚写入的 key，KV list 有最终一致延迟，可能还没可见
@@ -652,12 +670,22 @@
             if (items.length === 0) return;
             // 防污染加固（2026-09-08）：快照前先查 KV 已有版本——已存在的 key 不参与快照
             // （权威数据已在中转站，等写入方自然更新；防新设备/演示设备本地少量数据覆盖云端权威）
-            _origFetch(KV_PAGES + '/data/list', { headers: { 'x-yxt-secret': KV_SECRET } })
-                .then(function(r){ return r.json(); }).then(function(j){
-                    var exist = {};
-                    ((j && j.keys) || []).forEach(function(it){ exist[it.key] = 1; });
-                    return items.filter(function(it){ return !exist[it.key]; });
-                }).catch(function(){ return items; }).then(function(fresh){
+            // 2026-09-09 限额：复用 kvFetchRows 写的跨标签共享 list 缓存（2 小时内不重复打 list）
+            var _yxtLs2 = null;
+            try { _yxtLs2 = JSON.parse(localStorage.getItem('yxtKvListCache') || 'null'); } catch(e) {}
+            var _listReq = (_yxtLs2 && Date.now() - _yxtLs2.t < 7200000)
+                ? Promise.resolve(_yxtLs2.k)
+                : _origFetch(KV_PAGES + '/data/list', { headers: { 'x-yxt-secret': KV_SECRET } })
+                    .then(function(r){ return r.json(); }).then(function(j){
+                        var ks2 = (j && j.keys) || [];
+                        try { localStorage.setItem('yxtKvListCache', JSON.stringify({ t: Date.now(), k: ks2 })); } catch(e) {}
+                        return ks2;
+                    }).catch(function(){ return null; });
+            _listReq.then(function(kl){
+                var exist = {};
+                ((kl || []).forEach ? kl : []).forEach(function(it){ exist[it.key] = 1; });
+                return items.filter(function(it){ return !exist[it.key]; });
+            }).catch(function(){ return items; }).then(function(fresh){
                     if (!fresh || fresh.length === 0) return;
                     _origFetch(KV_PAGES + '/data', {
                         method: 'POST',
