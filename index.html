@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <!-- 版本行：每次部署新代码必须 bump 此 content（YYYYMMDD.N），旧设备靠它自检静默升级 -->
-    <meta name="yxt-ver" content="20260909.3">
+    <meta name="yxt-ver" content="20260911.3">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
     <title>优学堂</title>
     <script src="https://cdn.sheetjs.com/xlsx-0.20.2/package/dist/xlsx.full.min.js" defer></script>
@@ -10027,14 +10027,21 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
                 importBtn.textContent = '⏳ 导入中...';
                 importBtn.disabled = true;
                 try {
-                    var token = getErrorDashboardToken();
+                    // 权限策略（2026-09-11）：徐行 token 与优学堂应用 token 双身份，谁可用用谁
+                    // （feishuApiFetch 内置：一个身份无权限时自动换另一个重试）。
+                    // 原实现只用用户 token，授权账号失去表格权限后报错被误显示为「表格无数据」
+                    var token = getErrorDashboardToken() || await getFeishuToken();
                     if (!token) { alert('请先在失误分析看板授权飞书'); importBtn.textContent = '📥 从飞书导入'; importBtn.disabled = false; return; }
                     var resp = await feishuApiFetch('https://open.feishu.cn/open-apis/sheets/v2/spreadsheets/Id6OsBKpWhYJm8ti08acihZbnNh/values/dd29f7?majorDimension=ROWS', {
                         headers: { 'Authorization': 'Bearer ' + token }
                     });
                     var data = await resp.json();
+                    if (data.code !== 0) {
+                        alert('❌ 读取飞书表格失败：' + (data.msg || '未知错误') + '（code ' + data.code + '）\n\n若提示无权限，请在飞书表格「分享」中把「优学堂」应用加为协作者。');
+                        importBtn.textContent = '📥 从飞书导入'; importBtn.disabled = false; return;
+                    }
                     var rows = (data.data && data.data.valueRange && data.data.valueRange.values) || [];
-                    if (rows.length <= 1) { alert('表格无数据'); importBtn.textContent = '📥 从飞书导入'; importBtn.disabled = false; return; }
+                    if (rows.length <= 1) { alert('表格可读，但目标工作表（dd29f7）没有数据'); importBtn.textContent = '📥 从飞书导入'; importBtn.disabled = false; return; }
 
                     // 按表头字段名构建列索引映射（忽略列顺序）
                     var headerRow = rows[0];
@@ -12511,27 +12518,13 @@ async function importQBFromFeishu() {
             showToast('❌ 无法读取表格，请确认已授权飞书', 'error'); return;
         }
         var sheetId = sheetsData.data.sheets[0].sheetId || sheetsData.data.sheets[0].sheet_id;
-        // 直接用 app token 读数据
-        var appToken = null;
-        try {
-            var atr = await feishuApiFetch('https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal', {
-                method:'POST', headers:{'Content-Type':'application/json'},
-                body:JSON.stringify({app_id:'cli_aab1fa4e87bbdbd3', app_secret:'1uLKmOkzQpoac6Ixw3Qhsb6KR1gCrcTn'})
-            });
-            var atd = await atr.json();
-            if(atd.tenant_access_token) appToken = atd.tenant_access_token;
-        } catch(e) { console.log('app token获取失败', e); }
-        var readToken = appToken || token;
-        var resp = await feishuApiFetch('https://open.feishu.cn/open-apis/sheets/v2/spreadsheets/YQEpsYHh2httTftYv0VcFPWBnJg/values/' + sheetId + '?majorDimension=ROWS', {
-            headers: { 'Authorization': 'Bearer ' + readToken }
+        // 权限策略（2026-09-11）：徐行 token 与优学堂应用 token 双身份，谁可用用谁
+        // （feishuApiFetch 内置：一个身份无权限时自动换另一个重试）
+        var _qbUrl = 'https://open.feishu.cn/open-apis/sheets/v2/spreadsheets/YQEpsYHh2httTftYv0VcFPWBnJg/values/' + sheetId + '?majorDimension=ROWS';
+        var resp = await feishuApiFetch(_qbUrl, {
+            headers: { 'Authorization': 'Bearer ' + token }
         });
         var data = await resp.json();
-        if ((data.code === 90215 || data.code === 1310213) && token !== appToken) {
-            resp = await feishuApiFetch('https://open.feishu.cn/open-apis/sheets/v2/spreadsheets/YQEpsYHh2httTftYv0VcFPWBnJg/values/' + sheetId + '?majorDimension=ROWS', {
-                headers: { 'Authorization': 'Bearer ' + token }
-            });
-            data = await resp.json();
-        }
         console.log('飞书返回:', JSON.stringify(data).substring(0,500));
         var rows = (data.data && data.data.valueRange && data.data.valueRange.values) || [];
         if (rows.length <= 1) { showToast('❌ 表格无数据', 'warning'); return; }
@@ -16670,7 +16663,23 @@ async function importQBFromFeishu() {
         throw lastErr || new Error('代理请求失败: 所有线路不可用');
     }
     const FEISHU_SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InpmeHduaXhsdmR4YXdveWxoZ3hqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODIyMDEyNzIsImV4cCI6MjA5Nzc3NzI3Mn0.aPfO4Ry_LzoOColCVx64JQPF-BWga-_J2fX9hg-E4G8';
-    async function feishuApiFetch(url, options, timeoutMs) {
+    // 双身份取数（2026-09-11 权限策略）：飞书文档/表格用「徐行授权 token」与「优学堂应用 token」两个身份，
+    // 不设固定优先级——一个身份不能用（无权限/凭证失效）就自动换另一个，谁可用就用谁。
+    var _FEISHU_DOC_API_RE = /open-apis\/(sheets|docx|doc|wiki|drive|contact|bitable)\//;
+    var _FEISHU_PERM_CODES = { 90215: 1, 91403: 1, 1310213: 1, 1061004: 1, 1061045: 1, 99991663: 1, 99991661: 1, 99991668: 1, 99991672: 1 };
+    // 可用身份候选（去重）：徐行授权 token（本地→刷新→云端）+ 优学堂应用 token
+    async function _feishuTokenCandidates() {
+        var userTok = getErrorDashboardToken();
+        if (!userTok) { try { userTok = await feishuRefreshToken(); } catch(e) {} }
+        if (!userTok) { try { userTok = await getCloudToken(); } catch(e) {} }
+        var appTok = null;
+        try { appTok = await getFeishuToken(); } catch(e) {}
+        var out = [];
+        if (userTok) out.push(userTok);
+        if (appTok && appTok !== userTok) out.push(appTok);
+        return out;
+    }
+    async function _feishuApiFetchOnce(url, options, timeoutMs) {
         options = options || {};
         var proxyHeaders = {
             'Authorization': 'Bearer ' + FEISHU_SUPABASE_KEY,
@@ -16685,10 +16694,33 @@ async function importQBFromFeishu() {
         }
         var resp = await fetchViaProxy(proxyHeaders, options, timeoutMs);
         var data = await resp.json();
-        if (data.error) {
+        // 代理自身错误（{error:...} 且无飞书 code）才抛；飞书业务错误（带 code，可能同时带 error 排查信息）
+        // 原样返回，交给调用方判断——否则会被当成「代理错误」抛出，双身份兜底也无法触发（2026-09-11）
+        if (data.error && data.code === undefined) {
             console.log('[代理错误] URL:', url);
             console.log('[代理错误] 完整响应:', JSON.stringify(data));
             throw new Error(JSON.stringify(data.error));
+        }
+        return data;
+    }
+    async function feishuApiFetch(url, options, timeoutMs) {
+        var data = await _feishuApiFetchOnce(url, options, timeoutMs);
+        // 文档/表格类接口：首个身份的失败是「无权限/凭证类」错误时，换另一个身份重试
+        if (!(data && data.code !== 0 && _FEISHU_DOC_API_RE.test(url) && _FEISHU_PERM_CODES[data.code])) {
+            return { ok: true, json: function() { return Promise.resolve(data); } };
+        }
+        var tried = [String((options && options.headers && options.headers['Authorization']) || '')];
+        var cands = await _feishuTokenCandidates();
+        for (var i = 0; i < cands.length; i++) {
+            var tk = cands[i], hit = false;
+            for (var j = 0; j < tried.length; j++) { if (tried[j].indexOf(tk) >= 0) { hit = true; break; } }
+            if (hit) continue;
+            tried.push(tk);
+            var o2 = Object.assign({}, options, { headers: Object.assign({}, (options || {}).headers, { 'Authorization': 'Bearer ' + tk }) });
+            var d2 = await _feishuApiFetchOnce(url, o2, timeoutMs);
+            if (d2 && d2.code === 0) return { ok: true, json: function() { return Promise.resolve(d2); } };
+            data = d2 || data;
+            if (!(d2 && _FEISHU_PERM_CODES[d2.code])) break;
         }
         return { ok: true, json: function() { return Promise.resolve(data); } };
     }
@@ -16851,14 +16883,41 @@ async function importQBFromFeishu() {
         return null;
     }
 
-    function saveErrorDashboardToken(token, refreshToken, expiresIn) {
+    // 权限策略（2026-09-11）：飞书文档/表格只用「徐行」本人的账号授权（应用 token 兜底），
+    // 且其他人的 token 不上云——云端只存徐行的授权。返回 { ok, name }
+    async function confirmFeishuAuthorizer(accessToken) {
+        var name = '';
+        try {
+            var uiResp = await feishuApiFetch('https://open.feishu.cn/open-apis/authen/v1/user_info', {
+                headers: { 'Authorization': 'Bearer ' + accessToken }
+            });
+            var uiData = await uiResp.json();
+            name = (uiData.data && uiData.data.name) || '';
+        } catch(e) {}
+        if (name && name.indexOf('徐行') < 0) {
+            var ok = confirm('⚠️ 当前授权的飞书账号是「' + name + '」。\n\n按规范，飞书文档/表格权限只用「徐行」本人的账号（或优学堂应用兜底），且其他人的 token 不会上传云端。\n\n仍要用这个账号授权吗？');
+            return { ok: ok, name: name };
+        }
+        return { ok: true, name: name };
+    }
+
+    function saveErrorDashboardToken(token, refreshToken, expiresIn, ownerName) {
+        var prevOwner = '';
+        try { var _prev = JSON.parse(localStorage.getItem('feishu_token') || 'null'); if (_prev && _prev.owner) prevOwner = _prev.owner; } catch(e) {}
+        var owner = ownerName || prevOwner || '';
         var tokenData = {
             access_token: token,
             refresh_token: refreshToken,
-            expiresAt: Date.now() + expiresIn * 1000
+            expiresAt: Date.now() + expiresIn * 1000,
+            owner: owner
         };
         var tokenStr = JSON.stringify(tokenData);
         localStorage.setItem('feishu_token', tokenStr);
+        // 权限策略（2026-09-11）：云端只存「徐行」本人授权，其他人的 token 不上云
+        if (owner.indexOf('徐行') < 0) {
+            console.log('☁️ 跳过云端同步：授权账号非「徐行」（' + (owner || '未知') + '），token 仅存本机');
+            return;
+        }
         // 同步到云端，让其他设备也能共用同一份 token
         try {
             fetch(SUPABASE_URL + '/rest/v1/app_data', {
@@ -16929,6 +16988,11 @@ async function importQBFromFeishu() {
                 if (cfData && cfData.value) {
                     var cfStored = JSON.parse(cfData.value);
                     if (cfStored && cfStored.expiresAt > Date.now() + 60000) {
+                        // 权限策略（2026-09-11）：云端只应存「徐行」授权——带 owner 且非徐行的旧数据不采用
+                        if (cfStored.owner && cfStored.owner.indexOf('徐行') < 0) {
+                            console.log('☁️ 跳过云端 token：属于「' + cfStored.owner + '」，非徐行授权');
+                            continue;
+                        }
                         localStorage.setItem('feishu_token', cfData.value);
                         console.log('☁️ 从 Cloudflare 恢复了有效的 feishu_token');
                         return cfStored.access_token;
@@ -16960,7 +17024,12 @@ async function importQBFromFeishu() {
             });
             var tokenData = await tokenResp.json();
             if (tokenData.code === 0 && tokenData.data) {
-                saveErrorDashboardToken(tokenData.data.access_token, tokenData.data.refresh_token, tokenData.data.expires_in);
+                // 权限策略（2026-09-11）：非「徐行」账号授权需人工确认；非徐行的 token 不上云
+                var _auth = await confirmFeishuAuthorizer(tokenData.data.access_token);
+                if (!_auth.ok) {
+                    return { success: false, error: '已取消：请改用「徐行」的飞书账号重新授权' };
+                }
+                saveErrorDashboardToken(tokenData.data.access_token, tokenData.data.refresh_token, tokenData.data.expires_in, _auth.name);
                 return { success: true };
             }
             return { success: false, error: tokenData.msg || ('code: ' + tokenData.code) };
@@ -20315,7 +20384,7 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
     }
 
     async function searchFeishuUser(keyword) {
-        var token = getErrorDashboardToken() || await feishuRefreshToken();
+        var token = getErrorDashboardToken() || await feishuRefreshToken() || await getFeishuToken();
         if (!token) throw new Error('NEED_AUTH');
         keyword = (keyword || '').trim();
         var url = 'https://open.feishu.cn/open-apis/contact/v3/users?page_size=50&employment_status=active';
@@ -20327,7 +20396,7 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
     }
 
     async function searchFeishuUserByDepartment(deptName) {
-        var token = getErrorDashboardToken() || await feishuRefreshToken();
+        var token = getErrorDashboardToken() || await feishuRefreshToken() || await getFeishuToken();
         if (!token) throw new Error('NEED_AUTH');
         var resp = await feishuApiFetch(
             'https://open.feishu.cn/open-apis/contact/v3/users/find_by_department?department_id=0&page_size=50',
@@ -23043,11 +23112,18 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
                 });
                 var tokenData = await tokenResp.json();
                 if (tokenData.code === 0 && tokenData.data) {
-                    saveErrorDashboardToken(tokenData.data.access_token, tokenData.data.refresh_token, tokenData.data.expires_in);
-                    _initOauthDone = true;
-                    _justAuthorized = true;
-                    if (!initLearnPlan) window.history.replaceState({}, '', window.location.pathname);
-                    showToast('✅ 飞书授权成功，正在加载数据...', 'success');
+                    // 权限策略（2026-09-11）：非「徐行」账号授权需人工确认；非徐行的 token 不上云
+                    var _auth2 = await confirmFeishuAuthorizer(tokenData.data.access_token);
+                    if (_auth2.ok) {
+                        saveErrorDashboardToken(tokenData.data.access_token, tokenData.data.refresh_token, tokenData.data.expires_in, _auth2.name);
+                        _initOauthDone = true;
+                        _justAuthorized = true;
+                        if (!initLearnPlan) window.history.replaceState({}, '', window.location.pathname);
+                        showToast('✅ 飞书授权成功，正在加载数据...', 'success');
+                    } else {
+                        window.history.replaceState({}, '', window.location.pathname);
+                        showToast('❌ 已取消授权：请改用「徐行」的飞书账号', 'error');
+                    }
                 } else {
                     showToast('❌ 授权失败：' + (tokenData.msg || '未知错误'), 'error');
                 }
