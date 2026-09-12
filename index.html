@@ -9782,18 +9782,21 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
         maxW = maxW || 150; maxH = maxH || 150;
         if (typeof p === 'object' && p.t) {
             var token = p.t;
+            // 报告占位图模式（2026-09-12 站点培训案例推送）：跳过内嵌 base64，直接走占位符，
+            // 报告体积从 MB 级降到百 KB 级；收件人端由 _qbImgGetFromKV / 飞书下载自动补载
+            var _noInline = (typeof _photoPlaceholderOnly !== 'undefined') && _photoPlaceholderOnly;
             // 1. 当前会话已加载的完整图片
-            if (_photoCache[token]) {
+            if (!_noInline && _photoCache[token]) {
                 return '<img src="' + _photoCache[token] + '" style="max-width:' + maxW + 'px;max-height:' + maxH + 'px;border-radius:8px;border:1px solid #e2e8f0;object-fit:cover;cursor:pointer;margin:2px;" onclick="event.stopPropagation();showImageViewer(this.src)">';
             }
             // 2. IndexedDB 完整图（本地持久化，零网络，点击即看）
             var qbKey = _qbImgKey(token);
-            if (window._imageCache && window._imageCache[qbKey]) {
+            if (!_noInline && window._imageCache && window._imageCache[qbKey]) {
                 return '<img src="' + window._imageCache[qbKey] + '" style="max-width:' + maxW + 'px;max-height:' + maxH + 'px;border-radius:8px;border:1px solid #e2e8f0;object-fit:cover;cursor:pointer;margin:2px;" onclick="event.stopPropagation();showImageViewer(this.src)">';
             }
             // 3. IndexedDB 持久化缩略图（跨会话秒开）
             var thumbKey = 'thumb_' + token;
-            if (window._imageCache && window._imageCache[thumbKey]) {
+            if (!_noInline && window._imageCache && window._imageCache[thumbKey]) {
                 return '<img src="' + window._imageCache[thumbKey] + '" style="max-width:' + maxW + 'px;max-height:' + maxH + 'px;border-radius:8px;border:1px solid #e2e8f0;object-fit:cover;cursor:pointer;margin:2px;" title="点击查看原图" onclick="event.stopPropagation();window._loadFullPhoto(this,\'' + token + '\')">';
             }
             // 4. 无缓存：占位符。优先查 Pages KV 共享压缩图（手机跨设备共享，避免重下 15MB 原图）；
@@ -10820,7 +10823,7 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
 		var count=typeCounts[t]||0;
 		var icon=typeIcons[t]||'📋';
 		var bg=typeColors[t]||'#f8fafc';
-		typeCards+='<div class="qb-type-card" onclick="showCaseTypeDetail(\''+t+'\')" style="cursor:pointer;background:'+bg+';"><div class="qb-cat-icon">'+icon+'</div><div class="qb-cat-name">'+t+'</div><div class="qb-cat-count">'+count+' 例</div><div class="qb-cat-actions"><button class="qb-card-btn qb-card-view" onclick="event.stopPropagation();showCaseTypeDetail(\''+t+'\')">👁️ 查看</button></div></div>';
+		typeCards+='<div class="qb-type-card" onclick="showCaseTypeDetail(\''+t+'\')" style="cursor:pointer;background:'+bg+';"><div class="qb-cat-icon">'+icon+'</div><div class="qb-cat-name">'+t+'</div><div class="qb-cat-count">'+count+' 例</div><div class="qb-cat-actions"><button class="qb-card-btn qb-card-view" onclick="event.stopPropagation();showCaseTypeDetail(\''+t+'\')">👁️ 查看</button>'+(t==='培训案例'?'<button class="qb-card-btn admin-only" style="background:#ede9fe;color:#5b21b6;" onclick="event.stopPropagation();openSiteCasePushModal()">📤 推送</button>':'')+'</div></div>';
 	});
 	var pptNote=localStorage.getItem("biweeklyPptNote")||"2025/06/03至2026/06/17双周培训资料汇总";
 	typeCards+="<div class=\"qb-type-card\" style=\"background:#f0fdf4;cursor:pointer;\" onclick=\"openPptOverlay()\"><div class=\"qb-cat-icon\">📅</div><div class=\"qb-cat-name\">双周培训</div><div class=\"qb-cat-count\">飞书PPT</div><div style=\"font-size:0.6rem;color:#5e6f8d;margin:2px 0;cursor:pointer;\" title=\"点击修改日期\" onclick=\"event.stopPropagation();editPptNotePopup(this)\">"+pptNote+"</div><div class=\"qb-cat-actions\"><button class=\"qb-card-btn qb-card-view\" onclick=\"event.stopPropagation();openPptOverlay()\">👁️ 查看</button></div></div>";
@@ -18305,6 +18308,10 @@ async function importQBFromFeishu() {
                 }
             } catch(e) {}
         }
+        // ③ 最后兜底：Cloudflare KV 报告通道（2026-09-12 站点培训案例推送；Supabase 402 期间跨设备唯一可达通道）
+        //    注意：不要把 KV 取回的 html 写回 localStorage.generatedReports —— 游客设备本地只有 1 份，
+        //    写回会经 localStorage 代理用「1 份的对象」覆盖云端全量，丢掉别人的所有报告。只在内存里渲染。
+        if (!html) { html = await kvGetReport(name); }
         if (!html) { showAlert('📄 培训资料不存在或已过期', '⚠️'); return; }
         window._reportAutoOpened = true;
 
@@ -19091,8 +19098,426 @@ async function importQBFromFeishu() {
         return names;
     }
 
-    function doGenerateTraining(reviewerNames, titleLabel) {
-        var allErrors = getFilteredErrors();
+    // ==================== 站点培训案例联动推送（2026-09-12） ====================
+    // 案例库「培训案例」卡片 → 选站点 + 周(周一~周日) → 取该站点该周失误 ≥6 次的人员
+    // → 用他们的失误类别 + 失误备注关键词匹配案例 → 生成站点培训案例 → 推给站点品控 + 本人
+    var SITE_CASE_SITES = ['成都', '青岛', '深圳'];
+    var SITE_CASE_TRAIN_MIN = 6;                                 // 失误 > 5
+    var SITE_QC_SUPERVISOR = { '成都': '徐行', '青岛': '孙伟', '深圳': '孙俊' };
+
+    // 失误备注关键词 → 失误类别（只加不减：不改动现有「失误类别」匹配，只把备注命中的类别额外纳入）
+    // not = 排除词（2026-09-12 加）：备注命中本组任一关键词、但同时含任一排除词 → 本组整组不计，
+    //       用于消解否定/语境误伤（例：「工程师已勾选无法拆机」不应算「组合差价未勾选」）
+    var SITE_CASE_NOTE_KEYWORDS = [
+        { cat: '拍照/取证不规范',
+          kws: ['拍照', '照片', '取证', '图片', '模糊', '背板照', '背板图', '对比图', '未传', '漏传', '未拍', '手法'],
+          not: ['已上传', '有上传', '有检测', '已体现'] },
+        { cat: '备注失误',
+          kws: ['备注', '写错', '描述', '未清空'],
+          not: [] },
+        { cat: '扣错项/明显失误',
+          kws: ['扣错', '漏扣', '多扣', '扣项', '扣分', '错扣', '选错项'],
+          not: [] },
+        { cat: '责任分类错',
+          kws: ['分类', '归类', '类别', '责任明细', '责任类型'],
+          not: [] },
+        { cat: '复核责',
+          kws: ['复核'],
+          not: [] },
+        { cat: '组合差价未勾选',
+          kws: ['组合', '差价', '价差', '勾选'],
+          not: ['已勾选', '需勾选', '要勾选'] },
+        { cat: '低级/投诉失误',
+          kws: ['低级', '投诉'],
+          not: [] },
+        { cat: '判错责任方',
+          kws: ['责任方', '判错', '错判', '误判', '漏判', '错选', '选错', '误点', '判成', '操作错', '核实错误',
+                '改正常', '修改正常', '改完美', '改轻', '改无', '改错', '改小于', '改大于', '改＜', '改＞',
+                '应判', '应选', '判工程师', '并非', 'app差异',
+                '豁免', '免检', '不做判定', '不判定',
+                '报损', '总部', '人为损坏', '实际',
+                '机型错', '型号错', '录错',
+                // 免责证据：备注说明对方已有正常凭证/已做过动作（工程师已选、有检测通过记录等），初审却仍判了人家 → 判错责任方
+                '工程师已', '工程师有', '工程师报告', '工程师照片', '工程师app', '工程师混标', '回收师',
+                '检测通过', '检测正常'],
+          not: [] },
+        { cat: '未达标准',
+          kws: ['未达', '标准', '不达标', '未核实', '未测试', '未实测', '未使用', '未检测',
+                '未拆机', '不检测', '不测', '未判完', '未通过', '未大于', '未清洁', '灰度'],
+          not: [] }
+    ];
+
+    // 报告占位图模式开关（photoTag 读它：开启时跳过内嵌 base64，报告体积从 MB 降到百 KB）
+    var _photoPlaceholderOnly = false;
+    function _buildTrainingDocWithPhotoMode(opts, placeholderOnly) {
+        var prev = _photoPlaceholderOnly;
+        _photoPlaceholderOnly = !!placeholderOnly;
+        try { return buildTrainingDoc(opts); } finally { _photoPlaceholderOnly = prev; }
+    }
+
+    function _normNoteText(s) { return String(s == null ? '' : s).replace(/[\s　]+/g, '').toLowerCase(); }
+
+    function mergeNoteKeywordCats(cats, errors, reviewerNames, debug, allCases) {
+        var nameSet = {};
+        (reviewerNames || []).forEach(function(n) { nameSet[n] = 1; });
+        var known = {};
+        (allCases || []).forEach(function(c) { if (c.errorCategory) known[c.errorCategory] = 1; });
+        var orig = {};
+        Object.keys(cats).forEach(function(k) { orig[k] = cats[k]; });
+        var add = {};
+        (errors || []).forEach(function(e) {
+            if (!nameSet[e.reviewer]) return;
+            var note = _normNoteText(e.note);
+            if (!note || note === '-') return;
+            SITE_CASE_NOTE_KEYWORDS.forEach(function(g) {
+                if (!known[g.cat]) return;                       // 只认案例库里真实存在的类别
+                var nots = g.not || [];
+                for (var j = 0; j < nots.length; j++) {
+                    if (note.indexOf(nots[j]) >= 0) return;      // 排除词命中：本组整组不计（否定/语境消歧）
+                }
+                for (var i = 0; i < g.kws.length; i++) {
+                    if (note.indexOf(g.kws[i]) >= 0) { add[g.cat] = (add[g.cat] || 0) + 1; return; }   // 一行×一类只 +1
+                }
+            });
+        });
+        Object.keys(add).forEach(function(cat) {
+            var capN = Math.max(1, Math.floor((orig[cat] || 0) * 1));   // 权重封顶：已有权重最多翻倍
+            var use = Math.min(add[cat], capN);
+            cats[cat] = (orig[cat] || 0) + use;                          // 只加不减
+            if (debug) { debug.noteHits[cat] = use; debug.noteRawHits[cat] = add[cat]; }
+        });
+        if (debug) debug.noteAddedCats = Object.keys(add);
+    }
+
+    function getSiteWeekRange(weeksAgo) {
+        var now = new Date();
+        var today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+        var dow = today.getDay();
+        var monday = new Date(today);
+        monday.setDate(today.getDate() - (dow === 0 ? 6 : dow - 1) - (weeksAgo || 0) * 7);
+        var sunday = new Date(monday);
+        sunday.setDate(monday.getDate() + 6);
+        return { monday: monday, sunday: sunday };
+    }
+
+    // 站点 + 周区间独立取数：只读 errorDashboardData，绝不改全局 errorDashboardFilter
+    function getSiteWeekErrors(site, monday, sunday) {
+        var ws = new Date(monday.getFullYear(), monday.getMonth(), monday.getDate());
+        var we = new Date(sunday.getFullYear(), sunday.getMonth(), sunday.getDate());
+        we.setHours(23, 59, 59, 999);                            // 与看板 custom/week 同口径
+        return (errorDashboardData || []).filter(function(e) {
+            if (site && e.site !== site) return false;
+            return e.date >= ws && e.date <= we;
+        });
+    }
+    function getSiteWeekTrainPeople(errors, min) {
+        var m = min || SITE_CASE_TRAIN_MIN;
+        var stat = {};
+        (errors || []).forEach(function(e) {
+            if (!e.reviewer || e.reviewer === '-') return;
+            stat[e.reviewer] = (stat[e.reviewer] || 0) + 1;
+        });
+        return Object.keys(stat).filter(function(n) { return stat[n] >= m; })
+            .map(function(n) { return { name: n, count: stat[n] }; })
+            .sort(function(a, b) { return b.count - a.count; });
+    }
+    function _siteCaseEnsureData() {
+        if (errorDashboardData && errorDashboardData.length > 0) return true;
+        var cache = loadErrorDashboardCache();
+        if (cache && cache.data && cache.data.length) {
+            errorDashboardData = cache.data;
+            errorDashboardSheetStatus = cache.status || {};
+            errorDashboardLastRefresh = cache.time ? new Date(cache.time) : new Date();
+            return true;
+        }
+        return false;
+    }
+
+    function openSiteCasePushModal() {
+        if (!isAdminMode()) { showToast('❌ 请先登录管理员', 'warning'); return; }
+        if (!_siteCaseEnsureData()) { showAlert('看板数据未加载。\n请先打开「失误分析看板」，等数据加载完成后再试。', '⚠️'); return; }
+        var dataTime = errorDashboardLastRefresh ? errorDashboardLastRefresh.toLocaleString('zh-CN') : '未知';
+        var curSite = SITE_CASE_SITES[0];
+        var ov = document.createElement('div');
+        ov.className = 'modal-overlay'; ov.style.zIndex = '3000';
+        ov.innerHTML = '<div class="modal-container" style="max-width:520px;">' +
+            '<div class="modal-header">📤 站点培训案例推送<button class="modal-close-btn" id="scpClose">✕</button></div>' +
+            '<div class="modal-body" style="padding:16px;">' +
+                '<div style="font-size:0.72rem;color:#94a3b8;margin-bottom:10px;">数据时间：' + escapeHtml(dataTime) +
+                  '（非最新请先刷新看板）｜ 阈值：失误 ≥ ' + SITE_CASE_TRAIN_MIN + ' 次｜ 案例类型：仅「培训案例」</div>' +
+                '<div id="scpSites" style="display:flex;gap:8px;margin-bottom:14px;"></div>' +
+                '<div style="font-weight:600;color:#1f3a6b;font-size:0.85rem;margin-bottom:8px;">选择周（最近 4 周）</div>' +
+                '<div id="scpWeeks"></div>' +
+            '</div></div>';
+        document.body.appendChild(ov);
+        ov.querySelector('#scpClose').onclick = function() { ov.remove(); };
+        ov.onclick = function(e) { if (e.target === ov) ov.remove(); };
+
+        function renderSites() {
+            ov.querySelector('#scpSites').innerHTML = SITE_CASE_SITES.map(function(s) {
+                var on = s === curSite;
+                return '<button data-site="' + s + '" style="flex:1;padding:10px;border-radius:12px;cursor:pointer;font-weight:600;font-size:0.85rem;' +
+                    (on ? 'background:#1f3a6b;color:#fff;border:1px solid #1f3a6b;' : 'background:#f8fafc;color:#1f3a6b;border:1px solid #e2e8f0;') + '">' + s + '</button>';
+            }).join('');
+            ov.querySelectorAll('#scpSites button').forEach(function(b) {
+                b.onclick = function() { curSite = b.dataset.site; renderSites(); renderWeeks(); };
+            });
+        }
+        function renderWeeks() {
+            var rows = '';
+            for (var w = 0; w < 4; w++) {
+                var r = getSiteWeekRange(w);
+                var errs = getSiteWeekErrors(curSite, r.monday, r.sunday);
+                var ppl = getSiteWeekTrainPeople(errs, SITE_CASE_TRAIN_MIN);
+                var label = getWeekLabel(r.monday) + '（' + formatShortDate(r.monday) + '~' + formatShortDate(r.sunday) + '）';
+                var dis = ppl.length === 0;
+                rows += '<button data-w="' + w + '" ' + (dis ? 'disabled' : '') + ' style="display:block;width:100%;text-align:left;padding:11px 14px;margin-bottom:8px;border-radius:12px;border:1px solid #e2e8f0;background:' + (dis ? '#f8fafc' : '#fff') + ';cursor:' + (dis ? 'default' : 'pointer') + ';font-size:0.85rem;' + (dis ? 'opacity:0.45;' : '') + '">' +
+                    (w === 0 ? '📌 ' : '📅 ') + label + ' · <b>' + ppl.length + '</b> 人待培训' +
+                    (dis ? '' : '<div style="font-size:0.7rem;color:#5e6f8d;margin-top:3px;">' + ppl.map(function(p) { return escapeHtml(p.name) + '(' + p.count + ')'; }).join('、') + '</div>') +
+                    '</button>';
+            }
+            ov.querySelector('#scpWeeks').innerHTML = rows;
+            ov.querySelectorAll('#scpWeeks button[data-w]').forEach(function(b) {
+                if (b.disabled) return;
+                b.onclick = function() {
+                    var r = getSiteWeekRange(parseInt(b.dataset.w, 10));
+                    var wl = getWeekLabel(r.monday);
+                    ov.remove();
+                    runSiteCaseTrainingPush(curSite, r.monday, r.sunday, wl);
+                };
+            });
+        }
+        renderSites(); renderWeeks();
+    }
+
+    async function runSiteCaseTrainingPush(site, monday, sunday, weekLabel) {
+        if (!isAdminMode()) { showToast('❌ 请先登录管理员', 'warning'); return; }
+        var errors = getSiteWeekErrors(site, monday, sunday);
+        var people = getSiteWeekTrainPeople(errors, SITE_CASE_TRAIN_MIN);
+        if (people.length === 0) { showAlert(site + ' 站点 ' + weekLabel + ' 无失误 ≥' + SITE_CASE_TRAIN_MIN + ' 次的人员', '⚠️'); return; }
+        var reviewerNames = people.map(function(p) { return p.name; });
+        var siteQc = SITE_QC_SUPERVISOR[site] || '';
+        var titleLabel = site + '站点培训案例';
+        var scopeText = site + ' · ' + weekLabel + '（' + formatShortDate(monday) + '~' + formatShortDate(sunday) + '）· ' + people.length + '人失误≥' + SITE_CASE_TRAIN_MIN + '次';
+        var buildOpts = {
+            errors: errors, reviewerNames: reviewerNames, scopeText: scopeText,
+            docTitle: '📄 ' + titleLabel, footerText: '优学堂 · 站点培训案例',
+            caseTypes: ['培训案例'], noteKeywordMap: true, floorOnePerCat: true
+        };
+
+        showToast('⏳ 正在生成报告…');
+        var r = _buildTrainingDocWithPhotoMode(buildOpts, false);
+        if (!r.ok) { showAlert(r.reason + '（已限定「培训案例」类型）', '⚠️'); return; }
+        if (_utf8Len(r.docHtml) > KV_REPORT_HARD_BYTES) {
+            var r2 = _buildTrainingDocWithPhotoMode(buildOpts, true);      // 太大 → 占位图模式重生成
+            if (r2.ok && _utf8Len(r2.docHtml) < _utf8Len(r.docHtml)) r = r2;
+        }
+
+        var reportName = '培训案例_' + site + '_' + formatDate(monday);
+        var shareUrl = DEPLOYED_URL + '?report=' + encodeURIComponent(reportName);
+
+        // 收件人 = 站点品控 + 该周 ≥6 次的人本人，去重
+        var emails = getPersonnelEmails();
+        var allNames = [siteQc].concat(reviewerNames).filter(function(n, i, a) { return n && a.indexOf(n) === i; });
+        var targets = [], missing = [], seenMail = {};
+        allNames.forEach(function(n) {
+            var em = emails[n];
+            if (em && String(em).indexOf('@') > 0) {
+                if (!seenMail[em]) { seenMail[em] = 1; targets.push({ name: n, email: em }); }
+            } else { missing.push(n); }
+        });
+        if (targets.length === 0) {
+            showAlert('所有收件人都没有邮箱，无法推送。\n请在「管理 → 邮箱地址管理」补充后重试。\n缺邮箱：' + missing.join('、'), '⚠️');
+            return;
+        }
+
+        var bytes = _utf8Len(r.docHtml);
+        var warn = (bytes > 1024 * 1024) ? '\n⚠️ 报告 ' + (bytes / 1048576).toFixed(2) + ' MB，外部设备可能加载较慢' : '';
+        var dupWarn = getTrainingPushes().some(function(x) { return x.reportName === reportName; })
+            ? '\n⚠️ 该站点该周此前已推送过，继续将覆盖旧链接内容\n' : '';
+        var okConfirm = await showConfirm(
+            '站点：' + site + '\n周期：' + weekLabel + '（' + formatShortDate(monday) + '~' + formatShortDate(sunday) + '）\n' +
+            '失误≥' + SITE_CASE_TRAIN_MIN + '次 ' + people.length + ' 人：' + people.map(function(p) { return p.name + '(' + p.count + ')'; }).join('、') + '\n' +
+            '匹配案例：' + r.matched.length + ' 个｜报告大小：' + (bytes / 1024).toFixed(0) + ' KB\n' +
+            '收件人 ' + targets.length + ' 人：' + targets.map(function(t) { return t.name; }).join('、') +
+            (missing.length ? '\n⚠️ 缺邮箱（收不到）：' + missing.join('、') + '（可在管理页补充）' : '') + warn + dupWarn, '📤');
+        if (!okConfirm) return;
+
+        // 存档 + KV 兜底通道（KV 失败不阻断推送）
+        try { saveReportToLocal(reportName, r.docHtml); } catch(e) { console.log('报告存本地失败（超配额？）', e); }
+        var kv = await kvPutReport(reportName, r.docHtml);
+        kvCleanupReports(_kvReportKey(reportName));
+
+        // 推送（逐人隔离，不自动重试）
+        var tip = document.createElement('div');
+        tip.className = 'custom-dialog-overlay';
+        tip.innerHTML = '<div class="custom-dialog-card"><div class="custom-dialog-icon">📤</div><div class="custom-dialog-msg" id="scpTipMsg">正在推送 0/' + targets.length + ' …</div></div>';
+        document.body.appendChild(tip);
+        var results = [];
+        try {
+            results = await feishuPushDirect('training', {
+                title: titleLabel, scope: scopeText, caseCount: r.matched.length,
+                reviewerNames: reviewerNames.join('、'), shareUrl: shareUrl
+            }, targets.map(function(t) { return t.email; }), function(done, total) {
+                var el = document.getElementById('scpTipMsg');
+                if (el) el.textContent = '正在推送 ' + done + '/' + total + ' …';
+            });
+        } finally { tip.remove(); }
+
+        var okTargets = [], failTargets = [];
+        targets.forEach(function(t, i) {
+            if (results[i] && results[i].success) okTargets.push(t); else failTargets.push({ name: t.name, email: t.email, error: (results[i] && results[i].error) || '未知错误' });
+        });
+
+        if (okTargets.length > 0) {
+            try {
+                var recs = getTrainingPushes();
+                recs.push({ time: new Date().toISOString(), type: 'train', reviewerName: reviewerNames.join(','), reportName: reportName, scope: site + ' ' + weekLabel, caseCount: r.matched.length, users: okTargets.map(function(t) { return t.name; }) });
+                saveTrainingPushes(recs);
+                markFeishuPushed('train_' + reportName, { type: 'train', title: titleLabel, site: site, reviewerName: reviewerNames.join(','), users: okTargets.map(function(t) { return t.name; }) });
+            } catch(e) {}
+            logAdminAction('培训案例', '站点培训案例推送', site + '/' + weekLabel + '/案例' + r.matched.length + '个/成功' + okTargets.length + '人/失败' + failTargets.length + '人/KV=' + (kv.ok ? 'ok' : (kv.reason || 'fail')) + '/report=' + reportName);
+        }
+        _showSiteCasePushResult({ site: site, weekLabel: weekLabel, reportName: reportName, shareUrl: shareUrl, caseCount: r.matched.length, people: people, okTargets: okTargets, failTargets: failTargets, missing: missing, kv: kv, debug: r.debug });
+    }
+
+    function _showSiteCasePushResult(info) {
+        var kvText = info.kv && info.kv.ok
+            ? '✅ 已同步云端缓存' + (info.kv.skipped ? '（内容未变，已跳过重复写入）' : '')
+            : ('⚠️ 云端缓存未写入：' + ((info.kv && (info.kv.reason || info.kv.error)) || '未知') + '（本地/Supabase 通道仍正常）');
+        var html = '<div class="modal-container" style="max-width:560px;">' +
+            '<div class="modal-header">📤 推送结果 · ' + escapeHtml(info.site) + '<button class="modal-close-btn" id="scrClose">✕</button></div>' +
+            '<div class="modal-body" style="padding:16px;font-size:0.82rem;line-height:1.7;">' +
+                '<div>' + escapeHtml(info.weekLabel) + '｜匹配案例 <b>' + info.caseCount + '</b> 个｜待培训 <b>' + info.people.length + '</b> 人</div>' +
+                '<div style="margin-top:6px;">✅ 成功 <b style="color:#27ae60;">' + info.okTargets.length + '</b> 人' +
+                    (info.okTargets.length ? '：' + info.okTargets.map(function(t) { return escapeHtml(t.name); }).join('、') : '') + '</div>' +
+                (info.failTargets.length ? '<div style="color:#c0392b;">❌ 失败 ' + info.failTargets.length + ' 人：' + info.failTargets.map(function(t) { return escapeHtml(t.name) + '(' + escapeHtml(t.email) + ')'; }).join('、') + '</div>' : '') +
+                (info.missing.length ? '<div style="color:#e67e22;">⚠️ 缺邮箱 ' + info.missing.length + ' 人：' + info.missing.map(escapeHtml).join('、') + '（管理页补充后重推）</div>' : '') +
+                '<div style="margin-top:6px;color:#5e6f8d;">' + kvText + '</div>' +
+                '<div style="background:#f8fafc;border:1px solid #eef2f6;border-radius:8px;padding:8px;font-size:0.65rem;word-break:break-all;color:#5e6f8d;margin-top:10px;">' + escapeHtml(info.shareUrl) + '</div>' +
+                '<div style="display:flex;gap:8px;margin-top:12px;">' +
+                    '<button id="scrCopy" style="flex:1;background:#2a5298;color:#fff;border:none;padding:10px;border-radius:20px;cursor:pointer;font-weight:600;">📋 复制链接</button>' +
+                    '<button id="scrAgain" style="flex:1;background:#f8fafc;border:1px solid #e2e8f0;padding:10px;border-radius:20px;cursor:pointer;">🔁 重新推送</button>' +
+                    '<button id="scrOK" style="flex:1;background:#f1f5f9;border:1px solid #cbd5e1;padding:10px;border-radius:20px;cursor:pointer;">关闭</button>' +
+                '</div>' +
+            '</div></div>';
+        var ov = document.createElement('div');
+        ov.className = 'modal-overlay'; ov.style.zIndex = '3000';
+        ov.innerHTML = html;
+        document.body.appendChild(ov);
+        ov.onclick = function(e) { if (e.target === ov) ov.remove(); };
+        ov.querySelector('#scrClose').onclick = function() { ov.remove(); };
+        ov.querySelector('#scrOK').onclick = function() { ov.remove(); };
+        ov.querySelector('#scrCopy').onclick = function() {
+            navigator.clipboard.writeText(info.shareUrl);
+            this.textContent = '✅ 已复制'; var b = this;
+            setTimeout(function() { b.textContent = '📋 复制链接'; }, 1500);
+        };
+        ov.querySelector('#scrAgain').onclick = function() {
+            ov.remove();
+            runSiteCaseTrainingPush(info.site, getSiteWeekRange(0).monday, getSiteWeekRange(0).sunday, info.weekLabel);
+        };
+    }
+
+    // ---- 报告 KV 兜底通道（Supabase 402 期间跨设备唯一可达通道；写次数必须极少）----
+    // worker 契约：GET/POST /data?key= 只接受 /^[\w\-]+$/ 的 ASCII key，值是 JSON 字符串 {"v":..,"t":..}
+    var KV_REPORT_KEY_PREFIX = 'report_';
+    var KV_REPORT_HARD_BYTES = 2.5 * 1024 * 1024;      // 超此体积改用占位图模式重生成
+    var KV_REPORT_KEEP = 12;                            // 保留最近 12 份 ≈ 3 站点 × 4 周
+    var KV_REPORT_CLEAN_KEY = '_reportKvCleanAt';       // 清理节流（_ 前缀不触发上云）
+
+    function _utf8Len(s) { try { return new TextEncoder().encode(String(s)).length; } catch(e) { return String(s).length * 2; } }
+    function _kvReportKey(name) {
+        var s = String(name || ''), hex = '';
+        try {
+            var b = new TextEncoder().encode(s);
+            for (var i = 0; i < b.length; i++) hex += (b[i] < 16 ? '0' : '') + b[i].toString(16);
+        } catch(e) {
+            for (var j = 0; j < s.length; j++) hex += (s.charCodeAt(j) < 16 ? '0' : '') + s.charCodeAt(j).toString(16);
+        }
+        return KV_REPORT_KEY_PREFIX + hex;
+    }
+    function _kvReportName(k) {
+        var hex = String(k || '').replace(KV_REPORT_KEY_PREFIX, '');
+        if (!/^[0-9a-f]+$/i.test(hex) || hex.length % 2) return '';
+        try {
+            var b = new Uint8Array(hex.length / 2);
+            for (var i = 0; i < b.length; i++) b[i] = parseInt(hex.substr(i * 2, 2), 16);
+            return new TextDecoder().decode(b);
+        } catch(e) { return ''; }
+    }
+    function _kvReportHeaders(extra) {
+        var h = { 'x-yxt-secret': 'yxt-feishu-2026' };
+        if (extra) Object.keys(extra).forEach(function(k) { h[k] = extra[k]; });
+        return h;
+    }
+    function kvGetReport(name) {
+        if (!FEISHU_PAGES_PROXY_URL) return Promise.resolve(null);
+        return fetch(FEISHU_PAGES_PROXY_URL + '/data?key=' + encodeURIComponent(_kvReportKey(name)), { headers: _kvReportHeaders() })
+            .then(function(r) { return r.ok ? r.json() : null; })
+            .then(function(j) {
+                if (!j || !j.value) return null;
+                try { var o = JSON.parse(j.value); return (o && typeof o.v === 'string') ? o.v : null; } catch(e) { return null; }
+            }).catch(function() { return null; });
+    }
+    function kvPutReport(name, html) {
+        var n = _utf8Len(html);
+        if (n > KV_REPORT_HARD_BYTES) return Promise.resolve({ ok: false, reason: 'too_large', bytes: n });
+        return fetch(FEISHU_PAGES_PROXY_URL + '/data', {
+            method: 'POST',
+            headers: _kvReportHeaders({ 'Content-Type': 'application/json' }),
+            body: JSON.stringify({ items: [{ key: _kvReportKey(name), v: html, t: new Date().toISOString() }] })
+        }).then(function(r) { return r.json(); }).then(function(j) {
+            // written=0 且 skipped>0 = 同内容 5 分钟内去重 → 必须当成功，否则人工重试会白烧写配额
+            var ok = !!(j && j.ok && !j.failed);
+            return { ok: ok, written: (j && j.written) || 0, skipped: (j && j.skipped) || 0, failed: (j && j.failed) || 0, bytes: n };
+        }).catch(function(e) { return { ok: false, reason: 'network', error: e.message, bytes: n }; });
+    }
+    function kvListReports() {
+        return fetch(FEISHU_PAGES_PROXY_URL + '/data/list', { headers: _kvReportHeaders() })
+            .then(function(r) { return r.json(); })
+            .then(function(j) {
+                return ((j && j.keys) || []).filter(function(x) { return x.key && x.key.indexOf(KV_REPORT_KEY_PREFIX) === 0; })
+                    .map(function(x) { return { key: x.key, name: _kvReportName(x.key), t: x.t || '' }; });
+            }).catch(function() { return null; });
+    }
+    function kvCleanupReports(protectKey) {
+        var last = 0;
+        try { last = parseInt(localStorage.getItem(KV_REPORT_CLEAN_KEY) || '0', 10) || 0; } catch(e) {}
+        if (Date.now() - last < 6 * 86400000) return Promise.resolve(null);      // 6 天节流
+        return kvListReports().then(function(list) {
+            if (!list || list.length <= KV_REPORT_KEEP) { try { localStorage.setItem(KV_REPORT_CLEAN_KEY, String(Date.now())); } catch(e) {} return null; }
+            list.sort(function(a, b) { return String(b.t || '').localeCompare(String(a.t || '')); });
+            var del = list.slice(KV_REPORT_KEEP).map(function(x) { return x.key; }).filter(function(k) { return k !== protectKey; });
+            if (!del.length) return null;
+            return fetch(FEISHU_PAGES_PROXY_URL + '/data/clear', {
+                method: 'POST', headers: _kvReportHeaders({ 'Content-Type': 'application/json' }), body: JSON.stringify({ keys: del })
+            }).then(function(r) { return r.json(); }).then(function() {
+                try { localStorage.setItem(KV_REPORT_CLEAN_KEY, String(Date.now())); } catch(e) {}
+                return { deleted: del.length };
+            });
+        }).catch(function() { return null; });
+    }
+
+    /**
+     * 培训资料 / 站点培训案例 报告生成（纯计算，无副作用）
+     * opts.errors         {Array}         失误行（调用方自行筛选）
+     * opts.reviewerNames  {string[]}      参与汇总的人员
+     * opts.scopeText      {string}        HTML 头部「培训范围：」文案
+     * opts.docTitle       {string}        h1 标题（默认 📄 精准培训资料）
+     * opts.footerText     {string}        页脚（默认 优学堂 · 精准培训资料）
+     * opts.caseTypes      {string[]|null} caseType 白名单，null=不限（老入口行为）
+     * opts.noteKeywordMap {boolean}       备注关键词参与匹配（只加不减）
+     * opts.floorOnePerCat {boolean}       每个有案例的类别至少 1 个配额
+     * opts.maxCases       {number}        默认 30
+     * @returns {{ok:boolean, reason?:string, docHtml?:string, matched?:Array, comboText?:string, debug?:Object}}
+     */
+    function buildTrainingDoc(opts) {
+        opts = opts || {};
+        var allErrors = opts.errors || [];
+        var reviewerNames = opts.reviewerNames || [];
+        var MAX_CASES = opts.maxCases || 30;
+        var debug = { noteHits: {}, noteRawHits: {}, noteAddedCats: [] };
         var comboCats = {}; // 品类+类别组合统计
         var cats = {};      // 汇总到类别（用于案例匹配）
         reviewerNames.forEach(function(name){
@@ -19102,7 +19527,13 @@ async function importQBFromFeishu() {
                 cats[e.category] = (cats[e.category]||0) + 1;
             });
         });
-        if (Object.keys(cats).length === 0) { showAlert("当前维度下无可匹配的培训人员", "⚠️"); return; }
+        // 失误备注关键词参与匹配（只加不减，2026-09-12）
+        var allCases = null;
+        if (opts.noteKeywordMap) {
+            allCases = getManualCasesFull();
+            mergeNoteKeywordCats(cats, allErrors, reviewerNames, debug, allCases);
+        }
+        if (Object.keys(cats).length === 0) { return { ok: false, reason: "当前维度下无可匹配的培训人员" }; }
         // 品类+类别组合展示
         var comboSorted = Object.entries(comboCats).sort(function(a,b){ return b[1] - a[1]; });
         var comboText = comboSorted.map(function(e){ return e[0] + '(' + e[1] + ')'; }).join(' / ');
@@ -19118,16 +19549,17 @@ async function importQBFromFeishu() {
         Object.entries(productCounts).forEach(function(e) {
             if (totalErrors > 0 && e[1] / totalErrors >= 0.9) dominantProduct = e[0];
         });
-        var allCases = getManualCasesFull();
+        if (!allCases) allCases = getManualCasesFull();
         var matched = allCases.filter(function(c){
             if (!c.errorCategory || !cats[c.errorCategory]) return false;
+            // caseType 白名单（新流程只取「培训案例」；老入口传 null 不过滤）
+            if (opts.caseTypes && opts.caseTypes.length > 0 && opts.caseTypes.indexOf(c.caseType || '培训案例') < 0) return false;
             // 主品类过滤：用 productCategory 字段匹配（全品类通配）
             if (dominantProduct && c.productCategory && c.productCategory !== '全品类' && c.productCategory !== dominantProduct && !c.productCategory.includes(dominantProduct) && !dominantProduct.includes(c.productCategory) && !c.productCategory.replace(/[&、\-・\s]/g,'').includes(dominantProduct.replace(/[&、\-・\s]/g,''))) return false;
             return true;
         });
-        if (matched.length === 0) { showAlert("案例库中无匹配的案例", "⚠️"); return; }
+        if (matched.length === 0) { return { ok: false, reason: "案例库中无匹配的案例" }; }
         // 按失误比例分配案例数（最大余数法）：失误多的类别配额多，再轮转补齐缺口
-        var MAX_CASES = 30;
         var sortedCats = Object.keys(cats).sort(function(a,b){ return (cats[b]||0)-(cats[a]||0); });
         var casesByCat = {};
         matched.forEach(function(c){ (casesByCat[c.errorCategory] = casesByCat[c.errorCategory]||[]).push(c); });
@@ -19143,6 +19575,16 @@ async function importQBFromFeishu() {
             return { cat: cat, f: totalFails > 0 ? ((cats[cat]||0)/totalFails*MAX_CASES) - quota[cat] : 0 };
         }).sort(function(a,b){ return b.f - a.f; });
         for (var fi = 0; fi < remain && fi < fracList.length; fi++) quota[fracList[fi].cat]++;
+        // 新流程兜底：有案例但配额为 0 的类别，从配额最高的类别匀 1 个过来（总数不变）
+        if (opts.floorOnePerCat) {
+            var zeroCats = sortedCats.filter(function(c){ return quota[c] === 0 && (casesByCat[c]||[]).length > 0; });
+            for (var zi = 0; zi < zeroCats.length; zi++) {
+                var donor = null;
+                sortedCats.forEach(function(c){ if (quota[c] > 1 && (!donor || quota[c] > quota[donor])) donor = c; });
+                if (!donor) break;
+                quota[donor]--; quota[zeroCats[zi]] = 1;
+            }
+        }
         // 按配额取案例（类别内保持案例库原顺序），不足配额的类别由其他类别轮转补齐
         var result = [];
         sortedCats.forEach(function(cat){
@@ -19171,8 +19613,8 @@ async function importQBFromFeishu() {
         ".desc{line-height:1.7;color:#4a5568;}img{max-width:100%;border-radius:10px;margin:6px;border:1px solid #e2e8f0;cursor:pointer;}" +
         ".correct{background:#eef2ff;padding:12px 16px;border-radius:12px;color:#2a5298;line-height:1.7;}" +
         ".footer{color:#94a3b8;text-align:center;margin-top:40px;font-size:0.85rem;}" +
-        "</style></head><body><h1>📄 精准培训资料</h1>" +
-        "<p style=\"color:#94a3b8;\">培训范围：" + escapeHtml(titleLabel) + " | 涉及人员：" + reviewerNames.join("、") + " | 生成日期：" + new Date().toLocaleDateString("zh-CN") + " | 共 " + matched.length + " 个案例</p>" +
+        "</style></head><body><h1>" + (opts.docTitle || "📄 精准培训资料") + "</h1>" +
+        "<p style=\"color:#94a3b8;\">培训范围：" + escapeHtml(opts.scopeText || "") + " | 涉及人员：" + reviewerNames.join("、") + " | 生成日期：" + new Date().toLocaleDateString("zh-CN") + " | 共 " + matched.length + " 个案例</p>" +
         "<p style=\"color:#5e6f8d;font-size:0.85rem;\">品类+失误类别：" + comboText + "</p>";
 
         matched.forEach(function(c) {
@@ -19190,7 +19632,22 @@ async function importQBFromFeishu() {
             }
             docHtml += "</div>";
         });
-        docHtml += "<div class=\"footer\">优学堂 · 精准培训资料</div></body></html>";
+        docHtml += "<div class=\"footer\">" + escapeHtml(opts.footerText || "优学堂 · 精准培训资料") + "</div></body></html>";
+        return { ok: true, docHtml: docHtml, matched: matched, comboText: comboText, debug: debug };
+    }
+
+    // 老入口（个人 / 单站点 / 全站培训资料）：三个开关全关，行为与重构前一致
+    function doGenerateTraining(reviewerNames, titleLabel) {
+        var r = buildTrainingDoc({
+            errors: getFilteredErrors(),
+            reviewerNames: reviewerNames,
+            scopeText: titleLabel,
+            caseTypes: null,
+            noteKeywordMap: false,
+            floorOnePerCat: false
+        });
+        if (!r.ok) { showAlert(r.reason, "⚠️"); return; }
+        var matched = r.matched, comboText = r.comboText, docHtml = r.docHtml;
 
         var dateStr = new Date().toISOString().slice(0,10).replace(/-/g,'');
         var scopeLabel = titleLabel.indexOf('个人')>=0 ? '个人' : (titleLabel.indexOf('全站')>=0 ? '全站' : titleLabel.replace(/站点培训资料/,''));
@@ -20683,12 +21140,13 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
         });
     }
 
-    async function feishuPushDirect(type, data, userIds) {
+    async function feishuPushDirect(type, data, userIds, onProgress) {
         var card = buildFeishuCard(type, data);
         var results = [];
         for (var i = 0; i < userIds.length; i++) {
             try { await sendFeishuCard(userIds[i], card); results.push({ userId: userIds[i], success: true }); }
             catch(e) { results.push({ userId: userIds[i], success: false, error: e.message }); }
+            if (typeof onProgress === 'function') { try { onProgress(i + 1, userIds.length); } catch(e) {} }
         }
         return results;
     }
@@ -22296,16 +22754,21 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
             }
             rm.forEach(function(k) { try { _realLS.removeItem(k); } catch(e) {} });
             if (rm.length > 0) { console.log('🧹 容量护栏: 已清理图片缓存 ' + rm.length + ' 条'); return; }
-            // ② generatedReports 只保留最近 3 份（云端/KV 有镜像，删旧报告零风险）
+            // ② generatedReports 只保留有限份数（云端/KV 有镜像，删旧报告零风险）
+            //    「培训案例_」= 站点培训案例推送（2026-09-12 新增，保留 12 份 ≈ 3 站点 × 4 周）；其余维持 3 份
             try {
                 var gr = JSON.parse(_realLS.getItem('generatedReports') || '{}');
                 if (gr && typeof gr === 'object') {
                     var gnames = Object.keys(gr);
-                    if (gnames.length > 3) {
-                        gnames.sort();
-                        gnames.slice(0, gnames.length - 3).forEach(function(n) { delete gr[n]; });
+                    var siteReps = gnames.filter(function(n) { return n.indexOf('培训案例_') === 0; });
+                    var otherReps = gnames.filter(function(n) { return n.indexOf('培训案例_') !== 0; });
+                    var kill = [];
+                    if (otherReps.length > 3) { otherReps.sort(); kill = kill.concat(otherReps.slice(0, otherReps.length - 3)); }
+                    if (siteReps.length > 12) { siteReps.sort(); kill = kill.concat(siteReps.slice(0, siteReps.length - 12)); }
+                    if (kill.length > 0) {
+                        kill.forEach(function(n) { delete gr[n]; });
                         _realLS.setItem('generatedReports', JSON.stringify(gr));
-                        console.log('🧹 容量护栏: 已裁剪旧报告至 3 份');
+                        console.log('🧹 容量护栏: 已裁剪旧报告 ' + kill.length + ' 份（培训案例保留 12）');
                     }
                 }
             } catch(e) {}
