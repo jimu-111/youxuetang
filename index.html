@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <!-- 版本行：每次部署新代码必须 bump 此 content（YYYYMMDD.N），旧设备靠它自检静默升级 -->
-    <meta name="yxt-ver" content="20260911.3">
+    <meta name="yxt-ver" content="20260912.1">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
     <title>优学堂</title>
     <script src="https://cdn.sheetjs.com/xlsx-0.20.2/package/dist/xlsx.full.min.js" defer></script>
@@ -19343,51 +19343,94 @@ async function importQBFromFeishu() {
             (missing.length ? '\n⚠️ 缺邮箱（收不到）：' + missing.join('、') + '（可在管理页补充）' : '') + warn + dupWarn, '📤');
         if (!okConfirm) return;
 
-        // 存档 + KV 兜底通道（KV 失败不阻断推送）
-        try { saveReportToLocal(reportName, r.docHtml); } catch(e) { console.log('报告存本地失败（超配额？）', e); }
-        var kv = await kvPutReport(reportName, r.docHtml);
-        kvCleanupReports(_kvReportKey(reportName));
-
-        // 推送（逐人隔离，不自动重试）
-        var tip = document.createElement('div');
-        tip.className = 'custom-dialog-overlay';
-        tip.innerHTML = '<div class="custom-dialog-card"><div class="custom-dialog-icon">📤</div><div class="custom-dialog-msg" id="scpTipMsg">正在推送 0/' + targets.length + ' …</div></div>';
-        document.body.appendChild(tip);
-        var results = [];
+        // 常驻进度弹窗：点「确定」后全程不消失，避免误以为没推送
+        var info = {
+            site: site, weekLabel: weekLabel, reportName: reportName, shareUrl: shareUrl,
+            caseCount: r.matched.length, people: people, okTargets: [], failTargets: [],
+            missing: missing, kv: null, debug: r.debug, monday: monday, sunday: sunday
+        };
+        var prog = _scpProgressShow(site, weekLabel);
         try {
-            results = await feishuPushDirect('training', {
-                title: titleLabel, scope: scopeText, caseCount: r.matched.length,
-                reviewerNames: reviewerNames.join('、'), shareUrl: shareUrl
-            }, targets.map(function(t) { return t.email; }), function(done, total) {
-                var el = document.getElementById('scpTipMsg');
-                if (el) el.textContent = '正在推送 ' + done + '/' + total + ' …';
-            });
-        } finally { tip.remove(); }
+            prog.set('gen', '报告已生成：匹配案例 ' + r.matched.length + ' 个 · ' + (bytes / 1024).toFixed(0) + ' KB', 'ok');
 
-        var okTargets = [], failTargets = [];
-        targets.forEach(function(t, i) {
-            if (results[i] && results[i].success) okTargets.push(t); else failTargets.push({ name: t.name, email: t.email, error: (results[i] && results[i].error) || '未知错误' });
-        });
+            prog.set('local', '存档到本地…', 'run');
+            try { saveReportToLocal(reportName, r.docHtml); prog.set('local', '报告已存档到本地', 'ok'); }
+            catch(e) { prog.set('local', '本地存档失败（' + (e.message || '可能超配额') + '），继续推送', 'fail'); }
 
-        if (okTargets.length > 0) {
+            prog.set('kv', '写入云端缓存…', 'run');
+            var kv;
+            try { kv = await kvPutReport(reportName, r.docHtml); }
+            catch(e) { kv = { ok: false, reason: e.message || '写入异常' }; }
+            info.kv = kv;
+            prog.set('kv', kv.ok ? ('云端缓存已写入' + (kv.skipped ? '（内容未变，已跳过重复写入）' : '')) : ('云端缓存未写入：' + (kv.reason || kv.error || '未知') + '（不影响飞书推送）'), kv.ok ? 'ok' : 'fail');
+            kvCleanupReports(_kvReportKey(reportName));
+
+            prog.set('push', '正在推送 0/' + targets.length + ' …', 'run');
+            var results = [];
             try {
-                var recs = getTrainingPushes();
-                recs.push({ time: new Date().toISOString(), type: 'train', reviewerName: reviewerNames.join(','), reportName: reportName, scope: site + ' ' + weekLabel, caseCount: r.matched.length, users: okTargets.map(function(t) { return t.name; }) });
-                saveTrainingPushes(recs);
-                markFeishuPushed('train_' + reportName, { type: 'train', title: titleLabel, site: site, reviewerName: reviewerNames.join(','), users: okTargets.map(function(t) { return t.name; }) });
-            } catch(e) {}
-            logAdminAction('培训案例', '站点培训案例推送', site + '/' + weekLabel + '/案例' + r.matched.length + '个/成功' + okTargets.length + '人/失败' + failTargets.length + '人/KV=' + (kv.ok ? 'ok' : (kv.reason || 'fail')) + '/report=' + reportName);
+                results = await feishuPushDirect('training', {
+                    title: titleLabel, scope: scopeText, caseCount: r.matched.length,
+                    reviewerNames: reviewerNames.join('、'), shareUrl: shareUrl
+                }, targets.map(function(t) { return t.email; }), function(done, total) {
+                    prog.set('push', '正在推送 ' + done + '/' + total + ' …', 'run');
+                });
+            } catch(e) { prog.set('push', '推送请求异常：' + (e.message || '未知错误'), 'fail'); }
+
+            targets.forEach(function(t, i) {
+                if (results[i] && results[i].success) info.okTargets.push(t);
+                else info.failTargets.push({ name: t.name, email: t.email, error: (results[i] && results[i].error) || '未知错误' });
+            });
+            prog.set('push', '推送完成：成功 ' + info.okTargets.length + ' 人' + (info.failTargets.length ? ' · 失败 ' + info.failTargets.length + ' 人' : '') + '（共 ' + targets.length + ' 人）', info.failTargets.length ? 'fail' : 'ok');
+
+            if (info.okTargets.length > 0) {
+                try {
+                    var recs = getTrainingPushes();
+                    recs.push({ time: new Date().toISOString(), type: 'train', reviewerName: reviewerNames.join(','), reportName: reportName, scope: site + ' ' + weekLabel, caseCount: r.matched.length, users: info.okTargets.map(function(t) { return t.name; }) });
+                    saveTrainingPushes(recs);
+                    markFeishuPushed('train_' + reportName, { type: 'train', title: titleLabel, site: site, reviewerName: reviewerNames.join(','), users: info.okTargets.map(function(t) { return t.name; }) });
+                } catch(e) {}
+                logAdminAction('培训案例', '站点培训案例推送', site + '/' + weekLabel + '/案例' + r.matched.length + '个/成功' + info.okTargets.length + '人/失败' + info.failTargets.length + '人/KV=' + (kv.ok ? 'ok' : (kv.reason || 'fail')) + '/report=' + reportName);
+            }
+        } catch(e) {
+            prog.set('err', '推送流程中断：' + (e.message || e) + '（上方已完成的步骤仍然有效）', 'fail');
         }
-        _showSiteCasePushResult({ site: site, weekLabel: weekLabel, reportName: reportName, shareUrl: shareUrl, caseCount: r.matched.length, people: people, okTargets: okTargets, failTargets: failTargets, missing: missing, kv: kv, debug: r.debug });
+        _showSiteCasePushResult(info, prog);
     }
 
-    function _showSiteCasePushResult(info) {
+    // 常驻推送进度弹窗：全程不消失，结束后原地变结果面板（无关闭按钮，防止误关看不到结果）
+    function _scpProgressShow(site, weekLabel) {
+        var ov = document.createElement('div');
+        ov.className = 'modal-overlay'; ov.style.zIndex = '3001';
+        ov.innerHTML = '<div class="modal-container" style="max-width:560px;">' +
+            '<div class="modal-header" id="scpProgHead">📤 推送中 · ' + escapeHtml(site) + ' ' + escapeHtml(weekLabel) + '</div>' +
+            '<div class="modal-body" style="padding:16px;">' +
+                '<div id="scpProgHint" style="font-size:0.72rem;color:#94a3b8;margin-bottom:8px;">推送过程中请勿关闭或刷新本页面</div>' +
+                '<div id="scpSteps" style="font-size:0.82rem;line-height:2;"></div>' +
+                '<div id="scpResultBox"></div>' +
+            '</div></div>';
+        document.body.appendChild(ov);
+        var stepsBox = ov.querySelector('#scpSteps'), nodes = {};
+        return {
+            ov: ov,
+            resultBox: ov.querySelector('#scpResultBox'),
+            set: function(id, text, state) {
+                if (!nodes[id]) { nodes[id] = document.createElement('div'); stepsBox.appendChild(nodes[id]); }
+                nodes[id].textContent = (state === 'ok' ? '✅ ' : state === 'fail' ? '⚠️ ' : '⏳ ') + text;
+                nodes[id].style.color = state === 'fail' ? '#c0392b' : (state === 'ok' ? '#1f3a6b' : '#2a5298');
+            },
+            finish: function(headHtml) {
+                ov.querySelector('#scpProgHead').innerHTML = headHtml;
+                var hint = ov.querySelector('#scpProgHint'); if (hint) hint.remove();
+            }
+        };
+    }
+
+    // 结果面板：host 存在时原地渲染进进度弹窗（窗口不消失、进度日志保留），否则独立弹窗
+    function _showSiteCasePushResult(info, host) {
         var kvText = info.kv && info.kv.ok
             ? '✅ 已同步云端缓存' + (info.kv.skipped ? '（内容未变，已跳过重复写入）' : '')
-            : ('⚠️ 云端缓存未写入：' + ((info.kv && (info.kv.reason || info.kv.error)) || '未知') + '（本地/Supabase 通道仍正常）');
-        var html = '<div class="modal-container" style="max-width:560px;">' +
-            '<div class="modal-header">📤 推送结果 · ' + escapeHtml(info.site) + '<button class="modal-close-btn" id="scrClose">✕</button></div>' +
-            '<div class="modal-body" style="padding:16px;font-size:0.82rem;line-height:1.7;">' +
+            : (info.kv ? ('⚠️ 云端缓存未写入：' + (info.kv.reason || info.kv.error || '未知') + '（本地/Supabase 通道仍正常）') : '⚠️ 云端缓存未写入（流程中断）');
+        var inner = '<div style="border-top:1px dashed #e2e8f0;margin-top:12px;padding-top:10px;font-size:0.82rem;line-height:1.7;">' +
                 '<div>' + escapeHtml(info.weekLabel) + '｜匹配案例 <b>' + info.caseCount + '</b> 个｜待培训 <b>' + info.people.length + '</b> 人</div>' +
                 '<div style="margin-top:6px;">✅ 成功 <b style="color:#27ae60;">' + info.okTargets.length + '</b> 人' +
                     (info.okTargets.length ? '：' + info.okTargets.map(function(t) { return escapeHtml(t.name); }).join('、') : '') + '</div>' +
@@ -19400,13 +19443,23 @@ async function importQBFromFeishu() {
                     '<button id="scrAgain" style="flex:1;background:#f8fafc;border:1px solid #e2e8f0;padding:10px;border-radius:20px;cursor:pointer;">🔁 重新推送</button>' +
                     '<button id="scrOK" style="flex:1;background:#f1f5f9;border:1px solid #cbd5e1;padding:10px;border-radius:20px;cursor:pointer;">关闭</button>' +
                 '</div>' +
-            '</div></div>';
-        var ov = document.createElement('div');
-        ov.className = 'modal-overlay'; ov.style.zIndex = '3000';
-        ov.innerHTML = html;
-        document.body.appendChild(ov);
+            '</div>';
+        var ov;
+        if (host) {
+            host.finish('📤 推送结果 · ' + escapeHtml(info.site));
+            host.resultBox.innerHTML = inner;
+            ov = host.ov;
+        } else {
+            ov = document.createElement('div');
+            ov.className = 'modal-overlay'; ov.style.zIndex = '3000';
+            ov.innerHTML = '<div class="modal-container" style="max-width:560px;">' +
+                '<div class="modal-header">📤 推送结果 · ' + escapeHtml(info.site) + '<button class="modal-close-btn" id="scrClose">✕</button></div>' +
+                '<div class="modal-body" style="padding:16px;">' + inner + '</div></div>';
+            document.body.appendChild(ov);
+        }
         ov.onclick = function(e) { if (e.target === ov) ov.remove(); };
-        ov.querySelector('#scrClose').onclick = function() { ov.remove(); };
+        var xb = ov.querySelector('#scrClose');
+        if (xb) xb.onclick = function() { ov.remove(); };
         ov.querySelector('#scrOK').onclick = function() { ov.remove(); };
         ov.querySelector('#scrCopy').onclick = function() {
             navigator.clipboard.writeText(info.shareUrl);
@@ -19415,7 +19468,7 @@ async function importQBFromFeishu() {
         };
         ov.querySelector('#scrAgain').onclick = function() {
             ov.remove();
-            runSiteCaseTrainingPush(info.site, getSiteWeekRange(0).monday, getSiteWeekRange(0).sunday, info.weekLabel);
+            runSiteCaseTrainingPush(info.site, info.monday, info.sunday, info.weekLabel);
         };
     }
 
