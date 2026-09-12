@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <!-- 版本行：每次部署新代码必须 bump 此 content（YYYYMMDD.N），旧设备靠它自检静默升级 -->
-    <meta name="yxt-ver" content="20260912.1">
+    <meta name="yxt-ver" content="20260912.2">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
     <title>优学堂</title>
     <script src="https://cdn.sheetjs.com/xlsx-0.20.2/package/dist/xlsx.full.min.js" defer></script>
@@ -19357,12 +19357,17 @@ async function importQBFromFeishu() {
             try { saveReportToLocal(reportName, r.docHtml); prog.set('local', '报告已存档到本地', 'ok'); }
             catch(e) { prog.set('local', '本地存档失败（' + (e.message || '可能超配额') + '），继续推送', 'fail'); }
 
-            prog.set('kv', '写入云端缓存…', 'run');
-            var kv;
-            try { kv = await kvPutReport(reportName, r.docHtml); }
-            catch(e) { kv = { ok: false, reason: e.message || '写入异常' }; }
-            info.kv = kv;
-            prog.set('kv', kv.ok ? ('云端缓存已写入' + (kv.skipped ? '（内容未变，已跳过重复写入）' : '')) : ('云端缓存未写入：' + (kv.reason || kv.error || '未知') + '（不影响飞书推送）'), kv.ok ? 'ok' : 'fail');
+            // 云端缓存与飞书推送并行：缓存慢/超时都不拖住推送（缓存只是让收件人点得开链接）
+            var kv = null;
+            var kvPromise = kvPutReport(reportName, r.docHtml).then(function(x) { return x; }, function(e) { return { ok: false, reason: '网络错误', error: e.message }; });
+            prog.set('kv', '写入云端缓存…（后台进行，不阻塞推送）', 'run');
+            kvPromise.then(function(x) {
+                kv = x;
+                if (!document.body.contains(prog.ov)) return;          // 弹窗已关就不更新
+                prog.set('kv', _scpKvText(x), x.ok ? 'ok' : 'fail');
+                var el = prog.resultBox.querySelector('#scrKvText');
+                if (el) el.innerHTML = _scpKvText(x);
+            });
             kvCleanupReports(_kvReportKey(reportName));
 
             prog.set('push', '正在推送 0/' + targets.length + ' …', 'run');
@@ -19382,6 +19387,7 @@ async function importQBFromFeishu() {
             });
             prog.set('push', '推送完成：成功 ' + info.okTargets.length + ' 人' + (info.failTargets.length ? ' · 失败 ' + info.failTargets.length + ' 人' : '') + '（共 ' + targets.length + ' 人）', info.failTargets.length ? 'fail' : 'ok');
 
+            info.kv = kv;   // 尚未写完时为 null，_scpKvText 会显示「写入中」并在写完后自动刷新
             if (info.okTargets.length > 0) {
                 try {
                     var recs = getTrainingPushes();
@@ -19389,7 +19395,7 @@ async function importQBFromFeishu() {
                     saveTrainingPushes(recs);
                     markFeishuPushed('train_' + reportName, { type: 'train', title: titleLabel, site: site, reviewerName: reviewerNames.join(','), users: info.okTargets.map(function(t) { return t.name; }) });
                 } catch(e) {}
-                logAdminAction('培训案例', '站点培训案例推送', site + '/' + weekLabel + '/案例' + r.matched.length + '个/成功' + info.okTargets.length + '人/失败' + info.failTargets.length + '人/KV=' + (kv.ok ? 'ok' : (kv.reason || 'fail')) + '/report=' + reportName);
+                logAdminAction('培训案例', '站点培训案例推送', site + '/' + weekLabel + '/案例' + r.matched.length + '个/成功' + info.okTargets.length + '人/失败' + info.failTargets.length + '人/KV=' + (kv ? (kv.ok ? 'ok' : (kv.reason || 'fail')) : 'pending') + '/report=' + reportName);
             }
         } catch(e) {
             prog.set('err', '推送流程中断：' + (e.message || e) + '（上方已完成的步骤仍然有效）', 'fail');
@@ -19425,18 +19431,23 @@ async function importQBFromFeishu() {
         };
     }
 
+    // 云端缓存状态文案（null = 后台仍在写，稍后自动刷新）
+    function _scpKvText(kv) {
+        if (!kv) return '⏳ 云端缓存写入中（后台继续，不影响收件人打开）';
+        if (kv.ok) return '✅ 已同步云端缓存' + (kv.skipped ? '（内容未变，已跳过重复写入）' : '');
+        return '⚠️ 云端缓存未写入：' + (kv.reason || kv.error || '未知') + '（本地/Supabase 通道仍正常）';
+    }
+
     // 结果面板：host 存在时原地渲染进进度弹窗（窗口不消失、进度日志保留），否则独立弹窗
     function _showSiteCasePushResult(info, host) {
-        var kvText = info.kv && info.kv.ok
-            ? '✅ 已同步云端缓存' + (info.kv.skipped ? '（内容未变，已跳过重复写入）' : '')
-            : (info.kv ? ('⚠️ 云端缓存未写入：' + (info.kv.reason || info.kv.error || '未知') + '（本地/Supabase 通道仍正常）') : '⚠️ 云端缓存未写入（流程中断）');
+        var kvText = _scpKvText(info.kv);
         var inner = '<div style="border-top:1px dashed #e2e8f0;margin-top:12px;padding-top:10px;font-size:0.82rem;line-height:1.7;">' +
                 '<div>' + escapeHtml(info.weekLabel) + '｜匹配案例 <b>' + info.caseCount + '</b> 个｜待培训 <b>' + info.people.length + '</b> 人</div>' +
                 '<div style="margin-top:6px;">✅ 成功 <b style="color:#27ae60;">' + info.okTargets.length + '</b> 人' +
                     (info.okTargets.length ? '：' + info.okTargets.map(function(t) { return escapeHtml(t.name); }).join('、') : '') + '</div>' +
                 (info.failTargets.length ? '<div style="color:#c0392b;">❌ 失败 ' + info.failTargets.length + ' 人：' + info.failTargets.map(function(t) { return escapeHtml(t.name) + '(' + escapeHtml(t.email) + ')'; }).join('、') + '</div>' : '') +
                 (info.missing.length ? '<div style="color:#e67e22;">⚠️ 缺邮箱 ' + info.missing.length + ' 人：' + info.missing.map(escapeHtml).join('、') + '（管理页补充后重推）</div>' : '') +
-                '<div style="margin-top:6px;color:#5e6f8d;">' + kvText + '</div>' +
+                '<div style="margin-top:6px;color:#5e6f8d;"><span id="scrKvText">' + kvText + '</span></div>' +
                 '<div style="background:#f8fafc;border:1px solid #eef2f6;border-radius:8px;padding:8px;font-size:0.65rem;word-break:break-all;color:#5e6f8d;margin-top:10px;">' + escapeHtml(info.shareUrl) + '</div>' +
                 '<div style="display:flex;gap:8px;margin-top:12px;">' +
                     '<button id="scrCopy" style="flex:1;background:#2a5298;color:#fff;border:none;padding:10px;border-radius:20px;cursor:pointer;font-weight:600;">📋 复制链接</button>' +
@@ -19504,9 +19515,21 @@ async function importQBFromFeishu() {
         if (extra) Object.keys(extra).forEach(function(k) { h[k] = extra[k]; });
         return h;
     }
+    // KV 请求超时保护：代理无响应时不能让进度窗无限等待（超时按失败处理，流程继续）
+    function _kvFetch(url, opts, timeoutMs) {
+        var ctl = null, timer = null;
+        try { ctl = new AbortController(); } catch(e) { ctl = null; }
+        opts = opts || {};
+        if (ctl) {
+            opts.signal = ctl.signal;
+            timer = setTimeout(function() { try { ctl.abort(); } catch(e) {} }, timeoutMs || 20000);
+        }
+        return fetch(url, opts).then(function(r) { if (timer) clearTimeout(timer); return r; },
+                                     function(e) { if (timer) clearTimeout(timer); throw e; });
+    }
     function kvGetReport(name) {
         if (!FEISHU_PAGES_PROXY_URL) return Promise.resolve(null);
-        return fetch(FEISHU_PAGES_PROXY_URL + '/data?key=' + encodeURIComponent(_kvReportKey(name)), { headers: _kvReportHeaders() })
+        return _kvFetch(FEISHU_PAGES_PROXY_URL + '/data?key=' + encodeURIComponent(_kvReportKey(name)), { headers: _kvReportHeaders() }, 12000)
             .then(function(r) { return r.ok ? r.json() : null; })
             .then(function(j) {
                 if (!j || !j.value) return null;
@@ -19516,18 +19539,21 @@ async function importQBFromFeishu() {
     function kvPutReport(name, html) {
         var n = _utf8Len(html);
         if (n > KV_REPORT_HARD_BYTES) return Promise.resolve({ ok: false, reason: 'too_large', bytes: n });
-        return fetch(FEISHU_PAGES_PROXY_URL + '/data', {
+        return _kvFetch(FEISHU_PAGES_PROXY_URL + '/data', {
             method: 'POST',
             headers: _kvReportHeaders({ 'Content-Type': 'application/json' }),
             body: JSON.stringify({ items: [{ key: _kvReportKey(name), v: html, t: new Date().toISOString() }] })
-        }).then(function(r) { return r.json(); }).then(function(j) {
+        }, 25000).then(function(r) { return r.json(); }).then(function(j) {
             // written=0 且 skipped>0 = 同内容 5 分钟内去重 → 必须当成功，否则人工重试会白烧写配额
             var ok = !!(j && j.ok && !j.failed);
             return { ok: ok, written: (j && j.written) || 0, skipped: (j && j.skipped) || 0, failed: (j && j.failed) || 0, bytes: n };
-        }).catch(function(e) { return { ok: false, reason: 'network', error: e.message, bytes: n }; });
+        }).catch(function(e) {
+            var abort = e && (e.name === 'AbortError' || /abort/i.test(e.message || ''));
+            return { ok: false, reason: abort ? '请求超时（25 秒无响应）' : '网络错误', error: e.message, bytes: n };
+        });
     }
     function kvListReports() {
-        return fetch(FEISHU_PAGES_PROXY_URL + '/data/list', { headers: _kvReportHeaders() })
+        return _kvFetch(FEISHU_PAGES_PROXY_URL + '/data/list', { headers: _kvReportHeaders() }, 12000)
             .then(function(r) { return r.json(); })
             .then(function(j) {
                 return ((j && j.keys) || []).filter(function(x) { return x.key && x.key.indexOf(KV_REPORT_KEY_PREFIX) === 0; })
@@ -19543,9 +19569,9 @@ async function importQBFromFeishu() {
             list.sort(function(a, b) { return String(b.t || '').localeCompare(String(a.t || '')); });
             var del = list.slice(KV_REPORT_KEEP).map(function(x) { return x.key; }).filter(function(k) { return k !== protectKey; });
             if (!del.length) return null;
-            return fetch(FEISHU_PAGES_PROXY_URL + '/data/clear', {
+            return _kvFetch(FEISHU_PAGES_PROXY_URL + '/data/clear', {
                 method: 'POST', headers: _kvReportHeaders({ 'Content-Type': 'application/json' }), body: JSON.stringify({ keys: del })
-            }).then(function(r) { return r.json(); }).then(function() {
+            }, 12000).then(function(r) { return r.json(); }).then(function() {
                 try { localStorage.setItem(KV_REPORT_CLEAN_KEY, String(Date.now())); } catch(e) {}
                 return { deleted: del.length };
             });
