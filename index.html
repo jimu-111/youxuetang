@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <!-- 版本行：每次部署新代码必须 bump 此 content（YYYYMMDD.N），旧设备靠它自检静默升级 -->
-    <meta name="yxt-ver" content="20260913.4">
+    <meta name="yxt-ver" content="20260913.5">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
     <title>优学堂</title>
     <script src="https://cdn.sheetjs.com/xlsx-0.20.2/package/dist/xlsx.full.min.js" defer></script>
@@ -414,6 +414,23 @@
         var KV_DIRTY_KEY = '_kvDirtyKeys';
         var KV_INIT_KEY = '_kvMirrorInitDone';
         var _supDown = false;
+        // 2026-09-13 联动修复：原来任何一次失败的 app_data GET 都会立刻把 _supDown 置真，
+        //   而 _supDown 是全局标志 —— 一个模块的一次网络抖动会让所有模块（题库/考试/判责/学员）
+        //   全部改走 KV 兜底，直到 5 分钟后 probeLoop 才可能复位。抖动一次 = 全局降级 5 分钟。
+        //   现在改为「连续失败达阈值才判定挂断」，单次抖动不再触发全局降级。
+        var _supFailStreak = 0;
+        var _SUP_FAIL_THRESHOLD = 2;
+        function _supMarkFail() {
+            _supFailStreak++;
+            if (_supFailStreak >= _SUP_FAIL_THRESHOLD && !_supDown) {
+                _supDown = true;
+                console.log('[KV兜底] Supabase 连续 ' + _supFailStreak + ' 次失败，切换 KV 兜底');
+            }
+            return _supDown;
+        }
+        // 成功时只清失败计数，不动 _supDown —— _supDown 必须等回灌完成才复位，
+        // 否则回灌期间新数据读不到（原行为，保持不变）
+        function _supMarkOk() { _supFailStreak = 0; }
         var _origFetch = window.fetch;
 
         function kvDirtyKeys() {
@@ -490,6 +507,27 @@
         // （2026-09-08 再加 5 分钟结果缓存 + _supDown 短路，90% 限额告警后全面降频）
         var _kvListCache = null; var _kvListCacheTs = 0;
         var _kvRowsCache = {}; // url -> { ts, rows }：45 秒结果缓存吸收轮询重读
+        // 2026-09-13 联动修复：KV list 清单缓存（localStorage `_yxtKvListCache`）的三个写入点
+        //   （kvFetchRows / kvInitMirror / _qbKvStamp）原本都是
+        //       var ks = (j && j.keys) || [];  然后直接把 ks 写进缓存
+        //   list 返 200 但结构异常（无 keys 字段）时，会把「空清单」当成真结果缓存 2 小时。
+        //   后果：① 快照路径认为所有 key 都不存在 → 全量重传（烧配额）
+        //         ② _qbKvFindStamp([]) 返 null → 题库云端版本戳查不到，版本比对失灵
+        //   kvFetchRows 的 catch 分支已写了「绝不返回空数组当成功」，success 分支漏了，这里补上。
+        //   空清单一律不写缓存、也不更新内存缓存，并回退旧缓存（与 catch 分支同策略）。
+        //   _qbKvStamp 在 IIFE 之外，通过文件末尾的 window._yxtListCache* 桥接访问。
+        var _yxtListLs = '_yxtKvListCache';
+        function _lsListCache() {
+            try { var o = JSON.parse(localStorage.getItem(_yxtListLs) || 'null'); return o; } catch(e) { return null; }
+        }
+        function _yxtListCachePut(ks) {
+            if (!ks || !ks.length) return false;
+            try { localStorage.setItem(_yxtListLs, JSON.stringify({ t: Date.now(), k: ks })); return true; } catch(e) { return false; }
+        }
+        function _yxtListCacheFallback() {
+            var fb = _lsListCache();
+            return fb ? fb.k : null;
+        }
         function kvFetchRows(url) {
             var q = {};
             (url.split('?')[1] || '').split('&').forEach(function(pair){
@@ -547,25 +585,22 @@
             // list 失败（429）时回退共享缓存旧列表（258 个 key 集合稳定，新增 key 最坏晚 2 小时可见；
             // 防「失败当成功返回空」覆盖本地——429 期页面照常工作）。
             // _ 前缀必须保留：无前缀 key 会被同步队列当数据 POST 上云、失败后镜像进 KV（2026-09-09.3 泄漏修复）
-            var _yxtListLs = '_yxtKvListCache';
-            function _lsListCache() {
-                try { var o = JSON.parse(localStorage.getItem(_yxtListLs) || 'null'); return o; } catch(e) { return null; }
-            }
             var listP = null;
             var lsList = _lsListCache();
-            if (_kvListCache && Date.now() - _kvListCacheTs < 7200000) listP = Promise.resolve(_kvListCache);
-            else if (lsList && Date.now() - lsList.t < 7200000) { _kvListCache = lsList.k; _kvListCacheTs = lsList.t; listP = Promise.resolve(lsList.k); }
+            // 空清单不算有效缓存（2026-09-13）：历史版本可能已把 [] 写进 localStorage，读到要当没有
+            if (_kvListCache && _kvListCache.length && Date.now() - _kvListCacheTs < 7200000) listP = Promise.resolve(_kvListCache);
+            else if (lsList && lsList.k && lsList.k.length && Date.now() - lsList.t < 7200000) { _kvListCache = lsList.k; _kvListCacheTs = lsList.t; listP = Promise.resolve(lsList.k); }
             else {
                 listP = _origFetch(KV_PAGES + '/data/list', { headers: { 'x-yxt-secret': KV_SECRET } })
                     .then(function(r){ return r.json(); }).then(function(j){
                         var ks = (j && j.keys) || [];
+                        if (!ks.length) return _yxtListCacheFallback();   // 空清单不当成功（2026-09-13）
                         _kvListCache = ks; _kvListCacheTs = Date.now();
-                        try { localStorage.setItem(_yxtListLs, JSON.stringify({ t: Date.now(), k: ks })); } catch(e) {}
+                        _yxtListCachePut(ks);
                         return ks;
                     })
                     .catch(function(){
-                        var fb = _lsListCache();   // 429/失败 → 旧列表兜底，绝不返回空数组当成功
-                        return fb ? fb.k : null;
+                        return _yxtListCacheFallback();   // 429/失败 → 旧列表兜底，绝不返回空数组当成功
                     });
             }
             return listP.then(function(list){
@@ -674,6 +709,7 @@
         function probeLoop() {
             probeSupabase().then(function(ok){
                 if (ok) {
+                    _supMarkOk();
                     if (_supDown) {
                         drainKV().then(function(n){
                             _supDown = false;
@@ -682,7 +718,7 @@
                         });
                     }
                 } else {
-                    _supDown = true;
+                    _supMarkFail();
                 }
             });
             setTimeout(probeLoop, 5 * 60 * 1000);
@@ -713,14 +749,16 @@
             // 2026-09-09 限额：复用 kvFetchRows 写的跨标签共享 list 缓存（2 小时内不重复打 list）
             var _yxtLs2 = null;
             try { _yxtLs2 = JSON.parse(localStorage.getItem('_yxtKvListCache') || 'null'); } catch(e) {}
-            var _listReq = (_yxtLs2 && Date.now() - _yxtLs2.t < 7200000)
+            var _listReq = (_yxtLs2 && _yxtLs2.k && _yxtLs2.k.length && Date.now() - _yxtLs2.t < 7200000)
                 ? Promise.resolve(_yxtLs2.k)
                 : _origFetch(KV_PAGES + '/data/list', { headers: { 'x-yxt-secret': KV_SECRET } })
                     .then(function(r){ return r.json(); }).then(function(j){
                         var ks2 = (j && j.keys) || [];
-                        try { localStorage.setItem('_yxtKvListCache', JSON.stringify({ t: Date.now(), k: ks2 })); } catch(e) {}
+                        // 空清单不当成功（2026-09-13）：否则快照路径会认为所有 key 都不存在 → 全量重传
+                        if (!ks2.length) return _yxtListCacheFallback();
+                        _yxtListCachePut(ks2);
                         return ks2;
-                    }).catch(function(){ return null; });
+                    }).catch(function(){ return _yxtListCacheFallback(); });
             _listReq.then(function(kl){
                 var exist = {};
                 ((kl || []).forEach ? kl : []).forEach(function(it){ exist[it.key] = 1; });
@@ -775,8 +813,8 @@
                     return new Response(JSON.stringify(rows), { status: 200, headers: { 'Content-Type': 'application/json' } });
                 });
                 return _origFetch.apply(this, arguments).then(function(resp){
-                    if (resp.ok) return resp;
-                    _supDown = true;
+                    if (resp.ok) { _supMarkOk(); return resp; }
+                    _supMarkFail();
                     return kvFetchRows(url).then(function(rows){
                         return new Response(JSON.stringify(rows), { status: 200, headers: { 'Content-Type': 'application/json' } });
                     });
@@ -791,6 +829,9 @@
         setTimeout(probeLoop, 3000);
         // 调试钩子：控制台手动触发回灌 window._kvDrainNow()
         window._kvDrainNow = function(){ return probeSupabase().then(function(ok){ if (ok && _supDown) return drainKV(); return null; }); };
+        // list 清单缓存读写桥（2026-09-13）：_qbKvStamp 在 IIFE 之外，需要同一份「空清单保护」逻辑
+        window._yxtListCachePut = _yxtListCachePut;
+        window._yxtListCacheFallback = _yxtListCacheFallback;
     })();
     window._panzeAllData = window._panzeAllData || [];
     // 动态加载 SheetJS 库
@@ -1269,8 +1310,8 @@
                 tableHtml+=`<tr><td style="text-align:center;">第${i+1}次</div><td>${stageId===2?'全检考试':'模拟判责'}<td><a href="${templateUrl}" target="_blank" style="color:#2a5298;text-decoration:underline;">📄 打开模板</a></div><td>≥90%</div>
                         <td>${isReadOnly?(scoreValue?scoreValue+'%':'未考试'):`<input type="number" class="attempt-score" data-attempt="${i}" value="${scoreValue}" step="1" min="0" max="100" placeholder="0" style="width:70px;"> %`}</div>
                     <td class="pass-cell">${isPassed?'<span class="pass-badge">通过</span>':(scoreValue?'<span class="fail-badge">未通过</span>':'<span class="null-badge">未考试</span>')}</div>
-                        <td>${isReadOnly?(fileData?`<span class="file-link" onclick="${fileData.type==='link'?`window.open('${fileData.url}','_blank')`: `window.downloadStoredFile(${student.id},${stageId},${i})`}">${fileData.type==='link'?'🔗':'📎'} ${fileData.name}</span>`:'无附件'):
-                        `<div class="file-upload-row"><input type="file" class="file-upload-input" data-attempt="${i}" accept=".pdf,.jpg,.png,.docx" style="display:none"><button class="upload-small" data-attempt="${i}">📤 上传</button><span class="file-name-display" data-attempt="${i}" style="font-size:0.65rem;">${fileData?fileData.name:''}</span>${fileData?(fileData.type==='link'?`<span class="file-link" onclick="window.open('${fileData.url}','_blank')">🔗 打开</span>`:`<span class="file-link" onclick="window.downloadStoredFile(${student.id},${stageId},${i})">📥 下载</span>`)+`<span class="delete-file" onclick="window.deleteAttachment(${student.id},${stageId},${i})">🗑️ 删除</span>`:''}
+                        <td>${isReadOnly?(fileData?`<span class="file-link" onclick="${fileData.type==='link'?`window.open('${escapeJsInAttr(fileData.url)}','_blank')`: `window.downloadStoredFile(${student.id},${stageId},${i})`}">${fileData.type==='link'?'🔗':'📎'} ${escapeHtml(fileData.name)}</span>`:'无附件'):
+                        `<div class="file-upload-row"><input type="file" class="file-upload-input" data-attempt="${i}" accept=".pdf,.jpg,.png,.docx" style="display:none"><button class="upload-small" data-attempt="${i}">📤 上传</button><span class="file-name-display" data-attempt="${i}" style="font-size:0.65rem;">${fileData?escapeHtml(fileData.name):''}</span>${fileData?(fileData.type==='link'?`<span class="file-link" onclick="window.open('${escapeJsInAttr(fileData.url)}','_blank')">🔗 打开</span>`:`<span class="file-link" onclick="window.downloadStoredFile(${student.id},${stageId},${i})">📥 下载</span>`)+`<span class="delete-file" onclick="window.deleteAttachment(${student.id},${stageId},${i})">🗑️ 删除</span>`:''}
                             <input type="text" class="link-input" data-attempt="${i}" placeholder="粘贴网页链接..." style="width:180px;padding:3px 8px;border:1px solid #cbd5e1;border-radius:10px;font-size:0.7rem;">
                             <button class="save-link-btn" data-attempt="${i}" style="background:#e8f5e9;border:1px solid #66bb6a;padding:3px 10px;border-radius:16px;cursor:pointer;font-size:0.65rem;white-space:nowrap;">🔗 保存链接</button></div>`}</div>
                   </tr>`;
@@ -2159,7 +2200,7 @@
             list.innerHTML = '<table style="width:100%;border-collapse:collapse;"><thead><tr><th style="text-align:left;padding:8px;font-size:0.8rem;color:#5e6f8d;">类型</th><th style="text-align:left;padding:8px;font-size:0.8rem;color:#5e6f8d;">姓名</th><th style="text-align:left;padding:8px;font-size:0.8rem;color:#5e6f8d;">日期</th><th style="text-align:right;padding:8px;">操作</th></tr></thead><tbody>' +
             rows.map(function(r){
                 var isLv = r.type.indexOf('离职')>=0;
-                return '<tr style="border-bottom:1px solid #eef2f6;'+(isLv?'background:#fff5f5;':'')+'"><td style="padding:8px;">'+r.type+'</td><td style="padding:8px;font-weight:600;">'+r.name+'</td><td style="padding:8px;color:#5e6f8d;">'+r.date+'</td><td style="padding:8px;text-align:right;"><button onclick="var t=\''+(r.type.indexOf('入职')>=0?'join':'leave')+'\';if(t===\'leave\')removeDepartedReviewer(\''+r.name.replace(/'/g,"\\'")+'\');else removeOnboardingReviewer(\''+r.name.replace(/'/g,"\\'")+'\');refreshHRCombinedList();" style="background:#ffedea;color:#c0392b;border:none;padding:4px 12px;border-radius:20px;cursor:pointer;font-size:0.75rem;">↩ 移除</button></td></tr>';
+                return '<tr style="border-bottom:1px solid #eef2f6;'+(isLv?'background:#fff5f5;':'')+'"><td style="padding:8px;">'+r.type+'</td><td style="padding:8px;font-weight:600;">'+r.name+'</td><td style="padding:8px;color:#5e6f8d;">'+r.date+'</td><td style="padding:8px;text-align:right;"><button onclick="var t=\''+(r.type.indexOf('入职')>=0?'join':'leave')+'\';if(t===\'leave\')removeDepartedReviewer(\''+escapeJsInAttr(r.name)+'\');else removeOnboardingReviewer(\''+escapeJsInAttr(r.name)+'\');refreshHRCombinedList();" style="background:#ffedea;color:#c0392b;border:none;padding:4px 12px;border-radius:20px;cursor:pointer;font-size:0.75rem;">↩ 移除</button></td></tr>';
             }).join('') + '</tbody></table>';
         }
         document.getElementById('addHrBtn')?.addEventListener('click', function(){
@@ -2210,9 +2251,62 @@
                 localStorage.setItem(PANZE_CACHE_KEY, JSON.stringify({ fetchedAt: Date.now(), data: data }));
             } catch(e) {}
         }
+        // 2026-09-13 联动修复：云端判责量行的解析原本有两份（这里 和 顶层管理员启动块），
+        //   顶层那份还直接写 window._panzeAllData 且从不落缓存 —— 它拉到的云端日期之后会被
+        //   「以缓存为底」的 fetchPanzeLocal 丢掉。现收敛为这一个函数，两处共用。
+        //   只动数据 + 缓存，不碰 DOM（顶层启动块跑在管理后台渲染之前，卡片/表格还不存在）。
+        function _panzeMergeRows(rows) {
+            var base = getPanzeCache();
+            var list = (base && Array.isArray(base.data)) ? base.data.slice() : [];
+            var added = 0;
+            (rows || []).forEach(function(r) {
+                try {
+                    // 防御：非判责量 key（KV 兜底异常行等）直接跳过，避免污染缓存
+                    if (!r || String(r.key || '').indexOf('feishu_panze_') !== 0) return;
+                    var ds = String(r.key).replace('feishu_panze_', '');
+                    if (ds === 'latest') return;
+                    var m = (JSON.parse(r.value) || {}).map || {};
+                    var row = { date: ds, count: Object.keys(m).length, total: panzeMapTotal(m), map: m };
+                    for (var i = 0; i < list.length; i++) {
+                        if (list[i].date === ds) { list[i] = row; return; }   // 同日期去重替换
+                    }
+                    list.push(row); added++;
+                } catch(e) {}
+            });
+            if (added > 0) {
+                list.sort(function(a, b) { return b.date.localeCompare(a.date); });
+                savePanzeCache(list);
+            }
+            return { list: list, added: added };
+        }
+        // 顶层管理员启动块用：合并进缓存 + 内存（不渲染），随后进后台时由 refreshPanzeStatus 渲染
+        window._panzeMergeRowsIntoCache = function(rows) {
+            try {
+                var r = _panzeMergeRows(rows);
+                window._panzeAllData = r.list.slice();
+                return r.added;
+            } catch(e) { return 0; }
+        };
+        // 2026-09-13：顶层启动块里原本直接写 fetchPanzeLocal()，但本函数定义在 renderAdminPanel
+        //   作用域内、顶层访问不到 → 404/402 走本地兜底时抛 ReferenceError，被 .catch 再吞一次，
+        //   本地兜底实际是死代码。暴露到 window 让它真正可用。
+        window._panzeFetchLocal = function() { try { fetchPanzeLocal(); } catch(e) {} };
         // 用列表渲染卡片数字+详情表格（本地渲染，毫秒级）
         function renderPanzeData(list) {
-            window._panzeAllData = list.slice();
+            // 2026-09-13 联动修复：原为 list.slice() 整体替换 —— 判责量有多个写入路径
+            //   （云端增量 / 本机 panze-server / 顶层启动块），各自异步返回，后到的会把
+            //   先到已装好的数据整份丢掉，表现为看板时好时坏（只剩云端 或 只剩本机）。
+            //   现改为合并：同日期以传入方为准（云端路径传入即覆盖），传入方没有的日期一律保留。
+            var _inc = (list || []).filter(function(it) { return it && /^\d{4}-\d{2}-\d{2}$/.test(it.date || ''); });
+            var _prev = Array.isArray(window._panzeAllData) ? window._panzeAllData : [];
+            if (_prev.length > 0) {
+                var _byDate = {};
+                _prev.forEach(function(it) { if (it && it.date) _byDate[it.date] = it; });
+                _inc.forEach(function(it) { _byDate[it.date] = it; });
+                _inc = Object.keys(_byDate).map(function(d) { return _byDate[d]; });
+                _inc.sort(function(a, b) { return b.date.localeCompare(a.date); });
+            }
+            window._panzeAllData = _inc;
             var countEl = document.getElementById('panzeCount');
             var badgeEl = document.getElementById('panzeBadge');
             if (countEl && window._panzeAllData.length > 0) {
@@ -2276,30 +2370,10 @@
             }).then(function(r){return r.json();}).then(function(rows){
                 // 云端返回错误对象（402 配额耗尽等）→ 走本地兜底
                 if (!Array.isArray(rows)) { fetchPanzeLocal(); return; }
-                var list = (cached && cached.data) ? cached.data.slice() : [];
-                var added = 0;
-                rows.forEach(function(r){
-                    try {
-                        // 防御：非判责量 key（KV 兜底异常行等）直接跳过，避免污染缓存
-                        if (r.key.indexOf('feishu_panze_') !== 0) return;
-                        var d = JSON.parse(r.value);
-                        var dateStr = r.key.replace('feishu_panze_', '');
-                        if (dateStr === 'latest') return;
-                        var map = d.map || {};
-                        var cnt = Object.keys(map).length;
-                        var total = panzeMapTotal(map);
-                        // 同日期去重替换（增量拉取可能含缓存最新日期）
-                        for (var pi = 0; pi < list.length; pi++) {
-                            if (list[pi].date === dateStr) { list[pi] = { date: dateStr, count: cnt, total: total, map: map }; return; }
-                        }
-                        list.push({ date: dateStr, count: cnt, total: total, map: map });
-                        added++;
-                    } catch(e) {}
-                });
-                list.sort(function(a,b){ return b.date.localeCompare(a.date); });
-                if (added > 0) {
-                    savePanzeCache(list);
-                    renderPanzeData(list);
+                // 2026-09-13：解析+合并收敛到 _panzeMergeRows（与顶层启动块共用一份逻辑，含落缓存）
+                var _m = _panzeMergeRows(rows);
+                if (_m.added > 0) {
+                    renderPanzeData(_m.list);
                 } else {
                     // 云端/KV 均无新增数据（可能 KV 最终一致延迟或读取路径异常）→ 本地兜底再补一次
                     fetchPanzeLocal();
@@ -2383,7 +2457,7 @@
             if (pageData.length === 0) { tableEl.innerHTML = '<div style="text-align:center;color:#94a3b8;padding:20px;">无匹配记录</div>'; pagEl.innerHTML = ''; return; }
             var html = '<table style="width:100%;border-collapse:collapse;"><thead><tr><th style="padding:8px;text-align:center;width:33%;">日期</th><th style="padding:8px;text-align:center;width:33%;">人数</th><th style="padding:8px;text-align:center;width:33%;">判责量</th></tr></thead><tbody>';
             pageData.forEach(function(d){
-                html += '<tr class="panze-row" data-date="' + d.date + '" style="cursor:pointer;border-bottom:1px solid #eef2f6;" onclick="window.showPanzeDetailPopup(\'' + d.date + '\')"><td style="padding:8px;text-align:center;color:#2a5298;text-decoration:underline;">' + d.date + '</td><td style="padding:8px;text-align:center;font-weight:600;">' + d.count + '人</td><td style="padding:8px;text-align:center;">' + d.total + '</td></tr>';
+                html += '<tr class="panze-row" data-date="' + escapeHtml(d.date) + '" style="cursor:pointer;border-bottom:1px solid #eef2f6;" onclick="window.showPanzeDetailPopup(\'' + escapeJsInAttr(d.date) + '\')"><td style="padding:8px;text-align:center;color:#2a5298;text-decoration:underline;">' + d.date + '</td><td style="padding:8px;text-align:center;font-weight:600;">' + d.count + '人</td><td style="padding:8px;text-align:center;">' + d.total + '</td></tr>';
             });
             html += '</tbody></table>';
             tableEl.innerHTML = html;
@@ -2941,7 +3015,15 @@
     }
 
     // ==================== 数据分析模块 ====================
-    function escapeHtml(str) { if (!str) return ''; return String(str).replace(/[&<>]/g, function(m) { if (m === '&') return '&'; if (m === '<') return '<'; if (m === '>') return '>'; return m; }); }
+    // 2026-09-13 修复：原实现把字符「替换成它自己」（&→&、<→<、>→>），是恒等变换，全站 437 处转义全部失效。
+    // 已核对 6/29 起所有历史存档版本，均为同一空实现（非本次改动引入）。
+    // 现恢复为真正的 HTML 实体转义；额外转义 " 和 ' 用于堵住属性值/inline 事件里的注入，正常文本渲染不受影响。
+    // ⚠️ 注意：若日后用「HTML 实体解码/美化」类工具处理本文件，会把 &amp; 等还原成 & 再次弄坏，改动请勿经过这类工具。
+    function escapeHtml(str) { if (!str) return ''; return String(str).replace(/[&<>"']/g, function(m) { if (m === '&') return '&amp;'; if (m === '<') return '&lt;'; if (m === '>') return '&gt;'; if (m === '"') return '&quot;'; return '&#39;'; }); }
+    // 2026-09-13 新增：给「内联事件里拼 JS 字符串字面量」用，例如 onclick="window.open('URL','_blank')"。
+    // 必须两层都转义：先按 JS 单引号字符串转义（反斜杠、单引号、换行），再按 HTML 属性转义。
+    // 顺序不能反 —— 反了会把 HTML 转义产生的 & 再转义一次，URL 就废了。
+    function escapeJsInAttr(s) { return escapeHtml(String(s === undefined || s === null ? '' : s).replace(/[\r\n]+/g, '').replace(/\\/g, '\\\\').replace(/'/g, "\\'")); }
 
     // ===== 人员管理（姓名→站点，站点归属的最终权威口径，一切以这里为准）=====
     const ADMIN_PERSON_SITE_KEY = 'adminPersonSiteMap';
@@ -3233,7 +3315,7 @@
             if (hasPz && pzVal > 0) {
                 var m3pzStart = (pr.length > 0 && pr[0].startDate) ? new Date(pr[0].startDate).toISOString() : '';
                 var m3pzEnd = (pr.length > 0 && pr[0].endDate) ? new Date(pr[0].endDate).toISOString() : '';
-                var safeName = name.replace(/'/g, "\\'");
+                var safeName = escapeJsInAttr(name);
                 pzClick = '<span style="cursor:pointer;" title="点击查看品类明细" onclick="showPanzeCategoryModal(\'' + safeName + '\', \'' + safeName + '\', \'' + m3pzStart + '\', \'' + m3pzEnd + '\')">' + pzDisplay + '</span>';
             }
             card += '<td style="' + cellBase + '">' + pzClick + '</td>';
@@ -5636,7 +5718,7 @@
                 };
                 const renderDetailItem = (d) => {
                     const qcs = findQcForDetail(d);
-                    const qcHtml = qcs.length > 0 ? qcs.map(qc => `<code style="background:#eef2f6;padding:1px 4px;border-radius:3px;font-size:0.6rem;margin-left:4px;">${escapeHtml(qc)}</code><button class="action-btn" style="font-size:0.45rem;padding:0 3px;" onclick="event.stopPropagation();copyQCCode('${escapeHtml(qc).replace(/'/g,"\\'")}', this)">📋</button>`).join('') : '';
+                    const qcHtml = qcs.length > 0 ? qcs.map(qc => `<code style="background:#eef2f6;padding:1px 4px;border-radius:3px;font-size:0.6rem;margin-left:4px;">${escapeHtml(qc)}</code><button class="action-btn" style="font-size:0.45rem;padding:0 3px;" onclick="event.stopPropagation();copyQCCode('${escapeJsInAttr(qc)}', this)">📋</button>`).join('') : '';
                     return `<div style="font-size:0.82rem;color:#4a5568;padding:4px 8px;margin-bottom:4px;background:#fff8f0;border:1px solid #fde8d0;border-radius:8px;text-align:left;display:flex;align-items:center;gap:4px;flex-wrap:wrap;" title="${escapeHtml(d)}"><span style="color:#e67e22;">⚠️</span> ${escapeHtml(d)}${detailCounts[d] > 1 ? `<span style="color:#c0392b;font-size:0.7rem;flex-shrink:0;">×${detailCounts[d]}</span>` : ''}<span style="display:inline-flex;align-items:center;gap:2px;margin-left:auto;">${qcHtml}</span></div>`;
                 };
                 const detailListHtml = uniqueDetails.slice(0, 5).map(d => renderDetailItem(d)).join('');
@@ -5667,7 +5749,7 @@
                 const allQcArr = [...allQcSet];
                 const allQcText = allQcArr.join('\\n');
                 const copyAllBtn = allQcArr.length > 0
-                    ? `<div style="text-align:center;margin-top:16px;border-top:1px solid #eef2f6;padding-top:12px;"><button class="generate-btn" style="font-size:0.8rem;padding:8px 20px;" onclick="copyQCCode('${allQcText.replace(/'/g,"\\'")}', this)">📋 复制全部质检码（竖向排列，${allQcArr.length}个）</button></div>`
+                    ? `<div style="text-align:center;margin-top:16px;border-top:1px solid #eef2f6;padding-top:12px;"><button class="generate-btn" style="font-size:0.8rem;padding:8px 20px;" onclick="copyQCCode('${escapeJsInAttr(allQcText)}', this)">📋 复制全部质检码（竖向排列，${allQcArr.length}个）</button></div>`
                     : '';
             // 判责量品类明细（本周按周期范围，全部按全历史，来自每日同步数据）
             const pzStartISO = (mode === 'week' && weekRange && weekRange.startDate) ? new Date(weekRange.startDate).toISOString() : '';
@@ -5878,11 +5960,11 @@
                 // 按问题点查质检码
                 const issueQcs = findQCCodes(group.reviewer, issue.text);
                 const qcHtml = issueQcs.length > 0
-                    ? issueQcs.map(qc => `<span style="display:inline-flex;align-items:center;gap:2px;margin:1px 2px;"><code style="background:#eef2f6;padding:2px 6px;border-radius:4px;font-size:0.7rem;">${escapeHtml(qc)}</code><button class="action-btn" style="font-size:0.5rem;padding:1px 4px;" onclick="event.stopPropagation();copyQCCode('${escapeHtml(qc).replace(/'/g,"\\'")}', this)">📋</button></span>`).join('')
+                    ? issueQcs.map(qc => `<span style="display:inline-flex;align-items:center;gap:2px;margin:1px 2px;"><code style="background:#eef2f6;padding:2px 6px;border-radius:4px;font-size:0.7rem;">${escapeHtml(qc)}</code><button class="action-btn" style="font-size:0.5rem;padding:1px 4px;" onclick="event.stopPropagation();copyQCCode('${escapeJsInAttr(qc)}', this)">📋</button></span>`).join('')
                     : '<span style="color:#cbd5e1;font-size:0.65rem;">—</span>';
                 // E列：一键复制此初审全部质检码（首行合并）
                 const copyCell = (i === 0 && allRvQcArr.length > 0)
-                    ? `<td${rowspan} style="width:10%;padding:8px;text-align:center;vertical-align:middle;background:${bgColor};"><button class="action-btn" style="font-size:0.65rem;padding:4px 10px;" onclick="event.stopPropagation();copyQCCode('${allRvQcText.replace(/'/g,"\\'")}', this)">📋 一键复制(${allRvQcArr.length}个)</button></td>`
+                    ? `<td${rowspan} style="width:10%;padding:8px;text-align:center;vertical-align:middle;background:${bgColor};"><button class="action-btn" style="font-size:0.65rem;padding:4px 10px;" onclick="event.stopPropagation();copyQCCode('${escapeJsInAttr(allRvQcText)}', this)">📋 一键复制(${allRvQcArr.length}个)</button></td>`
                     : (i === 0 ? `<td${rowspan} style="width:10%;padding:8px;text-align:center;vertical-align:middle;background:${bgColor};color:#cbd5e1;font-size:0.65rem;">—</td>` : '');
                 // 初审列 + 占比列（首行合并）
                 const rvCell = i === 0 ? `<td${rowspan} style="padding:8px;text-align:center;vertical-align:middle;font-weight:600;background:${bgColor};">👤 ${escapeHtml(fmtRvGlobal(group.reviewer))}</td>` : '';
@@ -6769,9 +6851,9 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
             const cardSrcName = item.isHighlight ? (item.rawName || '') : item.name;
             const renderDetailRow = (entry) => {
                 const d = entry[0], cnt = entry[1];
-                const safeD = escapeHtml(d).replace(/'/g, "\\'");
+                const safeD = escapeJsInAttr(d);
                 return '<div style="font-size:0.82rem;color:#4a5568;padding:4px 8px;margin-bottom:4px;background:#fff8f0;border:1px solid #fde8d0;border-radius:8px;text-align:left;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:flex;align-items:center;gap:4px;cursor:pointer;" ' +
-                    'onclick="event.stopPropagation();openReportDetailPopup(\'' + safeD + '\',\'' + cardSrcName.replace(/'/g,'') + '\')" ' +
+                    'onclick="event.stopPropagation();openReportDetailPopup(\'' + safeD + '\',\'' + escapeJsInAttr(cardSrcName) + '\')" ' +
                     'onmouseover="this.style.background=\'#fde8d0\'" onmouseout="this.style.background=\'#fff8f0\'" title="点击查看详情">' +
                     '<span style="color:#e67e22;">⚠️</span> ' + escapeHtml(d) +
                     (cnt > 1 ? '<span style="color:#c0392b;font-size:0.7rem;margin-left:auto;flex-shrink:0;">×' + cnt + '</span>' : '') +
@@ -6923,7 +7005,7 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
             return `<div class="nc-person-card" data-ncname="${escapeHtml(ncName)}" style="background:#fff;border-radius:12px;border:1px solid #e2e8f0;padding:16px;margin-bottom:16px;position:relative;">
                 <button class="nc-person-screenshot-btn" data-ncname="${escapeHtml(ncName)}" style="position:absolute;top:8px;right:8px;background:#eef2ff;border:1px solid #cbd5e1;padding:3px 8px;border-radius:16px;cursor:pointer;font-size:0.65rem;z-index:5;transition:all 0.2s;" title="截取该学员卡片">📸</button>
                 <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;padding-right:40px;">
-                    <div style="font-weight:700;font-size:1rem;color:#1f3a6b;cursor:pointer;text-decoration:underline dotted #2a5298;" onclick="showNcTrendModal('${escapeHtml(ncName)}')">${escapeHtml(ncName)}</div>
+                    <div style="font-weight:700;font-size:1rem;color:#1f3a6b;cursor:pointer;text-decoration:underline dotted #2a5298;" onclick="showNcTrendModal('${escapeJsInAttr(ncName)}')">${escapeHtml(ncName)}</div>
                     <div style="display:flex;gap:4px;flex-wrap:wrap;justify-content:flex-end;">${statusBtns}</div>
                 </div>
                 <div style="display:flex;align-items:center;gap:12px;margin-bottom:10px;font-size:0.78rem;color:#5e6f8d;">
@@ -6981,7 +7063,7 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
                     <div style="text-align:left;"><strong style="display:inline-block;width:9em;white-space:nowrap;">📊 本周失误总计：</strong><strong>${totalThisPeriod}</strong> 个</div>
                     <div style="text-align:left;"><strong style="display:inline-block;width:9em;white-space:nowrap;">📈 上期失误对比：</strong><span class="${diffClass}">${diffText}</span></div>
                     <div style="text-align:left;"><strong style="display:inline-block;width:9em;white-space:nowrap;">📉 失误人数浮动：</strong>上涨 <strong class="trend-up">${increaseCount}</strong> 人，下降 <strong class="trend-down">${decreaseCount}</strong> 人，持平 <strong class="trend-same">${sameCount}</strong> 人</div>
-                    <div style="text-align:left;"><strong style="display:inline-block;width:9em;white-space:nowrap;">⚠️ 本周失误前${reviewerTopN}：</strong><span style="white-space:nowrap;">${topReviewers.map((r, i) => `<strong style="cursor:pointer;border-bottom:1px dashed #2a5298;" onclick="showReviewerSourceModal('${r.replace(/'/g, "\\'")}', window._analysisRows, window._analysisDateCol, window._analysisReviewerCol, window._analysisSourceCol, window._analysisWeekRange, window._analysisPeriodRanges)">${i+1}. ${r}</strong>`).join('、')}</span></div>
+                    <div style="text-align:left;"><strong style="display:inline-block;width:9em;white-space:nowrap;">⚠️ 本周失误前${reviewerTopN}：</strong><span style="white-space:nowrap;">${topReviewers.map((r, i) => `<strong style="cursor:pointer;border-bottom:1px dashed #2a5298;" onclick="showReviewerSourceModal('${escapeJsInAttr(r)}', window._analysisRows, window._analysisDateCol, window._analysisReviewerCol, window._analysisSourceCol, window._analysisWeekRange, window._analysisPeriodRanges)">${i+1}. ${r}</strong>`).join('、')}</span></div>
                     <div style="text-align:left;"><strong style="display:inline-block;width:9em;white-space:nowrap;">🎯 本期平均准确率：</strong>${(() => { if (_totalAccAvg === null) return '<span style="color:#94a3b8;font-style:italic;">待录入</span>'; var trend = ''; if (_totalAccLastAvg !== null) { var d = _totalAccAvg - _totalAccLastAvg; if (d > 0) trend = ' <span style=\"color:#27ae60;font-weight:600;\">↑'+d.toFixed(2)+'%</span>'; else if (d < 0) trend = ' <span style=\"color:#c0392b;font-weight:600;\">↓'+Math.abs(d).toFixed(2)+'%</span>'; else trend = ' <span style=\"color:#2980b9;font-weight:600;\">→0.00%</span>'; } return '<strong>'+_totalAccAvg.toFixed(2)+'%</strong>'+trend; })()}</div>
                 </div>
                 <div style="font-size: 0.7rem; color: #94a3b8; text-align:center; margin-bottom: 8px;">💡 点击上方文字可手动编辑 | 💡 表头右侧可拖拽调整列宽</div>
@@ -9729,7 +9811,7 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
                 if (_photoCache[token] || (window._imageCache && window._imageCache[_qbImgKey(token)])) continue;
                 var img = await _qbFetchImagePersist(token);
                 if (img) {
-                    document.querySelectorAll('[data-ftoken="' + token + '"]').forEach(function(el) {
+                    document.querySelectorAll('[data-ftoken="' + escapeHtml(token) + '"]').forEach(function(el) {
                         if (el.className && String(el.className).indexOf('photo-loadable') >= 0) {
                             el.outerHTML = '<img src="' + img + '" style="max-width:150px;max-height:150px;border-radius:8px;border:1px solid #e2e8f0;object-fit:cover;cursor:pointer;margin:2px;" onclick="event.stopPropagation();showImageViewer(this.src)">';
                         }
@@ -9772,7 +9854,7 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
         var batch = allTokens.splice(0, _autoLoadBatchSize);
         if (allTokens.length > 0) _pendingPhotoTokens = _pendingPhotoTokens.concat(allTokens);
         batch.forEach(function(token) {
-            var els = document.querySelectorAll('[data-ftoken="' + token + '"]');
+            var els = document.querySelectorAll('[data-ftoken="' + escapeHtml(token) + '"]');
             els.forEach(function(el) {
                 if (!el.dataset.loading) { el.dataset.loading = '1'; loadPhotoToken(el, token); }
             });
@@ -9817,7 +9899,7 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
                     // KV 命中：本地化（IndexedDB + 内存），后续零网络
                     _photoCache[token] = v;
                     _qbImgPut(token, v);
-                    document.querySelectorAll('[data-ftoken="' + token + '"]').forEach(function(el) {
+                    document.querySelectorAll('[data-ftoken="' + escapeHtml(token) + '"]').forEach(function(el) {
                         if (el.className && String(el.className).indexOf('photo-loadable') >= 0) {
                             el.outerHTML = '<img src="' + v + '" style="max-width:' + maxW + 'px;max-height:' + maxH + 'px;border-radius:8px;border:1px solid #e2e8f0;object-fit:cover;cursor:pointer;margin:2px;" onclick="event.stopPropagation();showImageViewer(this.src)">';
                         }
@@ -9829,14 +9911,14 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
                 _qbImgGetAsync(token).then(function(v2) {
                     if (!v2) return;
                     window._imageCache[qbKey] = v2;
-                    document.querySelectorAll('[data-ftoken="' + token + '"]').forEach(function(el) {
+                    document.querySelectorAll('[data-ftoken="' + escapeHtml(token) + '"]').forEach(function(el) {
                         if (el.className && String(el.className).indexOf('photo-loadable') >= 0) {
                             el.outerHTML = '<img src="' + v2 + '" style="max-width:' + maxW + 'px;max-height:' + maxH + 'px;border-radius:8px;border:1px solid #e2e8f0;object-fit:cover;cursor:pointer;margin:2px;" onclick="event.stopPropagation();showImageViewer(this.src)">';
                         }
                     });
                 });
             });
-            return '<div class="photo-loadable" data-ftoken="' + token + '" style="width:' + Math.min(maxW, 100) + 'px;height:' + Math.min(maxH, 80) + 'px;background:#f1f5f9;border-radius:8px;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;border:1px dashed #cbd5e1;margin:2px;flex-shrink:0;" onclick="event.stopPropagation();loadPhotoToken(this,\'' + token + '\')"><span style="font-size:1.2rem;">📷</span></div>';
+            return '<div class="photo-loadable" data-ftoken="' + escapeHtml(token) + '" style="width:' + Math.min(maxW, 100) + 'px;height:' + Math.min(maxH, 80) + 'px;background:#f1f5f9;border-radius:8px;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;border:1px dashed #cbd5e1;margin:2px;flex-shrink:0;" onclick="event.stopPropagation();loadPhotoToken(this,\'' + token + '\')"><span style="font-size:1.2rem;">📷</span></div>';
         }
         if (typeof p === 'string' && (p.indexOf('ci_') === 0 || p.indexOf('ki_') === 0)) {
             return '<div style="width:' + Math.min(maxW, 100) + 'px;height:' + Math.min(maxH, 80) + 'px;background:#fff5f5;border-radius:8px;display:inline-flex;align-items:center;justify-content:center;border:1px dashed #e53e3e;margin:2px;flex-shrink:0;font-size:0.65rem;color:#c0392b;text-align:center;padding:4px;" title="图片数据丢失，请重新上传">📷<br>已丢失</div>';
@@ -10848,7 +10930,7 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
 	categories.forEach(function(cat){
 	var count=catMap[cat].length;
 	var icon=iconMap[cat]||'📋';
-	var safeCat=cat.replace(/'/g,"\'");
+	var safeCat=escapeJsInAttr(cat);
 		catCards+='<div class="qb-cat-card" onclick="showCaseCategoryDetail(\''+safeCat+'\')" style="cursor:pointer;position:relative;"><button class="qb-card-clear-corner admin-only" onclick="event.stopPropagation();clearCaseCategory(\''+safeCat+'\')" title="清空此分类">✕</button><div class="qb-cat-icon">'+icon+'</div><div class="qb-cat-name">'+escapeHtml(cat)+'</div><div class="qb-cat-count">'+count+' 例</div><div class="qb-cat-actions"><button class="qb-card-btn qb-card-view" onclick="event.stopPropagation();showCaseCategoryDetail(\''+safeCat+'\')">👁️ 查看</button><button class="qb-card-btn qb-card-add admin-only" onclick="event.stopPropagation();openAddCaseModal(\''+safeCat+'\')">✍️ 录入</button></div></div>';
 	});
 	content.innerHTML='<style>.qb-type-card,.qb-cat-card{background:#f8fafc;border-radius:16px;padding:20px 16px;text-align:center;box-shadow:0 2px 8px rgba(0,0,0,0.08);border:1px solid #dde4ed;transition:transform 0.2s;position:relative}.qb-type-card:hover,.qb-cat-card:hover{transform:translateY(-2px);box-shadow:0 4px 16px rgba(0,0,0,0.14)}.qb-cat-icon{font-size:2rem;margin-bottom:8px}.qb-cat-name{font-weight:700;color:#1e293b;font-size:0.9rem;margin-bottom:4px}.qb-cat-count{font-size:0.75rem;color:#5e6f8d;margin-bottom:10px}.qb-cat-actions{display:flex;gap:5px;justify-content:center;flex-wrap:wrap}.qb-card-btn{padding:5px 12px;border-radius:14px;border:none;cursor:pointer;font-size:0.7rem;font-weight:600}.qb-card-view{background:#dbeafe;color:#1e40af}.qb-card-add{background:#fef3c7;color:#92400e}.qb-card-clear{background:#fecaca;color:#991b1b}.qb-card-clear-corner{position:absolute;top:6px;right:6px;width:22px;height:22px;border-radius:50%;border:none;background:#fecaca;color:#991b1b;font-size:0.7rem;cursor:pointer;display:flex;align-items:center;justify-content:center;line-height:1;opacity:0.6;transition:opacity 0.2s}.qb-card-clear-corner:hover{opacity:1}</style><div class="report-box" style="margin-bottom:12px;"><div style="font-size:0.8rem;color:#5e6f8d;margin-bottom:8px;">📌 按案例类型</div><div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;">'+typeCards+'</div></div><div class="report-box"><div style="font-size:0.8rem;color:#5e6f8d;margin-bottom:8px;">🏷️ 按失误类别</div><div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;">'+catCards+'</div></div>';
@@ -11864,6 +11946,9 @@ URL.revokeObjectURL(url);
             showToast('🔒 此功能仅管理员可用，请先登录', 'warning');
             return;
         }
+        // 2026-09-13 联动修复：切走考试模块要停表。admin 分支会在下面提前 return，
+        //   不经过 renderSubContent，所以这里也要挡一道（与 renderSubContent 同判据）。
+        if (nav !== 'examSystem' && !isStandaloneExamView) _examTimerReset();
         if (nav === 'admin') {
             currentNav = 'admin';
             document.querySelectorAll('.nav-btn').forEach(function(el) { el.classList.remove('active'); });
@@ -11886,6 +11971,13 @@ URL.revokeObjectURL(url);
     }
 
     function renderSubContent(nav) {
+        // 2026-09-13 联动修复：离开考试模块时停表。否则取消/切走后倒计时继续跑，到点调 submitExam()，
+        //   而 submitExam 读的是全局 currentExamId —— 会把「当前那场」（可能已是新一场）自动交掉。
+        //   nav === 'examSystem' 时不停：renderSubContent('examSystem') 先于用户点「开始考试」，
+        //   正是 startExam 建表的地方。
+        //   学员直链模式（isStandaloneExamView）也不停：那种页面没有侧边栏，currentNav 是开机时
+        //   的残留值，启动同步（_syncPullAll）走完会拿它调 renderSubContent，不能借此把考试停掉。
+        if (nav !== 'examSystem' && !isStandaloneExamView) _examTimerReset();
         // 保护PPT不被innerHTML销毁
         var pw = document.getElementById('caseLibPptWrap');
         if (pw && pw.parentNode) { pw.parentNode.removeChild(pw); window._pptWrapEl = pw; }
@@ -12020,6 +12112,10 @@ URL.revokeObjectURL(url);
     document.addEventListener('DOMContentLoaded', loadData);
     // ==================== 题库模块 ====================
     const QB_STORAGE_KEY = 'questionBankData';
+    // 2026-09-13 页面手动区已整体砍掉（题库在页面上只读，改题一律走飞书源文档 + 周同步）
+    //   → 题库只剩这一个 key，全量由 qb-weekly-sync.js 维护。
+    //   ⚠️ 这个 key 绝不能加 `_` 前缀 —— _syncSetItem 的穿透规则是「不以 _ 开头就自动入队」，
+    //   而备份导出与 kvMirrorWrite 都过滤 `_` 前缀；带了就既不进备份、KV 兜底也失效。
     // 8 类固定品类（2026-09-05 改版：7 源品类 + 手动录入题目；key = 品类中文名，source=true 为飞书源区）
     const QB_DEFAULT_CATEGORIES = {
         '手机': { name: '手机', key: 'phone', order: 1, source: true },
@@ -12118,20 +12214,19 @@ URL.revokeObjectURL(url);
         return 'qa';
     }
     // 旧数据迁移：qa 题按答案重新推断题型；choice 但答案为多字母（旧「多选」映射产物）→ multi
-    function migrateQBTypes(data) {
-        var migrated = false;
+    // 2026-09-13 改为纯函数 qbNormalizeTypes：原实现一旦命中迁移就 _qbWriteLocal(data) 写盘，
+    //   而它唯一的调用方是 getQuestionBank()（读路径）—— 等于「读一次题库就写 0.6MB」。
+    //   归一改在「数据进入系统的两个边界」做：写入口 qbSave() 与拉取落地 _pullRemoteQB()。
+    function qbNormalizeTypes(data) {
         (data.questions || []).forEach(function(q) {
             if (q.type === 'qa') {
                 var nt = inferQuestionType('', q.answer || '');
-                if (nt !== 'qa') { q.type = nt; migrated = true; }
+                if (nt !== 'qa') q.type = nt;
             } else if (q.type === 'choice' && q.answer) {
                 var nt2 = inferQuestionType('', q.answer || '');
-                if (nt2 === 'multi') { q.type = 'multi'; migrated = true; }
+                if (nt2 === 'multi') q.type = 'multi';
             }
         });
-        if (migrated) {
-            try { _qbWriteLocal(data); } catch(e) {}
-        }
         return data;
     }
     // ==================== 题库本地写入加固 + 云端版本检查（2026-09-13） ====================
@@ -12141,21 +12236,57 @@ URL.revokeObjectURL(url);
     // 三道加固：① 内存缓存，写不进 local 也让本次会话显示最新；② 写前过容量护栏，失败清一次再重试；
     // ③ 仍失败则明确提示（原来只在 console.warn，用户完全无感）。
     var _qbMemBank = null;   // 本次会话已确认的最新题库（优先于 localStorage 返回）
-    function _qbWriteLocal(data) {
-        _qbMemBank = data;
+    // 深冻结：qbRead() 把缓存直接交给几十个调用点，读路径误改缓存必须立刻抛错，而不是静默污染
+    function _qbDeepFreeze(o) {
+        if (!o || typeof o !== 'object' || Object.isFrozen(o)) return o;
+        Object.keys(o).forEach(function(k) {
+            var v = o[k];
+            if (v && typeof v === 'object') _qbDeepFreeze(v);
+        });
+        return Object.freeze(o);
+    }
+    // 内存缓存写入：接管 obj 所有权（冻结后就地接管，零拷贝；调用方交出后不得再改）。
+    // 只传现造的新对象（qbBuildCache / _pullRemoteQB 各一处）；缓存失效一律直接写 _qbMemBank = null。
+    function qbSetMem(obj) {
+        if (!obj) { _qbMemBank = null; return; }
+        try { _qbDeepFreeze(obj); } catch(e) {}
+        _qbMemBank = obj;
+    }
+    // 2026-09-13 泛化自 _qbWriteLocal：题库存本地统一走这里。
+    //   _realLS 原生写 —— 绝不经过 _lsProxy，因此不会触发自动推云（源区缓存尤其不能被推回去）。
+    function _qbWriteLocalKey(key, obj) {
         var s;
-        try { s = JSON.stringify(data); } catch(e) { return false; }
+        try { s = JSON.stringify(obj); } catch(e) { return false; }
         try { _lsGuard(); } catch(e) {}
-        try { _realLS.setItem(QB_STORAGE_KEY, s); return true; }
+        try { _realLS.setItem(key, s); return true; }
         catch(e) {
-            console.warn('⚠️ 题库写本地失败（' + (e && e.message) + '），清一次可再生物后重试');
+            console.warn('⚠️ 题库写本地失败（' + (e && e.message) + '），清一次可再生物后重试: ' + key);
             try { _lsGuardTs = 0; _lsGuard(); } catch(e2) {}
-            try { _realLS.setItem(QB_STORAGE_KEY, s); return true; }
-            catch(e3) { console.warn('⚠️ 题库写本地仍失败: ' + (e3 && e3.message)); return false; }
+            try { _realLS.setItem(key, s); return true; }
+            catch(e3) { console.warn('⚠️ 题库写本地仍失败: ' + (e3 && e3.message) + '（' + key + '）'); return false; }
         }
     }
     // 云端版本时间戳：内存 + localStorage 双写（本地存不下时本次会话仍能比对，不会反复拉取）
     var _qbStampKey = '_qbCloudStamp', _qbStampMem = null;
+    // 2026-09-13：时间戳一律解析成毫秒再比大小。
+    //   原来处处用字符串字典序比较，对「同一时刻的不同格式」会判反：
+    //   Supabase(PostgREST) 返回 "2026-09-13T05:03:12.345678+00:00"（6 位微秒 + 偏移），
+    //   而 KV 元数据与页面生成的是 "2026-09-13T05:03:12.345Z"；同一秒内第 24 位 '6' < 'Z'
+    //   → 云端较新的戳会被判成「更旧」，版本检查从此永不触发拉取。
+    //   2026-09-13 补：Date.parse 只保留到毫秒，而 PostgREST 返回 6 位微秒 —— 只靠 Date.parse 的话
+    //   "...345678+00:00" 与 "...345Z" 会解析成同一个整数，被当成「一样新」而永不拉取。
+    //   所以毫秒之外再把小数位补回来（浮点，只用于比大小）。
+    function _qbToMs(t) {
+        var n = Date.parse(t);
+        if (isNaN(n)) return 0;
+        var m = /\.(\d+)/.exec(String(t));
+        if (!m) return n;
+        var micros = parseInt((m[1] + '000000').slice(0, 6), 10);   // 统一取 6 位微秒
+        var msPart = ((n % 1000) + 1000) % 1000;                    // 该秒内已含的毫秒
+        return n - msPart + micros / 1000;
+    }
+    // 拉取落地统一推进版本戳（拆 key 后必须取两个 key 的 updated_at 最大值）
+    function _qbStampFromPull(maxT) { if (maxT) _qbSetStamp(maxT); }
     function _qbGetStamp() {
         if (_qbStampMem) return _qbStampMem;
         try { return localStorage.getItem(_qbStampKey); } catch(e) { return null; }
@@ -12165,64 +12296,74 @@ URL.revokeObjectURL(url);
         _qbStampMem = String(t);
         try { localStorage.setItem(_qbStampKey, String(t)); } catch(e) {}
     }
+    // ==================== 拆 key 后的读取层（2026-09-13） ====================
+    // 重建只读缓存：读本地 → 补分类 → 题型归一 → 深冻结
+    function qbBuildCache() {
+        var bank = null;
+        try { bank = JSON.parse(_realLS.getItem(QB_STORAGE_KEY) || 'null'); } catch(e) {}
+        if (!bank || typeof bank !== 'object') bank = {};
+        if (!Array.isArray(bank.questions)) bank.questions = [];
+        ensureQBCategories(bank);
+        qbNormalizeTypes(bank);
+        qbSetMem(bank);
+        return _qbMemBank || bank;
+    }
+    // 只读入口（零拷贝、返回冻结对象）：热读点用它。★ 禁止修改返回值 ★
+    function qbRead() { return _qbMemBank || qbBuildCache(); }
     function getQuestionBank() {
         try {
-            if (_qbMemBank) return migrateQBTypes(ensureQBCategories(_qbMemBank));   // 2026-09-13 内存优先（local 写不进时的兜底）
-            var local = localStorage.getItem(QB_STORAGE_KEY);
-            if (local) return migrateQBTypes(ensureQBCategories(JSON.parse(local)));
-            // Supabase 兜底：本地没有则尝试从云端加载
-            var key = QB_STORAGE_KEY;
-            var xhr = new XMLHttpRequest();
-            xhr.open('GET', SUPABASE_URL + '/rest/v1/app_data?select=value&key=eq.' + encodeURIComponent(key) + '&limit=1', false);
-            xhr.setRequestHeader('apikey', SUPABASE_KEY);
-            xhr.setRequestHeader('Authorization', 'Bearer ' + SUPABASE_KEY);
-            xhr.send();
-            if (xhr.status === 200) {
-                var rows = JSON.parse(xhr.responseText);
-                if (rows && rows.length > 0 && rows[0].value) {
-                    var data = JSON.parse(rows[0].value);
-                    // 2026-09-07 流量优化：拉取写缓存用纯本地写，避免题库被镜像回云端（浪费出站流量）
-                    // 2026-09-13：改走 _qbWriteLocal（内存兜底 + 容量护栏 + 失败可见）
-                    try { _qbWriteLocal(data); } catch(e) {}
-                    return migrateQBTypes(ensureQBCategories(data));
-                }
-            }
-            return ensureQBCategories({categories:{},questions:[]});
-        } catch(e) { return ensureQBCategories({categories:{},questions:[]}); }
+            // 2026-09-13 内存优先（local 写不进时的兜底）
+            // 2026-09-13 修复回归：这里必须返回深拷贝。返回 _qbMemBank 活对象时，调用方（删除单题/清空题库/
+            // 导入题库）会先取对象、再 await 用户确认，若期间后台版本检查拉取落地替换了 _qbMemBank，
+            // 用户确认后就会拿旧对象写回本地+覆盖云端。原实现走 JSON.parse(local) 本就是「每次新副本」，
+            // 这里恢复相同语义（代价与原 JSON.parse 相当）。
+            var bank = qbRead();
+            // 冷设备（本地与内存都空）→ 触发一次后台自愈。
+            // 2026-09-13 取代原来那段同步 XHR：不再阻塞主线程，也不再走「XHR 不经过 fetch 包装器 →
+            //   402 配额期必然空手而归」的哑火路径。_qbSelfHeal 已改为先置忙标志再读，不会与本函数递归。
+            if (!(bank.questions || []).length) { try { _qbSelfHeal(); } catch(e) {} }
+            return JSON.parse(JSON.stringify(bank));
+        } catch(e) { try { return ensureQBCategories({categories:{},questions:[]}); } catch(e2) { return {categories:{},questions:[]}; } }
     }
     // 从云端/KV 拉取题库（fetch 包装：Supabase 失败自动转 KV 兜底读）；手动同步按钮 + 本地空题库自愈共用
     function _pullRemoteQB(callback) {
-        fetch(SUPABASE_URL + '/rest/v1/app_data?select=value,updated_at&key=eq.' + encodeURIComponent(QB_STORAGE_KEY) + '&limit=1', {
+        fetch(SUPABASE_URL + '/rest/v1/app_data?select=key,value,updated_at&key=in.(' + encodeURIComponent(QB_STORAGE_KEY) + ')&limit=1', {
             headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY }
         }).then(function(r) { return r.json(); }).then(function(rows) {
-            var data = null, stamp = null;
-            if (Array.isArray(rows) && rows.length > 0 && rows[0].value) {
-                stamp = rows[0].updated_at || null;
-                try { data = JSON.parse(rows[0].value); } catch(e) { data = null; }
-            }
-            if (data && (data.questions || []).length > 0) {
-                // 2026-09-06 修复：原 setItem 无 try/catch，配额满时会把「数据已读到但写不进本地」误报成「云端没有数据」
-                // 2026-09-07 流量优化：改纯本地写，避免题库被镜像回云端（游客设备拉取即推回，浪费出站流量）
-                // 2026-09-13 修复「提示同步成功但页面毫无变化」：改走 _qbWriteLocal ——
-                // 写本地失败时不再只是 console.warn 被无视，而是内存兜底（页面立刻显示最新）+ 明确提示
-                var wrote = false;
-                try { wrote = _qbWriteLocal(data); } catch(e) { wrote = false; }
-                if (!wrote) showToast('⚠️ 题库已取回但本地存不下（浏览器存储空间不足），本次会话可正常使用；建议清理浏览器数据后刷新', 'warning');
-                if (stamp) _qbSetStamp(stamp);
-                if (callback) callback(data);
-            } else if (callback) callback(null);
+            var bank = null, maxT = null;
+            (Array.isArray(rows) ? rows : []).forEach(function(row) {
+                if (!row || !row.key || row.key !== QB_STORAGE_KEY) return;
+                try { bank = JSON.parse(row.value); } catch(e) { return; }
+                if (row.updated_at) maxT = row.updated_at;
+            });
+            if (!bank || !(bank.questions || []).length) { if (callback) callback(null); return; }
+            qbNormalizeTypes(bank);
+            // 2026-09-06 修复：原 setItem 无 try/catch，配额满时会把「数据已读到但写不进本地」误报成「云端没有数据」
+            // 2026-09-07 流量优化：纯本地写（_qbWriteLocalKey 走 _realLS），避免题库被镜像回云端（游客设备拉取即推回，浪费出站流量）
+            // 2026-09-13 修复「提示同步成功但页面毫无变化」：写失败不再只是 console.warn 被无视，
+            //   而是内存兜底 qbSetMem（页面立刻显示最新）+ 明确提示
+            var wrote = true;
+            try { wrote = _qbWriteLocalKey(QB_STORAGE_KEY, bank); } catch(e) { wrote = false; }
+            if (!wrote) showToast('⚠️ 题库已取回但本地存不下（浏览器存储空间不足），本次会话可正常使用；建议清理浏览器数据后刷新', 'warning');
+            qbSetMem(bank);
+            _qbStampFromPull(maxT);
+            if (callback) callback(bank);
         }).catch(function() { if (callback) callback(null); });
     }
     // 本地题库为空时后台自愈拉取（打开题库模块/页面加载时触发，防重入）
+    // 2026-09-13 三处调整：
+    //   ① 忙标志改到最前面置位 —— 原来在 getQuestionBank() 之后，而 getQuestionBank() 现在会在空库时
+    //      回调本函数，标志又还没置上 → 无限递归；
+    //   ② 改用 qbRead()（纯读，不触发自愈）。
     function _qbSelfHeal() {
         if (window._qbPullBusy) return;
-        var qb = getQuestionBank();
-        if ((qb.questions || []).length > 0) return;
         window._qbPullBusy = true;
+        var srcLen = (qbRead().questions || []).length;
+        if (srcLen > 0) { window._qbPullBusy = false; return; }
         _pullRemoteQB(function(data) {
             window._qbPullBusy = false;
             if (data) {
-                showToast('✅ 已从云端同步题库 ' + data.questions.length + ' 题', 'success');
+                showToast('✅ 已从云端同步题库 ' + (data.questions || []).length + ' 题', 'success');
                 if (currentNav === 'questionBank') renderQuestionBank();
             }
         });
@@ -12243,28 +12384,41 @@ URL.revokeObjectURL(url);
         _qbVerCheckMem = Date.now();
         try { localStorage.setItem('_qbVerCheckTs', String(_qbVerCheckMem)); } catch(e) {}
     }
+    // KV 清单里找题库 key 的镜像时间戳
     function _qbKvFindStamp(ks) {
-        var hit = null;
-        (ks || []).forEach(function(it) { if (it && it.key === QB_STORAGE_KEY) hit = it.t; });
-        return hit;
+        var best = null;
+        (ks || []).forEach(function(it) {
+            if (!it || !it.t) return;
+            if (it.key !== QB_STORAGE_KEY) return;
+            if (!best || _qbToMs(it.t) > _qbToMs(best)) best = it.t;
+        });
+        return best;
     }
     function _qbKvStamp(cb) {
         try {
             var c = JSON.parse(localStorage.getItem('_yxtKvListCache') || 'null');
-            if (c && c.k && Date.now() - c.t < 7200000) { cb(_qbKvFindStamp(c.k)); return; }
+            // 空清单不算有效缓存（2026-09-13）：_qbKvFindStamp([]) 恒为 null，会让版本比对失灵
+            if (c && c.k && c.k.length && Date.now() - c.t < 7200000) { cb(_qbKvFindStamp(c.k)); return; }
         } catch(e) {}
         fetch('https://yxt-feishu.pages.dev/data/list', { headers: { 'x-yxt-secret': 'yxt-feishu-2026' } })
             .then(function(r) { return r.json(); })
             .then(function(j) {
                 var ks = (j && j.keys) || [];
-                try { localStorage.setItem('_yxtKvListCache', JSON.stringify({ t: Date.now(), k: ks })); } catch(e) {}
+                // 空清单不当成功（2026-09-13）：不写缓存也不采信，回退旧缓存；无旧缓存则报「查不到」
+                if (!ks.length) {
+                    var fb = window._yxtListCacheFallback ? window._yxtListCacheFallback() : null;
+                    cb(fb ? _qbKvFindStamp(fb) : null);
+                    return;
+                }
+                if (window._yxtListCachePut) window._yxtListCachePut(ks);
                 cb(_qbKvFindStamp(ks));
             }).catch(function() { cb(null); });
     }
     function _qbApplyRemoteStamp(remoteT) {
         var localT = _qbGetStamp();
-        // ISO 时间戳字符串可直接按字典序比较；本机无版本戳（首次启用 / 本地存不下）→ 拉一次对齐
-        if (localT && String(remoteT) <= String(localT)) return;
+        // 2026-09-13 改为按毫秒比较：原来按字符串字典序，Supabase 的 6 位微秒格式会被判成更旧（详见 _qbToMs）
+        // 本机无版本戳（首次启用 / 本地存不下）→ 拉一次对齐
+        if (localT && _qbToMs(remoteT) <= _qbToMs(localT)) return;
         console.log('[题库版本] 云端 ' + remoteT + (localT ? ' > 本机 ' + localT : '（本机无版本戳）') + '，自动同步');
         _pullRemoteQB(function(data) {
             if (!data) return;
@@ -12272,10 +12426,16 @@ URL.revokeObjectURL(url);
             if (typeof currentNav !== 'undefined' && currentNav === 'questionBank') renderQuestionBank();
         });
     }
+    var _qbVerCheckRetryGap = 60000;   // 2026-09-13：探测失败后的重试间隔（原来失败也要吃满 10 分钟节流）
+    var _qbVerCheckFailed = false;
     function _qbCloudVersionCheck() {
-        if (Date.now() - _qbVerCheckLast() < _qbVerCheckGap) return;
+        // 2026-09-13：失败不占满 10 分钟。做法是缩短「失败后」的窗口，而不是把标记挪到成功回调 ——
+        //   后者会让 402 期间每次 renderQuestionBank() 都重打一遍云端（失败即无节流），反而更糟。
+        if (Date.now() - _qbVerCheckLast() < (_qbVerCheckFailed ? _qbVerCheckRetryGap : _qbVerCheckGap)) return;
+        // 2026-09-13 有未推出去的本地改动时不拉取：否则云端旧内容会盖掉本地刚存、还没推成功的改动
+        try { if (_syncQueue[QB_STORAGE_KEY] !== undefined) return; } catch(e) {}
         // 本地为空的情况由 _qbSelfHeal 负责拉取（避免同一次渲染里拉两遍），这里只管「本地非空但是旧的」
-        try { if (!_qbMemBank && !localStorage.getItem(QB_STORAGE_KEY)) return; } catch(e) {}
+        try { if (!_qbMemBank && !_realLS.getItem(QB_STORAGE_KEY)) return; } catch(e) {}
         _qbVerCheckMark();
         fetch(SUPABASE_URL + '/rest/v1/app_data?select=updated_at&key=eq.' + encodeURIComponent(QB_STORAGE_KEY) + '&limit=1', {
             headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY }
@@ -12285,46 +12445,14 @@ URL.revokeObjectURL(url);
         }).then(function(rows) {
             var t = Array.isArray(rows) && rows[0] && rows[0].updated_at;
             if (!t) throw new Error('无 updated_at');
+            _qbVerCheckFailed = false;
             _qbApplyRemoteStamp(t);
         }).catch(function() {
+            _qbVerCheckFailed = true;
             // Supabase 不可用（402 配额期）→ 退到 KV 侧时间戳
             _qbKvStamp(function(t) { if (t) _qbApplyRemoteStamp(t); });
         });
     }
-    // 题库写云端（POST app_data；402 期间 fetch 包装自动镜像 KV）
-    function _qbPostSave(data) {
-        try {
-            var val = JSON.stringify(data);
-            var stamp = new Date().toISOString();
-            _qbSetStamp(stamp);   // 2026-09-13：本机版本戳对齐，避免版本检查把自己刚写入的改动误判成「云端更新」而回拉一遍
-            fetch(SUPABASE_URL + '/rest/v1/app_data', {
-                method: 'POST',
-                headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY, 'Content-Type': 'application/json', 'Prefer': 'resolution=merge-duplicates' },
-                body: JSON.stringify({ key: QB_STORAGE_KEY, value: val, updated_at: stamp })
-            }).catch(function(){});
-        } catch(e) {}
-    }
-    function saveQuestionBank(data) {
-        ensureQBCategories(data);
-        _qbWriteLocal(data);
-        // 2026-09-05 防覆盖守卫：本地源区为空时（旧空缓存/尚未自愈），先拉远端合并——远端源区 + 本地手动区
-        // 防止 KV 兜底期的 1302 题源数据被本地空缓存覆盖（12:22 事件）
-        var localSrc = (data.questions || []).filter(function(q) { return q.categoryId !== 'manual' && q.category !== '手动录入题目'; });
-        if (localSrc.length > 0) { _qbPostSave(data); return; }
-        _pullRemoteQB(function(remote) {
-            if (remote && (remote.questions || []).length > 0) {
-                var remoteSrc = (remote.questions || []).filter(function(q) { return q.categoryId !== 'manual' && q.category !== '手动录入题目'; });
-                var localManual = (data.questions || []).filter(function(q) { return q.categoryId === 'manual' || q.category === '手动录入题目'; });
-                var merged = { categories: remote.categories || data.categories, questions: remoteSrc.concat(localManual) };
-                ensureQBCategories(merged);
-                _qbWriteLocal(merged);
-                _qbPostSave(merged);
-            } else {
-                _qbPostSave(data);
-            }
-        });
-    }
-
     let currentQBCategory = 'all';
     let currentQBPage = 1;
     const QB_PAGE_SIZE = 20;
@@ -12335,7 +12463,8 @@ URL.revokeObjectURL(url);
         // 2026-09-13：本地非空也可能已过期（周一同步后不会自动刷新）→ 轻量探一次云端版本，新则自动拉
         try { _qbCloudVersionCheck(); } catch(e) {}
         const container = document.getElementById('mainContent');
-        const qb = getQuestionBank();
+        // 2026-09-13 热读点：qbRead() 返回冻结的会话缓存（零拷贝，避开 0.9MB 深拷贝）★禁止修改返回值★
+        const qb = qbRead();
         // 按 order 字段排序分类（保持上传时的顺序）
         const categories = Object.keys(qb.categories).sort((a, b) => {
             const oa = qb.categories[a]?.order;
@@ -12361,15 +12490,13 @@ URL.revokeObjectURL(url);
                 const iconMap = { '手机':'📱','平板':'🖥️','笔记本':'💻','手表':'⌚','耳机':'🎧','相机&镜头':'📷','游戏机&游戏卡带':'🎮','手动录入题目':'✍️' };
                 const icon = iconMap[cat] || '📋';
                 const isSource = qb.categories[cat] && qb.categories[cat].source === true;
-                const safeCat = escapeHtml(cat).replace(/'/g, "\\'");
+                const safeCat = escapeJsInAttr(cat);
                 return `<div class="qb-cat-card">
                     <div class="qb-cat-icon">${icon}</div>
                     <div class="qb-cat-name">${escapeHtml(cat)}${isSource ? ' <span style="font-size:0.6rem;opacity:0.75;">(同步)</span>' : ''}</div>
                     <div class="qb-cat-count">${count} 题</div>
                     <div class="qb-cat-actions">
                         <button class="qb-card-btn qb-card-view" onclick="event.stopPropagation();openQBDetailModal('${safeCat}', getAllQBQuestions().filter(q=>q.category==='${safeCat}'))">👁️ 查看</button>
-                        ${isSource ? '' : `<button class="qb-card-btn qb-card-add admin-only" onclick="event.stopPropagation();openAddQModal('${safeCat}')">✍️ 录题</button>
-                        <button class="qb-card-btn qb-card-clear admin-only" onclick="event.stopPropagation();clearCatQuestions('${safeCat}')">🗑️ 清空</button>`}
                     </div>
                 </div>`;
             }).join('');
@@ -12431,10 +12558,7 @@ URL.revokeObjectURL(url);
                 <div class="qb-toolbar" style="margin-bottom:0;">
                     <button class="qb-btn-add admin-only" id="syncQBBtn">🔄 同步题库</button>
                     <button class="qb-btn-add admin-only" id="gitHubSyncQBBtn" title="打开 GitHub 手动运行「题库定期同步」：从飞书总表拉取最新题目，等同周一自动同步（云端跑约 1-3 分钟，需在 GitHub 点 Run workflow）">⚡ GitHub同步飞书题库</button>
-                    <button class="qb-btn-add admin-only" id="openAddQBBtn">➕ 添加题目（手动区）</button>
                     <button class="qb-btn-download admin-only" id="downloadQBBtn">📥 下载题库</button>
-                    <button class="qb-btn-download admin-only" id="clearQBBtn" style="color:#c0392b;border-color:#e8c7c7 !important;">🗑️ 清空手动题</button>
-                    <input type="file" id="qbFileInput" accept=".xlsx,.xls,.csv,.txt,.json" style="display:none">
                 </div>
             </div>
             <div class="qb-search-wrap">
@@ -12451,8 +12575,6 @@ URL.revokeObjectURL(url);
                     <div class="qb-cat-count">${uniqueQBQuestions.length} 题</div>
                     <div class="qb-cat-actions">
                         <button class="qb-card-btn qb-card-view-all" onclick="event.stopPropagation();openQBDetailModal('全部题目', window._uniqueQBQuestions||[])">👁️ 查看</button>
-                        <button class="qb-card-btn qb-card-add-all admin-only" onclick="event.stopPropagation();openAddQModal('手动录入题目')">✍️ 录题</button>
-                        <button class="qb-card-btn qb-card-clear-all admin-only" onclick="event.stopPropagation();clearQuestionBank()">🗑️ 清空手动题</button>
                     </div>
                 </div>
                 ${catCards}
@@ -12472,357 +12594,25 @@ URL.revokeObjectURL(url);
                         showToast('✅ 同步成功 ' + data.questions.length + ' 题', 'success');
                         renderQuestionBank();
                     } else {
-                        showAlert('云端与 KV 都没有题库数据，请先在本地导入或等待周一自动同步', '⚠️');
+                        showAlert('云端与 KV 都没有题库数据，请点「⚡ GitHub同步飞书题库」手动同步', '⚠️');
                     }
                 });
             };
-            document.getElementById('openAddQBBtn').onclick = () => openAddQModal('手动录入题目');
             // GitHub 手动触发飞书全量同步（等同周一自动同步；workflow 已配 workflow_dispatch，跳转后点 Run workflow 即可）
             var gitHubSyncBtn = document.getElementById('gitHubSyncQBBtn');
             if (gitHubSyncBtn) gitHubSyncBtn.onclick = function(){ window.open('https://github.com/jimu-111/youxuetang/actions/workflows/qb-weekly-sync.yml', '_blank'); };
             document.getElementById('downloadQBBtn').onclick = downloadQuestionBank;
-            document.getElementById('clearQBBtn').onclick = clearQuestionBank;
         }, 50);
         // 本地题库为空时自动从云端/KV 自愈拉取
         _qbSelfHeal();
     }
 
-    // 去重辅助：对比新题目与已有题目，返回 { unique, duplicates }
-    function findDuplicates(newQuestions, existingQuestions) {
-        const unique = [];
-        const duplicates = [];
-        for (const nq of newQuestions) {
-            const match = existingQuestions.find(eq =>
-                eq.category === nq.category &&
-                eq.question.trim().toLowerCase() === nq.question.trim().toLowerCase()
-            );
-            if (match) {
-                duplicates.push({ newQ: nq, oldQ: match });
-            } else {
-                unique.push(nq);
-            }
-        }
-        return { unique, duplicates };
+    // 2026-09-13 热读点：返回冻结数组。调用方只做 .filter/.find 等只     _qbSelfHeal();
     }
 
-    // 处理上传后的去重合并
-    async function processUploadedQuestions(qb, newQuestions, onSuccess) {
-        // 过滤问答题（题库只保留单选/多选/判断）
-        const qaSkipped = (newQuestions || []).filter(q => q.type === 'qa').length;
-        newQuestions = (newQuestions || []).filter(q => q.type !== 'qa');
-        const existing = qb.questions || [];
-        const { unique, duplicates } = findDuplicates(newQuestions, existing);
-
-        let totalAdded = 0;
-        const questionsToAdd = [];
-
-        if (duplicates.length > 0) {
-            const dupList = duplicates.slice(0, 10).map((d, i) =>
-                (i + 1) + '. ' + (d.newQ.question || '').substring(0, 50) + '...'
-            ).join('\n');
-            const moreMsg = duplicates.length > 10 ? '\n... 及其他 ' + (duplicates.length - 10) + ' 道重复题' : '';
-
-            const choice = (await showPrompt(
-                '⚠️ 发现 ' + duplicates.length + ' 道重复题目：\n\n' +
-                dupList + moreMsg +
-                '\n\n请选择处理方式：\n  1 = 覆盖旧题\n  2 = 跳过重复（默认）\n  3 = 保留全部',
-                'text'
-            )) || '2';
-
-            if (choice === '1') {
-                duplicates.forEach(d => {
-                    const idx = qb.questions.findIndex(q => q.id === d.oldQ.id);
-                    if (idx >= 0) {
-                        qb.questions[idx] = { ...d.newQ, id: d.oldQ.id };
-                    } else {
-                        questionsToAdd.push(d.newQ);
-                    }
-                });
-                unique.forEach(q => questionsToAdd.push(q));
-                totalAdded = unique.length + duplicates.length;
-            } else if (choice === '3') {
-                newQuestions.forEach(q => questionsToAdd.push(q));
-                totalAdded = newQuestions.length;
-            } else {
-                unique.forEach(q => questionsToAdd.push(q));
-                totalAdded = unique.length;
-            }
-        } else {
-            newQuestions.forEach(q => questionsToAdd.push(q));
-            totalAdded = newQuestions.length;
-        }
-
-        // 为新题目创建分类（按顺序分配order）
-        let maxOrder = Math.max(0, ...Object.values(qb.categories).map(c => c.order || 0));
-        questionsToAdd.forEach(q => {
-            if (q.category && !qb.categories[q.category]) {
-                qb.categories[q.category] = { name: q.category, createdAt: new Date().toISOString(), order: ++maxOrder };
-            }
-            qb.questions.push(q);
-        });
-
-        saveQuestionBank(qb);
-        logAdminAction('题库', '文件导入题目', totalAdded + '题');
-        if (onSuccess) onSuccess(totalAdded, duplicates.length, qaSkipped);
-    }
-
-    async function clearQuestionBank() {
-        const qb = getQuestionBank();
-        // 2026-09-05 改版：只清空「手动录入题目」区，7 个源品类由飞书同步管理、界面不可清
-        const manualQ = (qb.questions || []).filter(q => q.category === '手动录入题目');
-        const total = manualQ.length;
-        if (total === 0) { alert('手动录入题目区已为空，无需清空'); return; }
-        if (!await showConfirm('⚠️ 确定要清空「手动录入题目」吗？\n\n当前共有 ' + total + ' 道手动题。\n\n（7 个源品类题目由飞书同步管理，不受影响）此操作不可撤销！', '🗑️', true)) return;
-        const pwd = await showPrompt('🔐 请输入管理密码以确认清空操作：', 'password');
-        if (pwd === null) return;
-        if (pwd !== ADMIN_PASSWORD) { alert('❌ 密码错误，操作已取消'); return; }
-        // 执行清空：仅删手动区题目
-        qb.questions = (qb.questions || []).filter(q => q.category !== '手动录入题目');
-        saveQuestionBank(qb);
-        logAdminAction('题库', '清空手动录入题目', total + '题');
-        alert('✅ 手动录入题目已清空（共删除 ' + total + ' 道题目）');
-        renderQuestionBank();
-    }
-
-    function getAllQBQuestions() { return getQuestionBank().questions || []; }
-
-    // 从飞书表格导入题库（弹窗预览+确认）
-    
-        function _autoCat(qText, qExp) {
-          var txt = (qText + " " + (qExp||"")).toLowerCase();
-          var rules = [
-            {cat:"外观外壳",kws:["外壳","后壳","中框","边框","机身","成色","掉漆","磕碰","磨损","碎裂","弯曲","变形"]},
-            {cat:"屏幕",kws:["屏幕","显示","内屏","外屏","OLED","LCD","打磨","封胶","脱胶","褶皱"]},
-            {cat:"电池充电",kws:["电池","充电","无线充","充电器"]},
-            {cat:"摄像头",kws:["摄像头","前摄","后摄","拍照","对焦","有斑","坏点","成像"]},
-            {cat:"按键接口",kws:["按键","键帽","电源键","音量键","指纹","接口","插口","耳机口","SIM卡","卡托"]},
-            {cat:"拆修浸液",kws:["拆修","维修","浸液","进水","进液","气密","拆装","溢胶","拆过","维修过"]},
-            {cat:"主板零件",kws:["主板","硬盘","内存","CPU","芯片","传感器","振动","马达","扬声器","听筒","麦克风","排线"]},
-            {cat:"系统ID",kws:["无法开机","无法进入","ID","iCloud","已停用","已越狱","ROOT","刷机","DFU","恢复模式","重启","系统版本","激活"]},
-            {cat:"保修来源",kws:["保修","过保","在保","来源","官换","官翻","展示机","权益机","BS机","国行","外版","美版","日版","改版"]},
-            {cat:"功能检测",kws:["功能检测","功能异常","功能故障","验机","质检","检测正常","检测异常"]},
-            {cat:"标准灰度",kws:["灰度","未达标准","标准差异","超标","达标"]},
-            {cat:"判责备注",kws:["判责任","责任方","总部责","工程师责","回收师","备注","报备","话术","报告未改"]},
-            {cat:"组合差价",kws:["组合差价","组合项","同步判","差价未"]},
-            {cat:"拍照取证",kws:["取证","传错","漏传","背板照","照片未"]}
-          ];
-          for (var ri=0; ri<rules.length; ri++) {
-            for (var ki=0; ki<rules[ri].kws.length; ki++) {
-              if (txt.indexOf(rules[ri].kws[ki].toLowerCase()) >= 0) return rules[ri].cat;
-            }
-          }
-          return "其他";
-        }
-
-async function importQBFromFeishu() {
-        if (!isAdminMode()) { showToast('❌ 请先登录管理员', 'warning'); return; }
-        var token = getErrorDashboardToken();
-        if (!token) token = await feishuRefreshToken();
-        if (!token) token = await getCloudToken();
-        // 兜底：直接从 localStorage 读 feishu_token（即使过期也试试）
-        if (!token) { try { var ft = JSON.parse(localStorage.getItem('feishu_token') || 'null'); if (ft && ft.access_token) token = ft.access_token; } catch(e) {} }
-        if (!token) token = await getFeishuToken();
-        if (!token) { showToast('❌ 请先在失误分析看板(外部数据)授权飞书', 'error'); return; }
-        var loadingToast = document.createElement('div');
-        loadingToast.className = 'custom-toast info';
-        loadingToast.style.animation = 'none';
-        loadingToast.innerHTML = '<span>☁️</span><span>正在连接飞书...</span>';
-        document.body.appendChild(loadingToast);
-        var sheetsResp = await feishuApiFetch('https://open.feishu.cn/open-apis/sheets/v3/spreadsheets/YQEpsYHh2httTftYv0VcFPWBnJg/sheets/query', {
-            headers: { 'Authorization': 'Bearer ' + token }
-        });
-        var sheetsData = await sheetsResp.json();
-        console.log('飞书sheets:', JSON.stringify(sheetsData).substring(0,500));
-        if (!sheetsData.data || !sheetsData.data.sheets || sheetsData.data.sheets.length === 0) {
-            showToast('❌ 无法读取表格，请确认已授权飞书', 'error'); return;
-        }
-        var sheetId = sheetsData.data.sheets[0].sheetId || sheetsData.data.sheets[0].sheet_id;
-        // 权限策略（2026-09-11）：徐行 token 与优学堂应用 token 双身份，谁可用用谁
-        // （feishuApiFetch 内置：一个身份无权限时自动换另一个重试）
-        var _qbUrl = 'https://open.feishu.cn/open-apis/sheets/v2/spreadsheets/YQEpsYHh2httTftYv0VcFPWBnJg/values/' + sheetId + '?majorDimension=ROWS';
-        var resp = await feishuApiFetch(_qbUrl, {
-            headers: { 'Authorization': 'Bearer ' + token }
-        });
-        var data = await resp.json();
-        console.log('飞书返回:', JSON.stringify(data).substring(0,500));
-        var rows = (data.data && data.data.valueRange && data.data.valueRange.values) || [];
-        if (rows.length <= 1) { showToast('❌ 表格无数据', 'warning'); return; }
-        var headerRow = rows[0];
-        var col = {};
-        var knownHeaders = ['题目ID','品类','失误类别','题型','题目','答案','答案解析','题目图','答案解析图','选项图','图片','解析图','解析图片','A','B','C','D','E','F'];
-        for (var ci = 0; ci < headerRow.length; ci++) { var hdr = (headerRow[ci] || '').toString().trim(); if (hdr) col[hdr] = ci; }
-        function gc(row, name) { var idx = col[name]; return (idx !== undefined && row[idx] !== undefined) ? row[idx] : undefined; }
-        var optCols = [];
-        for (var ci = 0; ci < headerRow.length; ci++) {
-            var hdr = (headerRow[ci] || '').toString().trim();
-            if (/^[A-Z]$/.test(hdr)) optCols.push(hdr);
-        }
-        var emptyCols = [];
-        for (var ci = 0; ci < headerRow.length; ci++) {
-            if (!(headerRow[ci] || '').toString().trim() && !knownHeaders.some(function(k){ return col[k]===ci; })) emptyCols.push(ci);
-        }
-        var optImgCols = [];
-        if (rows.length > 1) {
-            for (var ei = 0; ei < emptyCols.length; ei++) {
-                var eci = emptyCols[ei];
-                var hasText = false, hasImg = false;
-                for (var ri = 1; ri < Math.min(rows.length, 10); ri++) {
-                    var cv = rows[ri][eci];
-                    if (cv !== undefined && cv !== null) {
-                        if (typeof cv === 'object' && (cv.fileToken || Array.isArray(cv))) hasImg = true;
-                        else if (String(cv).trim()) hasText = true;
-                    }
-                }
-                if (hasImg) optImgCols.push(eci);
-                else if (hasText) optCols.push(String(headerRow.length + optCols.length + optImgCols.length));
-            }
-        }
-        var hasQ = col['题目'] !== undefined, hasCat = col['失误类别'] !== undefined, hasProduct = col['品类'] !== undefined;
-        var hasAnswer = col['答案'] !== undefined, hasPic = col['题目图'] !== undefined, hasExplPic = col['答案解析图'] !== undefined;
-        var previewRows = rows.slice(1, Math.min(6, rows.length));
-        var previewHtml = previewRows.map(function(r,i){
-            return '<tr><td style="padding:6px;border:1px solid #e2e8f0;font-size:0.78rem;">'+(i+1)+'</td>'+
-                '<td style="padding:6px;border:1px solid #e2e8f0;font-size:0.78rem;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">'+escapeHtml(String(gc(r,'题目')||r[0]||'').substring(0,40))+'</td>'+
-                '<td style="padding:6px;border:1px solid #e2e8f0;font-size:0.78rem;">'+escapeHtml(gc(r,'失误类别')||'')+'</td>'+
-                '<td style="padding:6px;border:1px solid #e2e8f0;font-size:0.78rem;">'+escapeHtml(gc(r,'品类')||'')+'</td></tr>';
-        }).join('');
-        var overlay = document.createElement('div');
-        overlay.className = 'modal-overlay'; overlay.style.zIndex = '3000';
-        overlay.innerHTML = '<div class="modal-container" style="max-width:700px;"><div class="modal-header">📥 从飞书导入题库<button class="modal-close-btn" id="qbfClose">✕</button></div>'+
-            '<div class="modal-body" style="padding:20px;max-height:70vh;overflow-y:auto;">'+
-            '<div style="background:#f0f9ff;border:1px solid #bae6fd;border-radius:12px;padding:14px;margin-bottom:16px;">'+
-            '<div style="font-weight:600;margin-bottom:8px;">📋 列映射</div>'+
-            '<div style="display:grid;grid-template-columns:1fr 1fr;gap:4px 20px;font-size:0.82rem;">'+
-            (hasQ?'<span>✅ 题目</span>':'<span style="color:#c0392b;">❌ 题目（未找到）</span>')+
-            (hasCat?'<span>✅ 失误类别 → 分类</span>':'<span style="color:#94a3b8;">⚠️ 失误类别</span>')+
-            (hasProduct?'<span>✅ 品类 → productCategory</span>':'<span style="color:#94a3b8;">⚠️ 品类</span>')+
-            (hasAnswer?'<span>✅ 答案</span>':'<span style="color:#94a3b8;">⚠️ 答案</span>')+
-            (hasPic?'<span>✅ 题目图</span>':'')+
-            (hasExplPic?'<span>✅ 答案解析图</span>':'')+
-            (optCols.length>0?'<span>✅ 选项列 '+optCols.join(',')+'</span>':'')+
-            (col['选项图']!==undefined?'<span>✅ 选项图（按序对应A-F）</span>':(optImgCols.length>0?'<span>✅ 选项图 '+optImgCols.length+' 列</span>':''))+
-            '</div></div>'+
-            '<div style="margin-bottom:12px;font-weight:600;">👁️ 预览（前 '+previewRows.length+' 行 / 共 '+(rows.length-1)+' 行）</div>'+
-            '<div style="overflow-x:auto;margin-bottom:16px;"><table style="width:100%;border-collapse:collapse;"><thead><tr style="background:#f1f5f9;">'+
-            '<th style="padding:6px;border:1px solid #e2e8f0;font-size:0.78rem;">#</th>'+
-            '<th style="padding:6px;border:1px solid #e2e8f0;font-size:0.78rem;">题目</th>'+
-            '<th style="padding:6px;border:1px solid #e2e8f0;font-size:0.78rem;">失误类别</th>'+
-            '<th style="padding:6px;border:1px solid #e2e8f0;font-size:0.78rem;">品类</th></tr></thead><tbody>'+previewHtml+'</tbody></table></div>'+
-            '<div style="display:flex;gap:10px;justify-content:flex-end;border-top:1px solid #eef2f6;padding-top:14px;">'+
-            '<button id="qbfCancel" style="padding:8px 20px;border-radius:20px;border:1px solid #cbd5e1;background:#fff;cursor:pointer;">取消</button>'+
-            '<button id="qbfConfirm" style="padding:8px 20px;border-radius:20px;background:#e67e22;color:white;border:none;cursor:pointer;font-weight:600;">✅ 确认导入 '+(rows.length-1)+' 题</button></div></div></div>';
-        if (loadingToast && loadingToast.parentNode) loadingToast.remove();
-        document.body.appendChild(overlay);
-        overlay.querySelector('#qbfClose').onclick = function(){ overlay.remove(); };
-        overlay.querySelector('#qbfCancel').onclick = function(){ overlay.remove(); };
-        overlay.addEventListener('click', function(e){ if(e.target===overlay) overlay.remove(); });
-        overlay.querySelector('#qbfConfirm').onclick = async function(){
-            var btn = overlay.querySelector('#qbfConfirm'); btn.disabled = true; btn.textContent = '⏳ 导入中...';
-            try {
-                function getImgs(v){if(!v)return[];if(Array.isArray(v))return v.map(function(a){return a.fileToken||'';}).filter(Boolean);if(v.fileToken)return[v.fileToken];return[];}
-                var qb = getQuestionBank(), imported = 0, duplicated = 0, dupTypeUpdated = 0, skippedQa = 0;
-                console.log('[诊断] 列映射:',JSON.stringify(col),' 总行:',rows.length-1,' 库中已有:',(qb.questions||[]).length,'题');
-                console.log('[诊断] 首行数据:',JSON.stringify(rows[1]).substring(0,200));
-                for(var r = 1; r < rows.length; r++){
-                    var row = rows[r]; if(!row) continue;
-                    var qText = gc(row,'题目')||gc(row,'问题')||gc(row,'题干')||(row[0]||'').toString().trim();
-                    if(!qText) continue;
-                    var productCategory = gc(row,'品类')||'';
-                    // 只按"失误类别"列分类，支持多选，拆成独立分类
-                    var categoryRaw = gc(row,'失误类别');
-                    if(typeof categoryRaw === 'string'){}else if(Array.isArray(categoryRaw)){categoryRaw=categoryRaw.join(',');}else if(categoryRaw===null||categoryRaw===undefined){categoryRaw='';}else{categoryRaw=String(categoryRaw);}
-                    var categories = String(categoryRaw).split(/[,，、;；\n]+/).map(function(c){return c.trim();}).filter(function(c){return c;});
-                    if(categories.length===0) continue;
-                    // 按答案推断题型：答案1个选项=单选，多个=多选；问答题直接跳过
-                    var qAnswer = gc(row,'答案')||'';
-                    var newType = inferQuestionType(gc(row,'题型')||'', qAnswer);
-                    if (newType === 'qa') { skippedQa++; continue; }
-                    // 去重：题目+答案+解析 完全一致则跳过（但更新已有题目的题型）
-                    var qExplanation = gc(row,'答案解析')||'';
-                    var isDup = false;
-                    for(var di=0; di<qb.questions.length; di++){
-                        var eq = qb.questions[di];
-                        if(eq.question.trim().toLowerCase() === qText.trim().toLowerCase()
-                            && (eq.answer||'').trim().toLowerCase() === qAnswer.trim().toLowerCase()
-                            && (eq.explanation||'').trim().toLowerCase() === qExplanation.trim().toLowerCase()){
-                            isDup = true;
-                            if(eq.type !== newType){ eq.type = newType; dupTypeUpdated++; }
-                            break;
-                        }
-                    }
-                    if(isDup){ duplicated++; continue; }
-                    categories.forEach(function(cat){
-                        if(cat&&!qb.categories[cat]){var mo=Math.max(0,...Object.values(qb.categories).map(function(c){return c.order||0;}));qb.categories[cat]={name:cat,createdAt:new Date().toISOString(),order:mo+1};}
-                    });
-                    var screenshot = null;
-                    var imgTks = getImgs(gc(row,'题目图'))||getImgs(gc(row,'图片'));
-                    if(imgTks.length>0) screenshot = {t: imgTks[0]};
-                    var explanation = gc(row,'答案解析')||'';
-                    var explTks = getImgs(gc(row,'答案解析图'))||getImgs(gc(row,'解析图'));
-                    if(explTks.length>0&&typeof fetchImageAsBase64==='function'){
-                        for(var ei=0;ei<explTks.length;ei++){try{var imgUrl='https://open.feishu.cn/open-apis/im/v1/images/'+explTks[ei];var ei2=await fetchImageAsBase64(imgUrl);if(ei2&&ei2.indexOf('data:')===0)explanation+='\n\n<img src=\"'+ei2+'\" style=\"max-width:100%;border-radius:8px;margin-top:8px;\">';else console.log('[导入图片] 解析图获取失败 token='+explTks[ei]);}catch(e){console.log('[导入图片] 异常',e.message);}}
-                    }
-                    var options = [];
-                    for(var oi=0;oi<optCols.length;oi++){var ov=row[col[optCols[oi]]];if(ov!==undefined&&ov!==null&&String(ov).trim())options.push(String(ov).trim());}
-                    // 选项对应的图片（优先从「选项图」单列读取，按序对应 A/B/C/D/E/F）
-                    var optionImages = [];
-                    var hasOptImgCol = col['选项图'] !== undefined;
-                    if (hasOptImgCol) {
-                        // 从「选项图」列提取所有图片，按顺序映射到选项
-                        var allOptImgs = getImgs(gc(row, '选项图'));
-                        for (var oii = 0; oii < options.length; oii++) {
-                            optionImages.push(oii < allOptImgs.length ? {t: allOptImgs[oii]} : null);
-                        }
-                    } else {
-                        for (var oii = 0; oii < options.length; oii++) {
-                            if (oii < optImgCols.length) {
-                                var imgTks2 = getImgs(row[optImgCols[oii]]);
-                                optionImages.push(imgTks2.length > 0 ? {t: imgTks2[0]} : null);
-                            } else {
-                                optionImages.push(null);
-                            }
-                        }
-                    }
-                    // 去除尾部全 null（如果所有选项都没图则不存）
-                    while (optionImages.length > 0 && optionImages[optionImages.length-1] === null) optionImages.pop();
-                    var type = newType;
-                    // 每个独立分类生成一条题目记录
-                    categories.forEach(function(cat){
-                        qb.questions.push({
-                            id: Date.now().toString(36)+Math.random().toString(36).substr(2,5)+r+'_'+cat.replace(/[\/\s,，、]+/g,''),
-                            category: cat, type, difficulty:'中等', question:qText,
-                            answer:gc(row,'答案')||'', options, explanation,
-                            productCategory, screenshot, optionImages: optionImages.length > 0 ? optionImages : undefined,
-                            createdAt:new Date().toISOString()
-                        });
-                        imported++;
-                    });
-                }
-                saveQuestionBank(qb); renderQuestionBank(); overlay.remove();
-                logAdminAction('题库', '飞书导入题目', imported + '题');
-                console.log('[诊断] 导入完成: 共导入'+imported+'题, 重复跳过'+duplicated+'题, 更新题型'+dupTypeUpdated+'题, 跳过问答题'+skippedQa+'题, 库中总计'+(qb.questions||[]).length+'题');
-                showToast('✅ 从飞书导入 '+imported+' 题'+(duplicated>0?'（'+duplicated+' 题重复已跳过）':'')+(dupTypeUpdated>0?'（'+dupTypeUpdated+' 题已更新题型）':'')+(skippedQa>0?'（跳过 '+skippedQa+' 道问答题）':'')+'','success');
-            } catch(e){console.log('导入失败',e); showToast('❌ 导入失败：'+e.message,'error'); btn.disabled=false; btn.textContent='✅ 确认导入';}
-        };
-    }
-
-    async function clearCatQuestions(catName) {
-        // 2026-09-05 改版：源品类只读，只有手动区可清空
-        if (qbCatKey(catName) !== 'manual') { alert('该品类由飞书同步管理，不可清空（改动请直接修改源文档）'); return; }
-        const qb = getQuestionBank();
-        const count = (qb.questions || []).filter(q => q.category === catName).length;
-        if (count === 0) { alert('该分类下无题目'); return; }
-        if (!await showConfirm('⚠️ 确定清空分类「' + catName + '」下的全部 ' + count + ' 道题目吗？\n\n此操作不可撤销！', '🗑️', true)) return;
-        if (!await showConfirm('⚠️ 再次确认：此操作将永久删除该分类下的所有题目！', '🗑️', true)) return;
-        const pwd = await showPrompt('🔐 请输入管理密码以确认操作：', 'password');
-        if (pwd === null) return;
-        if (pwd !== ADMIN_PASSWORD) { alert('❌ 密码错误，操作已取消'); return; }
-        qb.questions = (qb.questions || []).filter(q => q.category !== catName);
-        saveQuestionBank(qb);
-        logAdminAction('题库', '清空分类', catName + ' ' + count + '题');
-        alert('✅ 已清空分类「' + catName + '」（删除了 ' + count + ' 道题目）');
-        renderQuestionBank();
-    }
+    // 2026-09-13 热读点：返回冻结数组。调用方只做 .filter/.find 等只读操作（见 openQBDetailModal：
+    //   qbDetailQuestions 全程只被读取和整体重新赋值，从不原地改）★禁止修改返回值★
+    function getAllQBQuestions() { return qbRead().questions || []; }
 
     function handleQBGlobalSearch(keyword) {
         try {
@@ -12831,7 +12621,8 @@ async function importQBFromFeishu() {
         if (keyword === (window._lastQBSearch || '')) return;
         window._lastQBSearch = keyword;
 
-        const qb = getQuestionBank();
+        // 2026-09-13 热读点：搜索框每敲一字都会走到这里，避开 0.9MB 深拷贝 ★禁止修改返回值★
+        const qb = qbRead();
         const allQuestions = qb.questions || [];
         const uniqueQBQuestions = (function(qs){var seen=new Set();return qs.filter(function(q){var k=(q.question||'').trim().toLowerCase();if(seen.has(k))return false;seen.add(k);return true;});})(allQuestions);
         window._uniqueQBQuestions = uniqueQBQuestions;
@@ -12863,16 +12654,13 @@ async function importQBFromFeishu() {
                     const iconMap = { '手机':'📱','平板':'🖥️','笔记本':'💻','手表':'⌚','耳机':'🎧','相机&镜头':'📷','游戏机&游戏卡带':'🎮','手动录入题目':'✍️' };
                     const icon = iconMap[cat] || '📋';
                     const isSource = qb.categories[cat] && qb.categories[cat].source === true;
-                    const safeCat = escapeHtml(cat).replace(/'/g, "\\'");
+                    const safeCat = escapeJsInAttr(cat);
                     return '<div class="qb-cat-card">' +
                         '<div class="qb-cat-icon">' + icon + '</div>' +
                         '<div class="qb-cat-name">' + escapeHtml(cat) + (isSource ? ' <span style="font-size:0.6rem;opacity:0.75;">(同步)</span>' : '') + '</div>' +
                         '<div class="qb-cat-count">' + count + ' 题</div>' +
                         '<div class="qb-cat-actions">' +
                             '<button class="qb-card-btn qb-card-view" onclick="event.stopPropagation();openQBDetailModal(\'' + safeCat + '\', getAllQBQuestions().filter(q=>q.category===\'' + safeCat + '\'))">👁️ 查看</button>' +
-                            (isSource ? '' :
-                            '<button class="qb-card-btn qb-card-add admin-only" onclick="event.stopPropagation();openAddQModal(\'' + safeCat + '\')">✍️ 录题</button>' +
-                            '<button class="qb-card-btn qb-card-clear admin-only" onclick="event.stopPropagation();clearCatQuestions(\'' + safeCat + '\')">🗑️ 清空</button>') +
                         '</div></div>';
                 }).join('');
             }
@@ -12880,8 +12668,6 @@ async function importQBFromFeishu() {
                 '<div class="qb-cat-icon">📋</div><div class="qb-cat-name">全部题目</div><div class="qb-cat-count">' + uniqueQBQuestions.length + ' 题</div>' +
                 '<div class="qb-cat-actions">' +
                     '<button class="qb-card-btn qb-card-view-all" onclick="event.stopPropagation();openQBDetailModal(\'全部题目\', window._uniqueQBQuestions||[])">👁️ 查看</button>' +
-                    '<button class="qb-card-btn qb-card-add-all admin-only" onclick="event.stopPropagation();openAddQModal()">✍️ 录题</button>' +
-                    '<button class="qb-card-btn qb-card-clear-all admin-only" onclick="event.stopPropagation();clearQuestionBank()">🗑️ 清空</button>' +
                 '</div></div>' + catCards;
             return;
         }
@@ -12916,8 +12702,8 @@ async function importQBFromFeishu() {
                 shown.map((q, i) => {
                     const typeLabel = q.type === 'choice' ? '选择题' : (q.type === 'multi' ? '多选题' : (q.type === 'judge' ? '判断题' : '问答题'));
                     const typeCls = q.type === 'choice' ? 'qb-tag-choice' : (q.type === 'multi' ? 'qb-tag-choice' : (q.type === 'judge' ? 'qb-tag-judge' : 'qb-tag-qa'));
-                    const qid = q.id.replace(/'/g, "\\'");
-                    return '<div class="qb-modal-question" id="qcard-' + qid + '" style="cursor:pointer;" onclick="openQBDetailFromSearch(\'' + escapeHtml(q.category) + '\',\'' + qid + '\')">' +
+                    const qid = escapeJsInAttr(q.id);
+                    return '<div class="qb-modal-question" id="qcard-' + qid + '" style="cursor:pointer;" onclick="openQBDetailFromSearch(\'' + escapeJsInAttr(q.category) + '\',\'' + qid + '\')">' +
                         '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;">' +
                         '<div style="flex:1;min-width:0;">' +
                         '<div style="margin-bottom:4px;"><span style="color:#94a3b8;font-size:0.7rem;">#' + (i+1) + '</span>' +
@@ -12936,7 +12722,7 @@ async function importQBFromFeishu() {
         var allQ = getQuestionBank().questions || [];
         var t = allQ.find(function(q){ return q.id === qid; });
         if (!t) { showToast('未找到该题目', 'error'); return; }
-        var qi = (t.id||'').replace(/'/g,"\\'");
+        var qi = escapeJsInAttr(t.id||'');
         var tl = t.type==='choice'?'选择题':(t.type==='multi'?'多选题':(t.type==='judge'?'判断题':'问答题'));
         var ov = document.createElement('div');
         ov.className = 'modal-overlay'; ov.style.zIndex = '3000';
@@ -12982,8 +12768,7 @@ async function importQBFromFeishu() {
                 var af = q.answer||'暂无';
                 var ef = q.explanation||'';
                 var ap = af.length>50?af.substring(0,50)+'...':af;
-                var qi = (q.id||'').replace(/'/g,"\\'");
-                var isManual = q.category && qbCatKey(q.category) === 'manual';
+                var qi = escapeJsInAttr(q.id||'');
                 // 选项渲染：兼容字符串数组与对象数组（源题 {key,text,images}）
                 var optsHtml = '';
                 if (q.options && q.options.length > 0) {
@@ -13012,10 +12797,6 @@ async function importQBFromFeishu() {
                             ${qImgHtml}
                             ${optsHtml}
                             <div style="font-size:0.72rem;color:#2a5298;">📌 答案：${escapeHtml(ap)}</div>
-                        </div>
-                        <div style="display:flex;gap:4px;flex-shrink:0;">
-                            ${isManual?`<button class="action-btn admin-only" style="font-size:0.7rem;padding:4px 10px;background:#eef2ff;color:#2a5298;" onclick="event.stopPropagation();openEditQModal('${qi}')" title="编辑">✏️</button>
-                            <button class="action-btn danger admin-only" style="font-size:0.7rem;padding:4px 10px;" onclick="event.stopPropagation();deleteQBFromDetail('${qi}')" title="删除">🗑️</button>`:''}
                         </div>
                     </div>
                     <div id="qdetail-${qi}" style="display:none;margin-top:10px;padding-top:10px;border-top:1px dashed #eef2f6;">
@@ -13073,23 +12854,6 @@ async function importQBFromFeishu() {
         setTimeout(function(){ if(window._autoLoadPhotos) window._autoLoadPhotos(); }, 10);
     }
 
-    async function deleteQBFromDetail(id) {
-        const qb = getQuestionBank();
-        const delQ = qb.questions.find(q => q.id === id);
-        if (delQ && delQ.category && qbCatKey(delQ.category) !== 'manual') { alert('该题属于源品类，由飞书同步管理，不可删除（改动请直接修改源文档）'); return; }
-        if (!await confirmDelete('该题目')) return;
-        qb.questions = qb.questions.filter(q => q.id !== id);
-        saveQuestionBank(qb);
-        logAdminAction('题库', '删除题目', qbDetailCat || '');
-        // 更新当前弹窗的数据
-        qbDetailQuestions = qbDetailQuestions.filter(q => q.id !== id);
-        if (qbDetailPage > Math.ceil(qbDetailQuestions.length / QB_DETAIL_PAGE_SIZE) && qbDetailPage > 1) {
-            qbDetailPage--;
-        }
-        renderQBDetailModal();
-        // 后台刷新主页面（弹窗关闭后可见）
-    }
-
     function toggleQDetail(qid) {
         const el = document.getElementById('qdetail-' + qid);
         if (!el) return;
@@ -13098,111 +12862,6 @@ async function importQBFromFeishu() {
         } else {
             el.style.display = 'none';
         }
-    }
-
-    function openEditQModal(qid) {
-        const qb = getQuestionBank();
-        const q = qb.questions.find(x => x.id === qid);
-        if (!q) { alert('题目未找到'); return; }
-
-        const old = document.getElementById('editQOverlay');
-        if (old) old.remove();
-
-        const categories = Object.keys(qb.categories).sort((a, b) => {
-            const oa = qb.categories[a]?.order;
-            const ob = qb.categories[b]?.order;
-            if (oa != null && ob != null) return oa - ob;
-            if (oa != null) return -1;
-            if (ob != null) return 1;
-            return a.localeCompare(b);
-        });
-
-        const overlay = document.createElement('div');
-        overlay.id = 'editQOverlay';
-        overlay.className = 'modal-overlay';
-        overlay.innerHTML = `<div class="modal-container" style="max-width:600px;">
-            <div class="modal-header"><span>✏️ 编辑题目</span><button class="modal-close-btn">✕</button></div>
-            <div class="modal-body" style="max-height:75vh;overflow-y:auto;">
-                <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:12px;">
-                    <div style="padding:8px 12px;background:#f1f5f9;border-radius:8px;font-size:0.85rem;color:#2a5298;font-weight:600;flex:1;min-width:140px;">📂 ${escapeHtml(q.category || '手动录入题目')}</div>
-                    <select id="editQType" style="padding:8px 12px;border:1px solid #cbd5e1;border-radius:8px;font-size:0.85rem;">
-                        <option value="choice" ${q.type==='choice'?'selected':''}>选择题</option>
-                        <option value="multi" ${q.type==='multi'?'selected':''}>多选题</option>
-                        <option value="judge" ${q.type==='judge'?'selected':''}>判断题</option>
-                    </select>
-                    <select id="editQDifficulty" style="padding:8px 12px;border:1px solid #cbd5e1;border-radius:8px;font-size:0.85rem;">
-                        <option value="简单" ${q.difficulty==='简单'?'selected':''}>简单</option>
-                        <option value="中等" ${q.difficulty==='中等'?'selected':''}>中等</option>
-                        <option value="困难" ${q.difficulty==='困难'?'selected':''}>困难</option>
-                    </select>
-                </div>
-                <textarea id="editQQuestion" placeholder="题目内容..." style="width:100%;padding:10px;border:1px solid #cbd5e1;border-radius:12px;font-size:0.85rem;min-height:80px;resize:vertical;margin-bottom:10px;">${escapeHtml(q.question||'')}</textarea>
-                <div id="editQOptionsArea" style="${(q.type==='choice'||q.type==='multi')?'':'display:none;'}margin-bottom:10px;">
-                    <div style="font-size:0.8rem;color:#5e6f8d;margin-bottom:4px;">选项（每行一个，正确答案前加 ✓）：</div>
-                    <textarea id="editQOptions" style="width:100%;padding:10px;border:1px solid #cbd5e1;border-radius:12px;font-size:0.85rem;min-height:80px;resize:vertical;">${(q.options||[]).map(o => o).join('\n')}</textarea>
-                </div>
-                <textarea id="editQAnswer" placeholder="答案..." style="width:100%;padding:10px;border:1px solid #cbd5e1;border-radius:12px;font-size:0.85rem;min-height:60px;resize:vertical;margin-bottom:10px;">${escapeHtml(q.answer||'')}</textarea>
-                <textarea id="editQExplanation" placeholder="解析（可选）..." style="width:100%;padding:10px;border:1px solid #cbd5e1;border-radius:12px;font-size:0.85rem;min-height:50px;resize:vertical;margin-bottom:10px;">${escapeHtml(q.explanation||'')}</textarea>
-                <button class="generate-btn" id="saveEditQBtn" style="width:100%;">💾 保存修改</button>
-            </div>
-        </div>`;
-        document.body.appendChild(overlay);
-
-        const closeModal = () => overlay.remove();
-        overlay.querySelector('.modal-close-btn').onclick = closeModal;
-        overlay.onclick = (e) => { if (e.target === overlay) closeModal(); };
-
-        overlay.querySelector('#editQType').onchange = function() {
-            overlay.querySelector('#editQOptionsArea').style.display = (this.value === 'choice' || this.value === 'multi') ? 'block' : 'none';
-        };
-        overlay.querySelector('#saveEditQBtn').onclick = () => saveEditQ(qid, overlay);
-    }
-
-    function saveEditQ(qid, overlay) {
-        const qb = getQuestionBank();
-        const q = qb.questions.find(x => x.id === qid);
-        if (!q) { alert('题目未找到'); return; }
-        // 2026-09-05 改版：只有手动区题可编辑；分类保持不动（不可挪入源品类）
-        if (q.category && qbCatKey(q.category) !== 'manual') { alert('该题属于源品类，由飞书同步管理，不可编辑'); return; }
-
-        const category = q.category || '手动录入题目';
-        const type = overlay.querySelector('#editQType').value;
-        const difficulty = overlay.querySelector('#editQDifficulty').value;
-        const question = overlay.querySelector('#editQQuestion').value.trim();
-        const answer = overlay.querySelector('#editQAnswer').value.trim();
-        const explanation = overlay.querySelector('#editQExplanation').value.trim();
-
-        if (!question) { alert('请输入题目内容'); return; }
-        if (!answer) { alert('请输入答案'); return; }
-        if (!category) { alert('请选择分类'); return; }
-
-        let options = [];
-        if (type === 'choice' || type === 'multi') {
-            const optText = overlay.querySelector('#editQOptions').value.trim();
-            if (optText) {
-                options = optText.split('\n').map(o => o.trim()).filter(o => o);
-            }
-        }
-
-        q.category = category;
-        q.type = type;
-        q.difficulty = difficulty;
-        q.question = question;
-        q.answer = answer;
-        q.options = options;
-        q.explanation = explanation;
-
-        saveQuestionBank(qb);
-        logAdminAction('题库', '编辑题目', category);
-        overlay.remove();
-
-        // 刷新详情弹窗
-        if (qbDetailCat === '__all__' || qbDetailCat === '全部题目') {
-            qbDetailQuestions = qb.questions;
-        } else if (qbDetailCat) {
-            qbDetailQuestions = qb.questions.filter(x => x.category === qbDetailCat);
-        }
-        renderQBDetailModal();
     }
 
     function searchQBInDetail(keyword) {
@@ -13237,564 +12896,6 @@ async function importQBFromFeishu() {
         _refreshQBBody();
     }
 
-    // ========== 添加题目弹窗 ==========
-    function openAddQModal(preSelCat) {
-        const old = document.getElementById('addQOverlay');
-        if (old) old.remove();
-        const qb = getQuestionBank();
-        const categories = Object.keys(qb.categories).sort((a, b) => {
-            const oa = qb.categories[a]?.order;
-            const ob = qb.categories[b]?.order;
-            if (oa != null && ob != null) return oa - ob;
-            if (oa != null) return -1;
-            if (ob != null) return 1;
-            return a.localeCompare(b);
-        });
-
-        const overlay = document.createElement('div');
-        overlay.id = 'addQOverlay';
-        overlay.className = 'modal-overlay';
-        overlay.innerHTML = `<div class="modal-container" style="max-width:600px;">
-            <div class="modal-header"><span>➕ 添加题目${preSelCat ? ' → ' + escapeHtml(preSelCat) : ''}</span><button class="modal-close-btn">✕</button></div>
-            <div class="modal-body" style="max-height:75vh;overflow-y:auto;">
-                <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:12px;">
-                    <button class="analysis-type-btn active" data-addtype="manual" style="font-size:0.8rem;">✍️ 文字录入</button>
-                    <button class="analysis-type-btn" data-addtype="screenshot" style="font-size:0.8rem;">📸 截图生成</button>
-                    <button class="analysis-type-btn" data-addtype="file" style="font-size:0.8rem;">📎 文件上传</button>
-                </div>
-                <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:12px;">
-                    <div style="padding:8px 12px;background:#f1f5f9;border-radius:8px;font-size:0.85rem;color:#2a5298;font-weight:600;flex:1;min-width:140px;">📂 手动录入题目（独立区，不被飞书同步覆盖）</div>
-                    <select id="newQType" style="padding:8px 12px;border:1px solid #cbd5e1;border-radius:8px;font-size:0.85rem;">
-                        <option value="choice">选择题</option>
-                        <option value="multi">多选题</option>
-                        <option value="judge">判断题</option>
-                    </select>
-                    <select id="newQDifficulty" style="padding:8px 12px;border:1px solid #cbd5e1;border-radius:8px;font-size:0.85rem;">
-                        <option value="简单">简单</option>
-                        <option value="中等" selected>中等</option>
-                        <option value="困难">困难</option>
-                    </select>
-                </div>
-                <textarea id="newQQuestion" placeholder="请输入题目内容..." style="width:100%;padding:10px;border:1px solid #cbd5e1;border-radius:12px;font-size:0.85rem;min-height:80px;resize:vertical;margin-bottom:10px;"></textarea>
-                <div id="newQOptionsArea" style="display:none;margin-bottom:10px;">
-                    <div style="font-size:0.8rem;color:#5e6f8d;margin-bottom:4px;">选项（每行一个，正确答案前加 ✓）：</div>
-                    <textarea id="newQOptions" placeholder="✓ 正确选项内容&#10;错误选项A&#10;错误选项B&#10;错误选项C" style="width:100%;padding:10px;border:1px solid #cbd5e1;border-radius:12px;font-size:0.85rem;min-height:80px;resize:vertical;"></textarea>
-                </div>
-                <textarea id="newQAnswer" placeholder="请输入答案/解析..." style="width:100%;padding:10px;border:1px solid #cbd5e1;border-radius:12px;font-size:0.85rem;min-height:60px;resize:vertical;margin-bottom:10px;"></textarea>
-                <div id="screenshotArea" style="display:none;margin-bottom:10px;">
-                    <div class="upload-area" id="screenshotUploadArea" style="padding:20px;text-align:center;border:2px dashed #cbd5e1;border-radius:12px;cursor:pointer;">📸 点击粘贴截图 (Ctrl+V) 或拖拽图片到这里</div>
-                    <img id="screenshotPreview" style="max-width:300px;max-height:200px;display:none;border-radius:12px;margin-top:8px;">
-                </div>
-                <div id="fileUploadArea_add" style="display:none;margin-bottom:10px;">
-                    <div class="upload-area" id="fileUploadAreaQB" style="padding:20px;text-align:center;border:2px dashed #cbd5e1;border-radius:12px;cursor:pointer;">📎 点击上传文件 (txt/Excel/csv/json)</div>
-                    <input type="file" id="fileInputQB" accept=".txt,.xlsx,.xls,.csv,.json" style="display:none">
-                    <div id="fileUploadStatusQB" style="font-size:0.8rem;margin-top:8px;"></div>
-                </div>
-                <button class="generate-btn" id="addQuestionBtn" style="width:100%;">✅ 添加题目</button>
-            </div>
-        </div>`;
-        document.body.appendChild(overlay);
-
-        // 关闭事件
-        const closeModal = () => { overlay.remove(); window._screenshotData = null; };
-        overlay.querySelector('.modal-close-btn').onclick = closeModal;
-        overlay.onclick = (e) => { if (e.target === overlay) closeModal(); };
-
-        // 添加方式切换
-        overlay.querySelectorAll('[data-addtype]').forEach(btn => {
-            btn.onclick = function() {
-                overlay.querySelectorAll('[data-addtype]').forEach(b => b.classList.remove('active'));
-                this.classList.add('active');
-                const type = this.dataset.addtype;
-                overlay.querySelector('#newQQuestion').style.display = (type === 'manual' || type === 'screenshot') ? '' : 'none';
-                overlay.querySelector('#newQAnswer').style.display = (type === 'manual') ? '' : 'none';
-                overlay.querySelector('#newQOptionsArea').style.display = (type === 'manual') ? '' : 'none';
-                overlay.querySelector('#screenshotArea').style.display = type === 'screenshot' ? 'block' : 'none';
-                overlay.querySelector('#fileUploadArea_add').style.display = type === 'file' ? 'block' : 'none';
-            };
-        });
-
-        overlay.querySelector('#newQType').onchange = function() {
-            overlay.querySelector('#newQOptionsArea').style.display = (this.value === 'choice' || this.value === 'multi') ? 'block' : 'none';
-        };
-        overlay.querySelector('#addQuestionBtn').onclick = () => addQuestionFromModal(overlay);
-        overlay.querySelector('#fileUploadAreaQB').onclick = () => overlay.querySelector('#fileInputQB').click();
-        overlay.querySelector('#fileInputQB').onchange = (e) => handleQBFileAddModal(e, overlay);
-
-        // 截图区域
-        const ssArea = overlay.querySelector('#screenshotUploadArea');
-        if (ssArea) {
-            ssArea.ondragover = (e) => { e.preventDefault(); };
-            ssArea.ondrop = (e) => {
-                e.preventDefault();
-                const file = e.dataTransfer.files[0];
-                if (file && file.type.startsWith('image/')) {
-                    const reader = new FileReader();
-                    reader.onload = (ev) => {
-                        overlay.querySelector('#screenshotPreview').src = ev.target.result;
-                        overlay.querySelector('#screenshotPreview').style.display = 'block';
-                        window._screenshotData = ev.target.result;
-                    };
-                    reader.readAsDataURL(file);
-                }
-            };
-            const pasteHandler = (e) => {
-                if (overlay.querySelector('#screenshotArea').style.display === 'block') {
-                    const items = e.clipboardData.items;
-                    for (let item of items) {
-                        if (item.type.startsWith('image/')) {
-                            const blob = item.getAsFile();
-                            const reader = new FileReader();
-                            reader.onload = (ev) => {
-                                overlay.querySelector('#screenshotPreview').src = ev.target.result;
-                                overlay.querySelector('#screenshotPreview').style.display = 'block';
-                                window._screenshotData = ev.target.result;
-                                overlay.querySelector('#newQQuestion').value = '[截图题目 - 请手动编辑题目文字]';
-                            };
-                            reader.readAsDataURL(blob);
-                        }
-                    }
-                }
-            };
-            document.addEventListener('paste', pasteHandler);
-            // 弹窗关闭时移除监听
-            const origClose = closeModal;
-            const newClose = () => { document.removeEventListener('paste', pasteHandler); origClose(); };
-            overlay.querySelector('.modal-close-btn').onclick = newClose;
-            overlay.onclick = (e) => { if (e.target === overlay) newClose(); };
-        }
-    }
-
-    function addQuestionFromModal(overlay) {
-        const qb = getQuestionBank();
-        // 2026-09-05 改版：手动题固定进「手动录入题目」区
-        let category = '手动录入题目';
-        if (!qb.categories[category]) { qb.categories[category] = { name: category, key: 'manual', source: false, createdAt: new Date().toISOString(), order: 8 }; }
-
-        const question = overlay.querySelector('#newQQuestion').value.trim();
-        if (!question) { alert('请输入题目内容'); return; }
-        const answer = overlay.querySelector('#newQAnswer').value.trim();
-        if (!answer) { alert('请输入答案'); return; }
-        const type = overlay.querySelector('#newQType').value;
-        const difficulty = overlay.querySelector('#newQDifficulty').value;
-
-        let options = [];
-        if (type === 'choice' || type === 'multi') {
-            const optText = overlay.querySelector('#newQOptions').value.trim();
-            if (optText) {
-                options = optText.split('\n').map(o => o.replace(/^✓\s*/, '').trim()).filter(o => o);
-            }
-        }
-
-        qb.questions.push({
-            id: Date.now().toString(36) + Math.random().toString(36).substr(2, 5),
-            category, type, difficulty, question, answer, options,
-            screenshot: window._screenshotData || null,
-            createdAt: new Date().toISOString()
-        });
-        saveQuestionBank(qb);
-        logAdminAction('题库', '新建题目', category);
-        window._screenshotData = null;
-        overlay.remove();
-        renderQuestionBank();
-    }
-
-    async function handleQBFileAddModal(e, overlay) {
-        const file = e.target.files[0];
-        if (!file) return;
-        const statusDiv = overlay.querySelector('#fileUploadStatusQB');
-        try {
-            await loadSheetJS();
-            const qb = getQuestionBank();
-            let newQuestions = [];
-            let importedCategories = {};
-
-            if (file.name.endsWith('.json')) {
-                const text = await file.text();
-                const data = JSON.parse(text);
-                if (data.questions && Array.isArray(data.questions)) {
-                    data.questions.forEach(q => {
-                        var nq = {
-                            id: q.id || (Date.now().toString(36) + Math.random().toString(36).substr(2, 5)),
-                            category: q.category || '默认分类',
-                            type: q.type || 'qa',
-                            difficulty: q.difficulty || '中等',
-                            question: q.question || '',
-                            answer: q.answer || '',
-                            options: q.options || [],
-                            explanation: q.explanation || '',
-                            createdAt: q.createdAt || new Date().toISOString()
-                        };
-                        if (q.productCategory) nq.productCategory = q.productCategory;
-                        newQuestions.push(nq);
-                    });
-                }
-                if (data.categories) importedCategories = data.categories;
-            } else if (file.name.endsWith('.txt') || file.name.endsWith('.csv')) {
-                const text = await file.text();
-                const lines = text.split('\n');
-                const isCSV = lines.some(l => l.includes('\t') || l.includes('|'));
-                if (isCSV) {
-                    const nonEmpty = lines.filter(l => l.trim());
-                    let sIdx = 0;
-                    if (nonEmpty[0] && (nonEmpty[0].includes('题目') || nonEmpty[0].includes('问题'))) sIdx = 1;
-                    for (let i = sIdx; i < nonEmpty.length; i++) {
-                        const parts = nonEmpty[i].split(/[\t,|]/);
-                        if (parts.length >= 2 && parts[0].trim()) {
-                            newQuestions.push({
-                                id: Date.now().toString(36) + i,
-                                category: parts.length >= 3 ? parts[2].trim() : '默认分类',
-                                type: 'qa', difficulty: '中等',
-                                question: parts[0].trim(), answer: parts[1].trim(),
-                                options: [], createdAt: new Date().toISOString()
-                            });
-                        }
-                    }
-                } else {
-                    let curCat = '默认分类', curQ = null, buf = [], inQ = false;
-                    const TM = { '单选':'choice','多选':'multi','判断':'judge' };
-                    const flush = () => {
-                        if (!curQ) return;
-                        var ft = curQ.type || '';
-                        if (ft === 'qa' || !ft) ft = inferQuestionType('', curQ.answer || '');
-                        if (ft === 'qa') { curQ = null; buf = []; inQ = false; return; }
-                        newQuestions.push({
-                            id: Date.now().toString(36) + Math.random().toString(36).substr(2, 5),
-                            category: curCat,
-                            type: ft,
-                            difficulty: '中等',
-                            question: curQ.qText,
-                            answer: curQ.answer||'',
-                            options: curQ.options||[],
-                            explanation: curQ.explanation||'',
-                            createdAt: new Date().toISOString()
-                        });
-                        curQ = null; buf = []; inQ = false;
-                    };
-                    for (let i = 0; i < lines.length; i++) {
-                        const line = lines[i].trim();
-                        if (!line) { if (inQ && curQ && buf.length === 0) flush(); continue; }
-                        const cm = line.match(/^【(.+?)】（?\d*题?）?$/);
-                        if (cm && !line.startsWith('答案') && !line.startsWith('解析')) { if (inQ) flush(); curCat = cm[1].trim(); continue; }
-                        if (/^-{4,}$/.test(line) || /^={4,}$/.test(line)) continue;
-                        if (i === 0 && (line.includes('题库') || line.includes('判责考试'))) continue;
-                        if (/^共计\s*\d+\s*题/.test(line)) continue;
-                        if (line.startsWith('判定标准') || line.startsWith('检测标准')) continue;
-                        const qm = line.match(/^(\d+)\.\s*\[(.+?)\]\s*(.+)$/);
-                        if (qm) { if (inQ) flush(); curQ = { qText: qm[3].trim(), type: TM[qm[2].trim()]||'qa', options:[], answer:'', explanation:'' }; buf = []; inQ = true; continue; }
-                        if (!inQ || !curQ) continue;
-                        const om = line.match(/^\s*([A-Z]+)[.．、]\s*(.*)$/);
-                        if (om) { let ot = om[2].trim(); ot = ot.replace(/^[A-Z]+[.．、]\s*/, ''); curQ.options.push(ot); buf.push(line); continue; }
-                        const am = line.match(/^答案[：:]\s*(.+)$/);
-                        if (am) { curQ.answer = am[1].trim(); continue; }
-                        const em = line.match(/^解析[：:]\s*(.+)$/);
-                        if (em) { curQ.explanation = em[1].trim(); continue; }
-                        if (inQ && curQ) buf.push(line);
-                    }
-                    if (inQ && curQ) flush();
-                }
-            } else {
-                const data = await file.arrayBuffer();
-                const wb = XLSX.read(data, { type: 'array' });
-                const rows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1 });
-                let qc = 0, ac = 1, cc = 2, pc = -1, tc = -1, ec = -1;
-                if (rows[0]) {
-                    const hdrs = rows[0].map(h => String(h||'').toLowerCase());
-                    const qi = hdrs.findIndex(h => (h==='题目'||h==='问题'||h==='question') && !h.includes('id'));
-                    if (qi < 0) { const qi2 = hdrs.findIndex(h => (h.includes('题目')||h.includes('问题')||h.includes('question')) && !h.includes('id')); if (qi2>=0) qc=qi2; }
-                    else qc = qi;
-                    const ai = hdrs.findIndex(h => h.includes('答案')||h.includes('answer'));
-                    const ci = hdrs.findIndex(h => h.includes('失误类别')||h.includes('分类')||h.includes('category')||h.includes('模块'));
-                    const pi = hdrs.findIndex(h => h.includes('品类'));
-                    const ti = hdrs.findIndex(h => h.includes('题型')||h.includes('type'));
-                    const ei = hdrs.findIndex(h => h.includes('答案解析')||h.includes('解析')||h.includes('explanation'));
-                    if (qi>=0) qc=qi; if (ai>=0) ac=ai; if (ci>=0) cc=ci;
-                    if (pi>=0) pc=pi; if (ti>=0) tc=ti; if (ei>=0) ec=ei;
-                }
-                var optCols = [];
-                if (rows[0]) {
-                    for (var oci = 0; oci < rows[0].length; oci++) {
-                        var oh = String(rows[0][oci]||'').trim();
-                        if (/^[A-Z]$/.test(oh) && oci !== qc && oci !== ac && oci !== cc && oci !== pc && oci !== tc && oci !== ec) optCols.push(oci);
-                    }
-                }
-                for (let i = (rows[0]&&rows[0][qc]&&String(rows[0][qc]).includes('题目')?1:0); i<rows.length; i++) {
-                    const row = rows[i]; if (!row||!row[qc]) continue;
-                    var opts = [];
-                    for (var oi = 0; oi < optCols.length; oi++) { var ov = row[optCols[oi]]; if (ov !== undefined && ov !== null && String(ov).trim()) opts.push(String(ov).trim()); }
-                    var qObj = {
-                        id: Date.now().toString(36)+i,
-                        category: (cc>=0&&row[cc])?String(row[cc]).trim():'默认分类',
-                        type: inferQuestionType((tc>=0&&row[tc])?String(row[tc]).trim():'', (ac>=0&&row[ac])?String(row[ac]).trim():''),
-                        difficulty: '中等',
-                        question: String(row[qc]).trim(),
-                        answer: row[ac]?String(row[ac]).trim():'',
-                        options: opts,
-                        explanation: (ec>=0&&row[ec])?String(row[ec]).trim():'',
-                        createdAt: new Date().toISOString()
-                    };
-                    if (pc >= 0 && row[pc]) qObj.productCategory = String(row[pc]).trim();
-                    newQuestions.push(qObj);
-                }
-            }
-
-            if (importedCategories && Object.keys(importedCategories).length > 0) {
-                Object.entries(importedCategories).forEach(([k, v]) => {
-                    if (!qb.categories[k]) qb.categories[k] = v;
-                });
-            }
-
-            processUploadedQuestions(qb, newQuestions, (totalAdded, dupCount, qaSkipped) => {
-                let msg = '✅ 成功导入 ' + totalAdded + ' 道题目';
-                if (dupCount > 0) msg += '（' + dupCount + ' 道重复题已处理）';
-                if (qaSkipped > 0) msg += '（跳过 ' + qaSkipped + ' 道问答题）';
-                statusDiv.innerHTML = '<span style="color:#2e7d32;">' + msg + '</span>';
-                overlay.querySelector('#fileInputQB').value = '';
-            });
-        } catch (err) { statusDiv.innerHTML = '<span style="color:#c0392b;">❌ 导入失败：' + err.message + '</span>'; }
-    }
-
-    function addQuestion() {
-        const qb = getQuestionBank();
-        let category = document.getElementById('newQCategory').value;
-        if (category === '__new__') {
-            category = document.getElementById('newQCategoryInput').value.trim();
-            if (!category) { alert('请输入新分类名称'); return; }
-            if (!qb.categories[category]) { const mo = Math.max(0, ...Object.values(qb.categories).map(c => c.order || 0)); qb.categories[category] = { name: category, createdAt: new Date().toISOString(), order: mo + 1 }; }
-        }
-        if (!category) { alert('请选择或新建分类'); return; }
-        if (!qb.categories[category]) { const mo = Math.max(0, ...Object.values(qb.categories).map(c => c.order || 0)); qb.categories[category] = { name: category, createdAt: new Date().toISOString(), order: mo + 1 }; }
-
-        const question = document.getElementById('newQQuestion').value.trim();
-        if (!question) { alert('请输入题目内容'); return; }
-        const answer = document.getElementById('newQAnswer').value.trim();
-        if (!answer) { alert('请输入答案'); return; }
-        const type = document.getElementById('newQType').value;
-        const difficulty = document.getElementById('newQDifficulty').value;
-
-        let options = [];
-        if (type === 'choice' || type === 'multi') {
-            const optText = document.getElementById('newQOptions').value.trim();
-            if (optText) {
-                options = optText.split('\n').map(o => o.replace(/^✓\s*/, '').trim()).filter(o => o);
-            }
-        }
-
-        qb.questions.push({
-            id: Date.now().toString(36) + Math.random().toString(36).substr(2, 5),
-            category, type, difficulty, question, answer, options,
-            screenshot: window._screenshotData || null,
-            createdAt: new Date().toISOString()
-        });
-        saveQuestionBank(qb);
-        logAdminAction('题库', '新建题目', category);
-        window._screenshotData = null;
-        currentQBPage = 1;
-        renderQuestionBank();
-    }
-
-    async function deleteQBQuestion(id) {
-        const qb = getQuestionBank();
-        const delQ = qb.questions.find(q => q.id === id);
-        if (delQ && delQ.category && qbCatKey(delQ.category) !== 'manual') { alert('该题属于源品类，由飞书同步管理，不可删除（改动请直接修改源文档）'); return; }
-        if (!await confirmDelete('该题目')) return;
-        qb.questions = qb.questions.filter(q => q.id !== id);
-        saveQuestionBank(qb);
-        logAdminAction('题库', '删除题目', delQ ? delQ.category : '');
-        renderQuestionBank();
-    }
-
-    async function handleQBFileUpload(e) {
-        const file = e.target.files[0];
-        if (!file) return;
-        try {
-            await loadSheetJS();
-            const qb = getQuestionBank();
-            let newQuestions = [];
-            let importedCategories = {}; // 从JSON导入的分类信息
-
-            if (file.name.endsWith('.json')) {
-                const text = await file.text();
-                const data = JSON.parse(text);
-                if (data.questions && Array.isArray(data.questions)) {
-                    data.questions.forEach(q => {
-                        var nq = {
-                            id: q.id || (Date.now().toString(36) + Math.random().toString(36).substr(2, 5)),
-                            category: q.category || '默认分类',
-                            type: q.type || 'qa',
-                            difficulty: q.difficulty || '中等',
-                            question: q.question || '',
-                            answer: q.answer || '',
-                            options: q.options || [],
-                            explanation: q.explanation || '',
-                            createdAt: q.createdAt || new Date().toISOString()
-                        };
-                        if (q.productCategory) nq.productCategory = q.productCategory;
-                        newQuestions.push(nq);
-                    });
-                }
-                if (data.categories) importedCategories = data.categories;
-            } else if (file.name.endsWith('.csv') || file.name.endsWith('.txt')) {
-                const text = await file.text();
-                const lines = text.split('\n');
-                const isCSV = lines.some(l => l.includes('\t') || l.includes('|'));
-                if (isCSV) {
-                    const nonEmptyLines = lines.filter(l => l.trim());
-                    let startIdx = 0;
-                    if (nonEmptyLines[0] && (nonEmptyLines[0].includes('题目') || nonEmptyLines[0].includes('问题') || nonEmptyLines[0].includes('question'))) startIdx = 1;
-                    for (let i = startIdx; i < nonEmptyLines.length; i++) {
-                        const parts = nonEmptyLines[i].split(/[\t,|]/);
-                        if (parts.length >= 2 && parts[0].trim()) {
-                            newQuestions.push({
-                                id: Date.now().toString(36) + i,
-                                category: parts.length >= 3 ? parts[2].trim() : '默认分类',
-                                type: 'qa', difficulty: '中等',
-                                question: parts[0].trim(), answer: parts[1].trim(),
-                                options: [], createdAt: new Date().toISOString()
-                            });
-                        }
-                    }
-                } else {
-                    let currentCategory = '默认分类';
-                    let currentQuestion = null;
-                    const TYPE_MAP = { '单选': 'choice', '多选': 'multi', '判断': 'judge' };
-                    let questionBuffer = [];
-                    let inQuestion = false;
-
-                    function flushQuestion() {
-                        if (!currentQuestion) return;
-                        var ft = currentQuestion.type || '';
-                        if (ft === 'qa' || !ft) ft = inferQuestionType('', currentQuestion.answer || '');
-                        if (ft === 'qa') { currentQuestion = null; questionBuffer = []; inQuestion = false; return; }
-                        newQuestions.push({
-                            id: Date.now().toString(36) + Math.random().toString(36).substr(2, 5),
-                            category: currentCategory,
-                            type: ft,
-                            difficulty: '中等',
-                            question: currentQuestion.questionText,
-                            answer: currentQuestion.answer || '',
-                            options: currentQuestion.options || [],
-                            explanation: currentQuestion.explanation || '',
-                            createdAt: new Date().toISOString()
-                        });
-                        currentQuestion = null;
-                        questionBuffer = [];
-                        inQuestion = false;
-                    }
-
-                    for (let i = 0; i < lines.length; i++) {
-                        const line = lines[i].trim();
-                        if (!line) {
-                            if (inQuestion && currentQuestion && questionBuffer.length === 0) flushQuestion();
-                            continue;
-                        }
-                        const catMatch = line.match(/^【(.+?)】（?\d*题?）?$/);
-                        if (catMatch && !line.startsWith('答案') && !line.startsWith('解析')) {
-                            if (inQuestion) flushQuestion();
-                            currentCategory = catMatch[1].trim();
-                            continue;
-                        }
-                        if (/^-{4,}$/.test(line) || /^={4,}$/.test(line) || /^[\s\-]{10,}$/.test(line)) continue;
-                        if (i === 0 && (line.includes('题库') || line.includes('判责考试'))) continue;
-                        if (/^共计\s*\d+\s*题/.test(line)) continue;
-                        if (line.startsWith('判定标准') || line.startsWith('检测标准')) continue;
-                        const qMatch = line.match(/^(\d+)\.\s*\[(.+?)\]\s*(.+)$/);
-                        if (qMatch) {
-                            if (inQuestion) flushQuestion();
-                            currentQuestion = {
-                                questionText: qMatch[3].trim(),
-                                type: TYPE_MAP[qMatch[2].trim()] || 'qa',
-                                options: [], answer: '', explanation: ''
-                            };
-                            questionBuffer = []; inQuestion = true;
-                            continue;
-                        }
-                        if (!inQuestion || !currentQuestion) continue;
-                        const optMatch = line.match(/^\s*([A-Z]+)[.．、]\s*(.*)$/);
-                        if (optMatch) {
-                            let optText = optMatch[2].trim();
-                            optText = optText.replace(/^[A-Z]+[.．、]\s*/, '');
-                            currentQuestion.options.push(optText);
-                            questionBuffer.push(line);
-                            continue;
-                        }
-                        const ansMatch = line.match(/^答案[：:]\s*(.+)$/);
-                        if (ansMatch) { currentQuestion.answer = ansMatch[1].trim(); continue; }
-                        const expMatch = line.match(/^解析[：:]\s*(.+)$/);
-                        if (expMatch) { currentQuestion.explanation = expMatch[1].trim(); continue; }
-                        if (inQuestion && currentQuestion) questionBuffer.push(line);
-                    }
-                    if (inQuestion && currentQuestion) flushQuestion();
-                }
-            } else {
-                const data = await file.arrayBuffer();
-                const workbook = XLSX.read(data, { type: 'array' });
-                const sheetName = workbook.SheetNames[0];
-                const rows = XLSX.utils.sheet_to_json(workbook.Sheets[sheetName], { header: 1 });
-                let qCol = 0, aCol = 1, catCol = 2, pCol = -1, tCol = -1, eCol = -1;
-                if (rows[0]) {
-                    const headers = rows[0].map(h => String(h || '').toLowerCase());
-                    const qi = headers.findIndex(h => (h==='题目'||h==='问题'||h==='question') && !h.includes('id'));
-                    if (qi < 0) { const qi2 = headers.findIndex(h => (h.includes('题目')||h.includes('问题')||h.includes('question')) && !h.includes('id')); if (qi2>=0) qCol=qi2; }
-                    else qCol = qi;
-                    const ai = headers.findIndex(h => h.includes('答案') || h.includes('answer'));
-                    const ci = headers.findIndex(h => h.includes('失误类别')||h.includes('分类') || h.includes('category') || h.includes('模块'));
-                    const pi = headers.findIndex(h => h.includes('品类'));
-                    const ti = headers.findIndex(h => h.includes('题型')||h.includes('type'));
-                    const ei = headers.findIndex(h => h.includes('答案解析')||h.includes('解析')||h.includes('explanation'));
-                    if (ai >= 0) aCol = ai;
-                    if (ci >= 0) catCol = ci;
-                    if (pi >= 0) pCol = pi;
-                    if (ti >= 0) tCol = ti;
-                    if (ei >= 0) eCol = ei;
-                }
-                var optCols2 = [];
-                if (rows[0]) {
-                    for (var oci2 = 0; oci2 < rows[0].length; oci2++) {
-                        var oh2 = String(rows[0][oci2]||'').trim();
-                        if (/^[A-Z]$/.test(oh2) && oci2 !== qCol && oci2 !== aCol && oci2 !== catCol && oci2 !== pCol && oci2 !== tCol && oci2 !== eCol) optCols2.push(oci2);
-                    }
-                }
-                for (let i = (rows[0] && rows[0][qCol] && String(rows[0][qCol]).includes('题目') ? 1 : 0); i < rows.length; i++) {
-                    const row = rows[i];
-                    if (!row || !row[qCol]) continue;
-                    var opts2 = [];
-                    for (var oi2 = 0; oi2 < optCols2.length; oi2++) { var ov2 = row[optCols2[oi2]]; if (ov2 !== undefined && ov2 !== null && String(ov2).trim()) opts2.push(String(ov2).trim()); }
-                    var qObj2 = {
-                        id: Date.now().toString(36) + i,
-                        category: (catCol >= 0 && row[catCol]) ? String(row[catCol]).trim() : '默认分类',
-                        type: inferQuestionType((tCol>=0&&row[tCol])?String(row[tCol]).trim():'', (aCol>=0&&row[aCol])?String(row[aCol]).trim():''),
-                        difficulty: '中等',
-                        question: String(row[qCol]).trim(),
-                        answer: row[aCol] ? String(row[aCol]).trim() : '',
-                        options: opts2,
-                        explanation: (eCol>=0&&row[eCol])?String(row[eCol]).trim():'',
-                        createdAt: new Date().toISOString()
-                    };
-                    if (pCol >= 0 && row[pCol]) qObj2.productCategory = String(row[pCol]).trim();
-                    newQuestions.push(qObj2);
-                }
-            }
-
-            // 合并导入的分类信息
-            if (importedCategories && Object.keys(importedCategories).length > 0) {
-                Object.entries(importedCategories).forEach(([k, v]) => {
-                    if (!qb.categories[k]) qb.categories[k] = v;
-                });
-            }
-
-            processUploadedQuestions(qb, newQuestions, (totalAdded, dupCount, qaSkipped) => {
-                let msg = '✅ 成功导入 ' + totalAdded + ' 道题目！';
-                if (dupCount > 0) msg += '\n（' + dupCount + ' 道重复题已根据您的选择处理）';
-                if (qaSkipped > 0) msg += '\n（跳过 ' + qaSkipped + ' 道问答题）';
-                alert(msg);
-                currentQBPage = 1;
-                renderQuestionBank();
-                document.getElementById('qbFileInput').value = '';
-            });
-        } catch (err) { alert('❌ 导入失败：' + err.message); }
-    }
-
     function downloadQuestionBank() {
         const qb = getQuestionBank();
         logAdminAction('题库', '导出题库', (qb.questions||[]).length + '题');
@@ -13816,42 +12917,6 @@ async function importQBFromFeishu() {
         link.download = '题库_' + new Date().toISOString().slice(0,10) + '.xlsx';
         link.href = URL.createObjectURL(blob);
         link.click();
-    }
-
-    async function handleQBFileAdd(e) {
-        const file = e.target.files[0];
-        if (!file) return;
-        const statusDiv = document.getElementById('fileUploadStatusQB');
-        statusDiv.innerHTML = '正在解析...';
-        try {
-            const text = await file.text();
-            const lines = text.split('\n').filter(l => l.trim());
-            let addedCount = 0;
-            const qb = getQuestionBank();
-            let category = document.getElementById('newQCategory').value === '__new__'
-                ? document.getElementById('newQCategoryInput').value.trim()
-                : document.getElementById('newQCategory').value;
-            const finalCat = category || '默认分类';
-            if (!qb.categories[finalCat]) qb.categories[finalCat] = { name: finalCat, createdAt: new Date().toISOString() };
-            for (const line of lines) {
-                if (line.trim()) {
-                    qb.questions.push({
-                        id: Date.now().toString(36) + Math.random().toString(36).substr(2, 5),
-                        category: finalCat, type: 'qa', difficulty: '中等',
-                        question: line.trim(), answer: '待补充',
-                        options: [], createdAt: new Date().toISOString()
-                    });
-                    addedCount++;
-                }
-            }
-            saveQuestionBank(qb);
-            logAdminAction('题库', '批量添加题目', addedCount + '题');
-            statusDiv.innerHTML = '<span style="color:#2e7d32;">✅ 成功添加 ' + addedCount + ' 道题目到分类「' + escapeHtml(finalCat) + '」</span>';
-            document.getElementById('fileInputQB').value = '';
-            setTimeout(() => { currentQBPage = 1; renderQuestionBank(); }, 500);
-        } catch (err) {
-            statusDiv.innerHTML = '<span style="color:#c0392b;">❌ 解析失败：' + err.message + '</span>';
-        }
     }
 
     // ==================== 失误数据分析模块 ====================
@@ -14206,7 +13271,7 @@ async function importQBFromFeishu() {
             const clr = makeGradient(pct, cardMaxPct);
             const topDetails = d.details.slice(0, 5);
             return '<div class="ea-source-card" style="cursor:pointer;background:#f8fafc;border-radius:14px;padding:14px 16px;box-shadow:0 2px 8px rgba(0,0,0,0.06);transition:0.2s;border:1px solid #eef2f6;height:100%;overflow:hidden;" ' +
-                'onclick="openEASourceDetail(\'' + d.key + '\')" ' +
+                'onclick="openEASourceDetail(\'' + escapeJsInAttr(d.key) + '\')" ' +
                 'onmouseover="this.style.boxShadow=\'0 6px 20px rgba(0,0,0,0.12)\'" onmouseout="this.style.boxShadow=\'0 2px 8px rgba(0,0,0,0.06)\'">' +
                 '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;flex-wrap:wrap;gap:4px;">' +
                 '<div style="display:flex;align-items:center;gap:4px;min-width:0;flex-shrink:1;">' +
@@ -14220,7 +13285,7 @@ async function importQBFromFeishu() {
                 '</div></div>' +
                 (topDetails.length > 0 ? '<div style="font-size:0.7rem;color:#64748b;border-top:1px solid #f1f5f9;padding-top:8px;">' +
                     topDetails.map((dt, i) => '<div style="display:flex;justify-content:space-between;margin-bottom:2px;cursor:pointer;padding:1px 4px;border-radius:4px;" ' +
-                        'onclick="event.stopPropagation();openEADetailView(\'' + d.key + '\',' + i + ')" ' +
+                        'onclick="event.stopPropagation();openEADetailView(\'' + escapeJsInAttr(d.key) + '\',' + i + ')" ' +
                         'onmouseover="this.style.background=\'#eef2f6\'" onmouseout="this.style.background=\'transparent\'" title="点击查看详情">' +
                         '<span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;min-width:0;">' + (i+1) + '. ' + escapeHtml(dt.text) + '</span>' +
                         '<span style="flex-shrink:0;margin-left:4px;color:#2a5298;font-size:0.55rem;">🔍</span>' +
@@ -14309,7 +13374,7 @@ async function importQBFromFeishu() {
                 const diff = (c - rvAvg).toFixed(1);
                 const clr = makeGradient(pct, rvMaxPct);
                 const cntClr = makeGradient(c, rvMaxCount);
-                const safeName = escapeHtml(n).replace(/'/g, "\\'");
+                const safeName = escapeJsInAttr(n);
 
                 // 构建趋势迷你图
                 const trend = reviewerTrend[n] || [];
@@ -14407,8 +13472,8 @@ async function importQBFromFeishu() {
                 const cntClr2 = makeGradient(st.count, catMaxCount);
                 const topD = Object.entries(st.details).sort((a, b) => b[1] - a[1])[0];
                 const topR = Object.entries(st.reviewers).sort((a, b) => b[1] - a[1])[0];
-                const safeCat = escapeHtml(cat).replace(/'/g, "\\'");
-                const safeDetail = topD ? escapeHtml(topD[0]).replace(/'/g, "\\'") : '';
+                const safeCat = escapeJsInAttr(cat);
+                const safeDetail = topD ? escapeJsInAttr(topD[0]) : '';
                 return '<tr>' +
                     '<td style="font-weight:600;cursor:pointer;text-decoration:underline;color:#2a5298;" onclick="openCatDetailPopup(\'' + safeCat + '\')">' + escapeHtml(cat) + '</td>' +
                     '<td style="font-weight:700;color:' + cntClr2 + ';">' + st.count + '</td>' +
@@ -14544,7 +13609,7 @@ async function importQBFromFeishu() {
                 '<div style="height:4px;background:#eef2f6;border-radius:2px;flex:1;"><div style="width:' + dbarW + '%;height:100%;background:' + dclr + ';border-radius:2px;"></div></div>' +
                 '<span style="font-size:0.65rem;font-weight:600;color:' + dclr + ';">' + dpct + '%</span></div>' +
                 '</div></div>' +
-                '<button class="action-btn" style="flex-shrink:0;font-size:0.7rem;padding:4px 12px;background:' + card.color + ';color:white;" onclick="event.stopPropagation();openEADetailView(\'' + cardKey + '\', ' + i + ')">查看详细 ▸</button>' +
+                '<button class="action-btn" style="flex-shrink:0;font-size:0.7rem;padding:4px 12px;background:' + card.color + ';color:white;" onclick="event.stopPropagation();openEADetailView(\'' + escapeJsInAttr(cardKey) + '\', ' + i + ')">查看详细 ▸</button>' +
                 '</div>';
         };
 
@@ -14639,7 +13704,7 @@ async function importQBFromFeishu() {
                     (r.qcCodes.length > 0 ? r.qcCodes.map(qc =>
                         '<div style="display:flex;align-items:center;gap:4px;margin-bottom:2px;">' +
                         '<code style="background:#eef2f6;padding:2px 6px;border-radius:4px;font-size:0.7rem;">' + escapeHtml(qc) + '</code>' +
-                        '<button class="action-btn" style="font-size:0.55rem;padding:1px 5px;" onclick="event.stopPropagation();copyQCCode(\'' + escapeHtml(qc).replace(/'/g, "\\'") + '\', this)">📋</button></div>'
+                        '<button class="action-btn" style="font-size:0.55rem;padding:1px 5px;" onclick="event.stopPropagation();copyQCCode(\'' + escapeJsInAttr(qc) + '\', this)">📋</button></div>'
                     ).join('') : '<span style="font-size:0.65rem;color:#cbd5e1;">无质检码</span>') +
                     '</div></div></div>';
             }).join('') +
@@ -14713,7 +13778,7 @@ async function importQBFromFeishu() {
                     (r.qcCodes.length > 0 ? r.qcCodes.map(qc =>
                         '<div style="display:flex;align-items:center;gap:4px;margin-bottom:2px;">' +
                         '<code style="background:#eef2f6;padding:2px 6px;border-radius:4px;font-size:0.7rem;">' + escapeHtml(qc) + '</code>' +
-                        '<button class="action-btn" style="font-size:0.55rem;padding:1px 5px;" onclick="event.stopPropagation();copyQCCode(\'' + escapeHtml(qc).replace(/'/g, "\\'") + '\', this)">📋</button></div>'
+                        '<button class="action-btn" style="font-size:0.55rem;padding:1px 5px;" onclick="event.stopPropagation();copyQCCode(\'' + escapeJsInAttr(qc) + '\', this)">📋</button></div>'
                     ).join('') : '<span style="font-size:0.65rem;color:#cbd5e1;">无质检码</span>') +
                     '</div></div></div>';
             }).join('') +
@@ -14884,7 +13949,7 @@ async function importQBFromFeishu() {
                     d.details.slice(0, 5).map((dt, j) => {
                         const dtKey = d.cardId + '_' + j;
                         return '<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:2px;gap:4px;cursor:pointer;padding:2px 4px;border-radius:4px;" ' +
-                            'onclick="event.stopPropagation();openRSDetailItem(\'' + dtKey + '\')" ' +
+                            'onclick="event.stopPropagation();openRSDetailItem(\'' + escapeJsInAttr(dtKey) + '\')" ' +
                             'onmouseover="this.style.background=\'#eef2f6\'" onmouseout="this.style.background=\'transparent\'" title="点击查看详情">' +
                             '<span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + (j+1) + '. ' + escapeHtml(dt.text) + '</span>' +
                             (dt.count > 1 ? '<span style="flex-shrink:0;font-weight:600;color:#c0392b;">&times;' + dt.count + '</span>' : '') +
@@ -14948,7 +14013,7 @@ async function importQBFromFeishu() {
                 return '<circle cx="' + x.toFixed(1) + '" cy="' + y.toFixed(1) + '" r="3" fill="' + clr + '"/>';
             }).join('') + '</svg>';
 
-        const safeName = escapeHtml(reviewerName).replace(/'/g, "\\'");
+        const safeName = escapeJsInAttr(reviewerName);
 
         const old = document.getElementById('trendDetailOverlay');
         if (old) old.remove();
@@ -15303,7 +14368,7 @@ async function importQBFromFeishu() {
                     (rd.qcCodes.length > 0 ? rd.qcCodes.map(qc =>
                         '<div style="display:flex;align-items:center;gap:4px;margin-bottom:2px;">' +
                         '<code style="background:#eef2f6;padding:2px 6px;border-radius:4px;font-size:0.7rem;">' + escapeHtml(qc) + '</code>' +
-                        '<button class="action-btn" style="font-size:0.55rem;padding:1px 5px;" onclick="event.stopPropagation();copyQCCode(\'' + escapeHtml(qc).replace(/'/g, "\\'") + '\', this)">📋</button></div>'
+                        '<button class="action-btn" style="font-size:0.55rem;padding:1px 5px;" onclick="event.stopPropagation();copyQCCode(\'' + escapeJsInAttr(qc) + '\', this)">📋</button></div>'
                     ).join('') : '<span style="font-size:0.65rem;color:#cbd5e1;">无质检码</span>') +
                     '</div></div></div>';
             }).join('') +
@@ -15383,7 +14448,7 @@ async function importQBFromFeishu() {
                     (rd.qcCodes.length > 0 ? rd.qcCodes.map(qc =>
                         '<div style="display:flex;align-items:center;gap:4px;margin-bottom:2px;">' +
                         '<code style="background:#eef2f6;padding:2px 6px;border-radius:4px;font-size:0.7rem;">' + escapeHtml(qc) + '</code>' +
-                        '<button class="action-btn" style="font-size:0.55rem;padding:1px 5px;" onclick="event.stopPropagation();copyQCCode(\'' + escapeHtml(qc).replace(/'/g, "\\'") + '\', this)">📋</button></div>'
+                        '<button class="action-btn" style="font-size:0.55rem;padding:1px 5px;" onclick="event.stopPropagation();copyQCCode(\'' + escapeJsInAttr(qc) + '\', this)">📋</button></div>'
                     ).join('') : '<span style="font-size:0.65rem;color:#cbd5e1;">无质检码</span>') +
                     '</div></div></div>';
             }).join('') +
@@ -15561,7 +14626,7 @@ async function importQBFromFeishu() {
                     <div style="flex:1;min-width:220px;background:#f8fafc;border-radius:14px;padding:16px;text-align:center;border:1px solid #eef2f6;">
                         <div style="font-weight:700;color:#1f3a6b;margin-bottom:8px;">🔗 方式一：网页链接</div>
                         <div style="background:white;border:1px solid #eef2f6;border-radius:8px;padding:8px;font-size:0.7rem;word-break:break-all;color:#5e6f8d;margin-bottom:8px;">${examUrl}</div>
-                        <button class="action-btn" style="font-size:0.75rem;" onclick="navigator.clipboard.writeText('${examUrl.replace(/'/g, "\\'")}');this.textContent='✅ 已复制';setTimeout(()=>{this.textContent='📋 复制链接'},1500)">📋 复制链接</button>
+                        <button class="action-btn" style="font-size:0.75rem;" onclick="navigator.clipboard.writeText('${escapeJsInAttr(examUrl)}');this.textContent='✅ 已复制';setTimeout(()=>{this.textContent='📋 复制链接'},1500)">📋 复制链接</button>
                     </div>
                     <div style="flex:1;min-width:220px;background:#f8fafc;border-radius:14px;padding:16px;text-align:center;border:1px solid #eef2f6;">
                         <div style="font-weight:700;color:#1f3a6b;margin-bottom:8px;">📱 方式二：扫码进入</div>
@@ -15670,7 +14735,7 @@ async function importQBFromFeishu() {
                 var subColor = hasCover ? 'color:rgba(255,255,255,0.8);' : 'color:#5e6f8d;';
                 var hintColor = hasCover ? 'color:rgba(255,255,255,0.6);' : 'color:#94a3b8;';
                 cardsHtml += '<div class="stat-card" style="cursor:' + (hasUrl ? 'pointer' : 'default') + ';opacity:' + (hasUrl ? '1' : '0.5') + ';padding:0;overflow:hidden;position:relative;' + cardBg + '"' +
-                    (hasUrl ? ' onclick="window._kbOpen(\'' + kb.id + '\')"' : '') + '>' +
+                    (hasUrl ? ' onclick="window._kbOpen(\'' + escapeJsInAttr(kb.id) + '\')"' : '') + '>' +
                     '<div style="position:absolute;inset:0;' + overlay + '"></div>' +
                     '<div style="position:relative;z-index:1;padding:16px;min-height:180px;display:flex;flex-direction:column;justify-content:flex-end;">' +
                     (!hasCover ? '<div style="font-size:3rem;text-align:center;margin-bottom:8px;">📖</div>' : '') +
@@ -15678,8 +14743,8 @@ async function importQBFromFeishu() {
                     '<div style="font-size:0.8rem;margin-bottom:4px;' + subColor + '">' + escapeHtml(kb.desc || '') + '</div>' +
                     '<div style="font-size:0.7rem;' + hintColor + '">' + (hasUrl ? '点击查看' : '未配置链接') + '</div>' +
                     '<div style="display:flex;gap:4px;margin-top:8px;justify-content:flex-end;">' +
-                    '<button class="action-btn admin-only" onclick="event.stopPropagation();window._kbEdit(\'' + kb.id + '\')" style="font-size:0.65rem;">✏️</button>' +
-                    '<button class="action-btn danger admin-only" onclick="event.stopPropagation();window._kbDelete(\'' + kb.id + '\')" style="font-size:0.65rem;">🗑️</button>' +
+                    '<button class="action-btn admin-only" onclick="event.stopPropagation();window._kbEdit(\'' + escapeJsInAttr(kb.id) + '\')" style="font-size:0.65rem;">✏️</button>' +
+                    '<button class="action-btn danger admin-only" onclick="event.stopPropagation();window._kbDelete(\'' + escapeJsInAttr(kb.id) + '\')" style="font-size:0.65rem;">🗑️</button>' +
                     '</div></div></div>';
             });
             cardsHtml += '</div>';
@@ -15981,7 +15046,7 @@ async function importQBFromFeishu() {
     function renderSubGroupCover(g, colors) {
         var itemsWithLink = g.items.filter(function(it){return !!it.link;}).length;
         var info = itemsWithLink + '/' + g.items.length + ' 有链接';
-        return '<div onclick="renderGroupDetail(\'' + g._id + '\')" style="cursor:pointer;border-radius:16px;overflow:hidden;background:linear-gradient(135deg,' + colors[0] + ',' + colors[1] + ');box-shadow:0 4px 20px rgba(0,0,0,0.1);transition:transform 0.2s;" onmouseover="this.style.transform=\'translateY(-2px)\';" onmouseout="this.style.transform=\'translateY(0)\';">' +
+        return '<div onclick="renderGroupDetail(\'' + escapeJsInAttr(g._id) + '\')" style="cursor:pointer;border-radius:16px;overflow:hidden;background:linear-gradient(135deg,' + colors[0] + ',' + colors[1] + ');box-shadow:0 4px 20px rgba(0,0,0,0.1);transition:transform 0.2s;" onmouseover="this.style.transform=\'translateY(-2px)\';" onmouseout="this.style.transform=\'translateY(0)\';">' +
             '<div style="padding:24px 18px;text-align:center;color:white;">' +
                 '<div style="font-size:2.2rem;margin-bottom:8px;">📂</div>' +
                 '<div style="font-weight:700;font-size:0.9rem;text-shadow:0 1px 2px rgba(0,0,0,0.15);">' + escapeHtml(g.title) + '</div>' +
@@ -17675,7 +16740,7 @@ async function importQBFromFeishu() {
             '<div class="modal-header" style="text-align:center;position:relative;">' +
                 '<span style="float:left;">🏆 '+periodLabel+'（全部初审）</span>' +
                 '<span id="frDateDisplay" onclick="var d=document.getElementById(\'frDropdown\');d.style.display=d.style.display==\'none\'?\'block\':\'none\';event.stopPropagation();" style="font-size:1.1rem;font-weight:700;cursor:pointer;text-decoration:underline;position:relative;">📅 '+curRange+'<div id="frDropdown" style="display:none;position:absolute;top:100%;left:50%;transform:translateX(-50%);background:white;border:1px solid #e2e8f0;border-radius:10px;box-shadow:0 4px 12px rgba(0,0,0,0.15);z-index:10;min-width:200px;max-height:200px;overflow-y:auto;">'+curOptsHtml+'</div></span>' +
-                (periodLabel.indexOf('月度')>=0 ? '<button onclick="showHistoryMonthRanking(\'' + (highlightName||'').replace(/'/g,"\\'") + '\')" style="position:absolute;right:48px;top:50%;transform:translateY(-50%);background:rgba(255,255,255,0.2);color:white;border:1px solid rgba(255,255,255,0.3);padding:4px 12px;border-radius:14px;cursor:pointer;font-size:0.75rem;">📆 历史月度排名</button>' : '') +
+                (periodLabel.indexOf('月度')>=0 ? '<button onclick="showHistoryMonthRanking(\'' + escapeJsInAttr(highlightName||'') + '\')" style="position:absolute;right:48px;top:50%;transform:translateY(-50%);background:rgba(255,255,255,0.2);color:white;border:1px solid rgba(255,255,255,0.3);padding:4px 12px;border-radius:14px;cursor:pointer;font-size:0.75rem;">📆 历史月度排名</button>' : '') +
                 '<button class="modal-close-btn" id="frClose" style="float:right;">✕</button>' +
             '</div>' +
             '<div class="modal-body" style="max-height:70vh;display:flex;flex-direction:column;">' +
@@ -17895,7 +16960,7 @@ async function importQBFromFeishu() {
                         }
                         var rank = Object.keys(seenScores).length + 1;
                         var rankColor = rank <= 3 ? '#c0392b' : (rank <= 10 ? '#e67e22' : '#5e6f8d');
-                        rankHtml += '<div onclick="showFullRankingPopup('+pi+',\''+name.replace(/'/g,"\\'")+'\')" style="flex:1;text-align:center;padding:8px 6px;background:#f8fafc;border-radius:10px;border:1px solid #eef2f6;cursor:pointer;" title="点击查看完整排名">' +
+                        rankHtml += '<div onclick="showFullRankingPopup('+pi+',\''+escapeJsInAttr(name)+'\')" style="flex:1;text-align:center;padding:8px 6px;background:#f8fafc;border-radius:10px;border:1px solid #eef2f6;cursor:pointer;" title="点击查看完整排名">' +
                             '<div style="font-size:0.6rem;color:#94a3b8;">'+p.label+'</div>' +
                             '<div style="font-weight:700;font-size:0.85rem;color:'+rankColor+';">'+(rank>0?'第 '+rank+' 名':'无数据')+'</div>' +
                             '<div style="font-size:0.6rem;color:#5e6f8d;">❤️'+(personData.health||100)+'分 / '+personData.total+'次</div></div>';
@@ -17949,7 +17014,7 @@ async function importQBFromFeishu() {
                         return wCats.map(function(wc){
                             var wpct = wk.count > 0 ? Math.round(wc[1]/wk.count*100) : 0;
                             var isSel = selFilter === wc[0];
-                            return '<span onclick=\"window._personSelectCat(\''+escapeHtml(wc[0]).replace(/'/g,'\\\'')+'\')\" style=\"cursor:pointer;background:'+(isSel?'#dbeafe':'#fff')+';border:1px solid '+(isSel?'#2563eb':'#e2e8f0')+';border-radius:16px;padding:4px 12px;font-size:0.7rem;\">'+escapeHtml(wc[0])+' <b style=\"color:#c0392b;\">'+wc[1]+'次</b> <span style=\"color:#5e6f8d;\">('+wpct+'%)</span></span>';
+                            return '<span onclick=\"window._personSelectCat(\''+escapeJsInAttr(wc[0])+'\')\" style=\"cursor:pointer;background:'+(isSel?'#dbeafe':'#fff')+';border:1px solid '+(isSel?'#2563eb':'#e2e8f0')+';border-radius:16px;padding:4px 12px;font-size:0.7rem;\">'+escapeHtml(wc[0])+' <b style=\"color:#c0392b;\">'+wc[1]+'次</b> <span style=\"color:#5e6f8d;\">('+wpct+'%)</span></span>';
                         }).join('');
                     }
                     // 渲染周柱
@@ -18223,7 +17288,8 @@ async function importQBFromFeishu() {
     // 主题词出卷主流程：范围过滤 → 主题词配额 → 边界选题 → 随机补齐；返回 {selected, topicSummary}
     function generateExamByTopics(errors, opts) {
         opts = opts || {};
-        var qb = getQuestionBank();
+        // 2026-09-13 热读点：只读选题，选出的题目引用只被 .filter() 后放进 examRecord ★禁止修改返回值★
+        var qb = qbRead();
         var allQuestions = (qb.questions || []).filter(function(q) { return !isQuestionReported(q.id); });
         if (allQuestions.length === 0) { showAlert('题库为空，请先同步源题库', '⚠️'); return null; }
         // 出题范围品类（catKeys = 品类 key 数组；空数组/null = 全部）
@@ -18286,7 +17352,8 @@ async function importQBFromFeishu() {
     }
     // 出卷品类范围选择弹窗（8 类复选，默认全选）
     function chooseExamCategories(callback) {
-        var qb = getQuestionBank();
+        // 2026-09-13 热读点：只读统计各品类题数 ★禁止修改返回值★
+        var qb = qbRead();
         var cats = Object.keys(qb.categories).sort(function(a, b) { return (qb.categories[a].order || 0) - (qb.categories[b].order || 0); });
         var items = cats.map(function(c) {
             var count = (qb.questions || []).filter(function(q) { return q.category === c; }).length;
@@ -18350,7 +17417,7 @@ async function importQBFromFeishu() {
                 '<div style="background:#f8fafc;border-radius:14px;padding:14px;border:1px solid #eef2f6;text-align:center;">' +
                     '<div style="font-weight:700;color:#1f3a6b;margin-bottom:8px;font-size:0.85rem;">🔗 考试链接</div>' +
                     '<div style="background:white;border:1px solid #eef2f6;border-radius:8px;padding:8px;font-size:0.65rem;word-break:break-all;color:#5e6f8d;margin-bottom:6px;">' + DEPLOYED_URL + '?exam=' + examCode + '</div>' +
-                    '<button onclick="navigator.clipboard.writeText(\'' + examUrl.replace(/'/g, "\\'") + '\');this.textContent=\'✅ 已复制\';setTimeout(function(){this.textContent=\'📋 复制链接\'}.bind(this),1500)" style="background:#2a5298;color:white;border:none;padding:6px 14px;border-radius:16px;cursor:pointer;font-size:0.75rem;">📋 复制链接</button>' +
+                    '<button onclick="navigator.clipboard.writeText(\'' + escapeJsInAttr(examUrl) + '\');this.textContent=\'✅ 已复制\';setTimeout(function(){this.textContent=\'📋 复制链接\'}.bind(this),1500)" style="background:#2a5298;color:white;border:none;padding:6px 14px;border-radius:16px;cursor:pointer;font-size:0.75rem;">📋 复制链接</button>' +
                 '</div>' +
                 '<div style="display:flex;gap:8px;margin-top:12px;">' +
                     '<button class="push-exam-btn admin-only" style="flex:1;background:#e67e22;color:white;border:none;padding:10px 16px;border-radius:20px;cursor:pointer;font-size:0.85rem;font-weight:600;">📤 飞书推送</button>' +
@@ -18446,7 +17513,7 @@ async function importQBFromFeishu() {
                     '<div style="background:#f8fafc;border-radius:14px;padding:14px;border:1px solid #eef2f6;text-align:center;">' +
                         '<div style="font-weight:700;color:#1f3a6b;margin-bottom:8px;font-size:0.85rem;">🔗 考试链接</div>' +
                         '<div style="background:white;border:1px solid #eef2f6;border-radius:8px;padding:8px;font-size:0.65rem;word-break:break-all;color:#5e6f8d;margin-bottom:6px;">' + DEPLOYED_URL + '?exam=' + examCode + '</div>' +
-                        '<button onclick="navigator.clipboard.writeText(\'' + examUrl.replace(/'/g, "\\'") + '\');this.textContent=\'✅ 已复制\';setTimeout(function(){this.textContent=\'📋 复制链接\'}.bind(this),1500)" style="background:#2a5298;color:white;border:none;padding:6px 14px;border-radius:16px;cursor:pointer;font-size:0.75rem;">📋 复制链接</button>' +
+                        '<button onclick="navigator.clipboard.writeText(\'' + escapeJsInAttr(examUrl) + '\');this.textContent=\'✅ 已复制\';setTimeout(function(){this.textContent=\'📋 复制链接\'}.bind(this),1500)" style="background:#2a5298;color:white;border:none;padding:6px 14px;border-radius:16px;cursor:pointer;font-size:0.75rem;">📋 复制链接</button>' +
                     '</div>' +
                     '<div style="display:flex;gap:8px;margin-top:12px;">' +
                         '<button class="push-exam-btn admin-only" style="flex:1;background:#e67e22;color:white;border:none;padding:10px 16px;border-radius:20px;cursor:pointer;font-size:0.85rem;font-weight:600;">📤 飞书推送</button>' +
@@ -18760,7 +17827,7 @@ async function importQBFromFeishu() {
             return keys.map(function(k) {
                 var ratio = keys.length <= 3 ? 0 : Math.round((keys.indexOf(k) / (keys.length - 1)) * 2);
                 var color = keys.length <= 3 ? '#f1f5f9' : 'hsl(' + [0, 30, 50][ratio] + ', 55%, 72%)';
-                return '<span class="clickable-tag" onclick="showErrorDetailPopup(\'' + typePrefix + '\',\'' + k.replace(/'/g, "\\'") + '\')" style="background:' + color + ';color:#2d3748;padding:2px 10px;border-radius:10px;font-size:0.72rem;margin:2px;cursor:pointer;display:inline-block;font-weight:500;white-space:nowrap;" title="点击查看详情">' + escapeHtml(k) + ' (' + stats[k] + ')</span>';
+                return '<span class="clickable-tag" onclick="showErrorDetailPopup(\'' + typePrefix + '\',\'' + escapeJsInAttr(k) + '\')" style="background:' + color + ';color:#2d3748;padding:2px 10px;border-radius:10px;font-size:0.72rem;margin:2px;cursor:pointer;display:inline-block;font-weight:500;white-space:nowrap;" title="点击查看详情">' + escapeHtml(k) + ' (' + stats[k] + ')</span>';
             }).join('');
         }
         el = document.getElementById('topCatsContainer'); if (el) el.innerHTML = simpleTags(catKeys, cats, 'category');
@@ -18802,7 +17869,7 @@ async function importQBFromFeishu() {
             var lightIcon = r.count > thP.yellowMax ? '🔴' : (r.count > thP.greenMax ? '🟡' : '🟢');
             var siteHtml = ' <span style="color:#94a3b8;font-size:0.65rem;">（' + escapeHtml(r.sites) + '）</span>';
             return '<tr class="portrait-row" style="border-bottom:1px solid #f1f5f9;">' +
-                '<td style="text-align:center;padding:6px 4px;"><span style="font-size:0.7rem;">' + lightIcon + '</span> <span class="clickable-tag" onclick="showErrorDetailPopup(\'reviewer\',\'' + r.name.replace(/'/g, "\\'") + '\')" style="font-weight:600;color:#2d3748;cursor:pointer;font-size:0.7rem;" title="点击查看详情">' + escapeHtml(r.name) + siteHtml + '</span></td>' +
+                '<td style="text-align:center;padding:6px 4px;"><span style="font-size:0.7rem;">' + lightIcon + '</span> <span class="clickable-tag" onclick="showErrorDetailPopup(\'reviewer\',\'' + escapeJsInAttr(r.name) + '\')" style="font-weight:600;color:#2d3748;cursor:pointer;font-size:0.7rem;" title="点击查看详情">' + escapeHtml(r.name) + siteHtml + '</span></td>' +
                 '<td style="text-align:center;padding:6px 4px;font-size:0.7rem;color:#5e6f8d;">' + r.count + '次</td>' +
                 '<td style="text-align:center;padding:6px 4px;font-size:0.7rem;color:#5e6f8d;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:120px;" title="' + escapeHtml(r.cats || '-') + '">' + (r.cats || '-') + '</td>' +
                 (pageHasActions ? '<td style="text-align:center;padding:6px 4px;white-space:nowrap;">' + (r.actions||'') + '</td>' : '') +
@@ -18902,7 +17969,7 @@ async function importQBFromFeishu() {
                     outsideList.forEach(function(p) {
                         var cats = Object.keys(p.cats).sort(function(a,b){ return p.cats[b] - p.cats[a]; }).slice(0,3).map(function(c){ return c + '(' + p.cats[c] + ')'; }).join(' / ');
                         var r = document.createElement('tr'); r.className = 'search-extra'; r.style.background = '#fffdf0';
-                        r.innerHTML = '<td style="padding:6px 4px;font-size:0.7rem;"><span class="clickable-tag" onclick="showErrorDetailPopup(\'reviewer\',\'' + p.name.replace(/'/g,"\\'") + '\')" style="font-weight:600;color:#2d3748;cursor:pointer;font-size:0.7rem;" title="点击查看详情">' + escapeHtml(p.name) + '</span> <span style="color:#94a3b8;font-size:0.65rem;">（' + escapeHtml(p.site) + '）</span></td>' +
+                        r.innerHTML = '<td style="padding:6px 4px;font-size:0.7rem;"><span class="clickable-tag" onclick="showErrorDetailPopup(\'reviewer\',\'' + escapeJsInAttr(p.name) + '\')" style="font-weight:600;color:#2d3748;cursor:pointer;font-size:0.7rem;" title="点击查看详情">' + escapeHtml(p.name) + '</span> <span style="color:#94a3b8;font-size:0.65rem;">（' + escapeHtml(p.site) + '）</span></td>' +
                             '<td style="text-align:center;padding:6px 4px;font-size:0.7rem;color:#5e6f8d;">' + p.count + '次</td>' +
                             '<td style="text-align:center;padding:6px 4px;font-size:0.7rem;color:#5e6f8d;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:120px;" title="' + escapeHtml(cats||'-') + '">' + (cats||'-') + '</td><td></td>';
                         tbody.appendChild(r);
@@ -20128,7 +19195,7 @@ async function importQBFromFeishu() {
                     color = 'hsl(' + [0, 30, 50][ratio3] + ', 55%, 72%)';
                 }
                 var txtCol = '#2d3748';
-                return '<span class="clickable-tag" onclick="showErrorDetailPopup(\'' + typePrefix + '\',\'' + k.replace(/'/g, "\\'") + '\')" style="background:' + color + ';color:' + txtCol + ';padding:2px 10px;border-radius:10px;font-size:0.72rem;margin:2px;cursor:pointer;display:inline-block;font-weight:500;white-space:nowrap;" title="点击查看详情">' + escapeHtml(k) + ' (' + stats[k] + ')</span>';
+                return '<span class="clickable-tag" onclick="showErrorDetailPopup(\'' + typePrefix + '\',\'' + escapeJsInAttr(k) + '\')" style="background:' + color + ';color:' + txtCol + ';padding:2px 10px;border-radius:10px;font-size:0.72rem;margin:2px;cursor:pointer;display:inline-block;font-weight:500;white-space:nowrap;" title="点击查看详情">' + escapeHtml(k) + ' (' + stats[k] + ')</span>';
             }).join('');
             var containerId = 'topTags_' + typePrefix;
             // 折叠时：容器内右侧浮一个展开按钮；展开时：容器下方居中显示收起按钮
@@ -20197,7 +19264,7 @@ async function importQBFromFeishu() {
                 var txtCol = '#2d3748';
                 var isA = f[filterKey] === k;
                 var st = isA ? '' : ('background:' + color + ';color:' + txtCol + ';border-color:' + color + ';');
-                html += '<button class="filter-btn' + (isA ? ' active' : '') + '" style="' + st + '" onclick="errorDashboardFilter.' + filterKey + '=\'' + k.replace(/'/g, "\\'") + '\';errorDashboardPage=1;window._tablePage=1;renderErrorDashboardContent();">' + escapeHtml(k) + ' (' + cnt + ')</button>';
+                html += '<button class="filter-btn' + (isA ? ' active' : '') + '" style="' + st + '" onclick="errorDashboardFilter.' + filterKey + '=\'' + escapeJsInAttr(k) + '\';errorDashboardPage=1;window._tablePage=1;renderErrorDashboardContent();">' + escapeHtml(k) + ' (' + cnt + ')</button>';
             });
             if (list.length > defaultN) {
                 html += ' <span onclick="window[\'_ef_' + prefix + '\']=' + (!showAll) + ';renderErrorDashboardContent();" style="color:#2a5298;cursor:pointer;font-size:0.75rem;text-decoration:underline;white-space:nowrap;">' + (showAll ? '收起▲' : '展开全部(' + list.length + ')') + '</span>';
@@ -20289,7 +19356,7 @@ async function importQBFromFeishu() {
                         var btns = '';
                         var thA = getLightThresholds();
                         if (thA.actions) {
-                            var safeName = name.replace(/'/g, '');
+                            var safeName = escapeJsInAttr(name);
                             if (count >= thA.examMin) btns += '<button class=\"admin-only\" onclick=\"generatePrecisionExam(\'' + safeName + '\')\" style=\"background:#c0392b;color:white;border:none;padding:2px 8px;border-radius:8px;cursor:pointer;font-size:0.65rem;white-space:nowrap;\">📝 出卷</button>';
                             if (count >= thA.learnMin) btns += '<button class=\"admin-only\" onclick=\"navigateToLearningForPerson(\'' + safeName + '\')\" style=\"background:#e67e22;color:white;border:none;padding:2px 8px;border-radius:8px;cursor:pointer;font-size:0.65rem;white-space:nowrap;margin-left:3px;\">🗺️ 学习</button>';
                             if (count >= thA.trainMin) btns += '<button class=\"admin-only\" onclick=\"generatePrecisionTraining(\'' + safeName + '\')\" style=\"background:#8e44ad;color:white;border:none;padding:2px 8px;border-radius:8px;cursor:pointer;font-size:0.65rem;white-space:nowrap;margin-left:3px;\">📖 培训</button>';
@@ -20324,7 +19391,7 @@ async function importQBFromFeishu() {
                         var lightIcon = r.count > thP.yellowMax ? '🔴' : (r.count > thP.greenMax ? '🟡' : '🟢');
                         var siteHtml = ' <span style="color:#94a3b8;font-size:0.65rem;">（' + escapeHtml(r.sites) + '）</span>';
                         return '<tr class="portrait-row" style="border-bottom:1px solid #f1f5f9;">' +
-                            '<td style="text-align:center;padding:6px 4px;"><span style="font-size:0.7rem;">' + lightIcon + '</span> <span class="clickable-tag" onclick="showErrorDetailPopup(\'reviewer\',\'' + r.name.replace(/'/g, "\\'") + '\')" style="font-weight:600;color:#2d3748;cursor:pointer;font-size:0.7rem;" title="点击查看详情">' + escapeHtml(r.name) + siteHtml + '</span></td>' +
+                            '<td style="text-align:center;padding:6px 4px;"><span style="font-size:0.7rem;">' + lightIcon + '</span> <span class="clickable-tag" onclick="showErrorDetailPopup(\'reviewer\',\'' + escapeJsInAttr(r.name) + '\')" style="font-weight:600;color:#2d3748;cursor:pointer;font-size:0.7rem;" title="点击查看详情">' + escapeHtml(r.name) + siteHtml + '</span></td>' +
                             '<td style="text-align:center;padding:6px 4px;font-size:0.7rem;color:#5e6f8d;">' + r.count + '次</td>' +
                             '<td style="text-align:center;padding:6px 4px;font-size:0.7rem;color:#5e6f8d;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:120px;" title="' + escapeHtml(r.cats || '-') + '">' + (r.cats || '-') + '</td>' +
                             (pageHasActions ? '<td style="text-align:center;padding:6px 4px;white-space:nowrap;">' + (r.actions||'') + '</td>' : '') +
@@ -20915,7 +19982,7 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
         }
         list.innerHTML = '<table style="width:100%;border-collapse:collapse;"><thead><tr><th style="text-align:left;padding:8px;font-size:0.8rem;color:#5e6f8d;">姓名</th><th style="text-align:left;padding:8px;font-size:0.8rem;color:#5e6f8d;">离职日期</th><th style="text-align:right;padding:8px;font-size:0.8rem;color:#5e6f8d;">操作</th></tr></thead><tbody>' +
             entries.map(function(e){
-                return '<tr style="border-bottom:1px solid #eef2f6;"><td style="padding:8px;font-weight:600;">' + escapeHtml(e[0]) + '</td><td style="padding:8px;color:#5e6f8d;">' + e[1] + '</td><td style="padding:8px;text-align:right;"><button onclick="removeDepartedReviewer(\'' + e[0].replace(/'/g, "\\'") + '\')" style="background:#ffedea;color:#c0392b;border:none;padding:4px 12px;border-radius:20px;cursor:pointer;font-size:0.75rem;">↩ 恢复</button></td></tr>';
+                return '<tr style="border-bottom:1px solid #eef2f6;"><td style="padding:8px;font-weight:600;">' + escapeHtml(e[0]) + '</td><td style="padding:8px;color:#5e6f8d;">' + e[1] + '</td><td style="padding:8px;text-align:right;"><button onclick="removeDepartedReviewer(\'' + escapeJsInAttr(e[0]) + '\')" style="background:#ffedea;color:#c0392b;border:none;padding:4px 12px;border-radius:20px;cursor:pointer;font-size:0.75rem;">↩ 恢复</button></td></tr>';
             }).join('') +
             '</tbody></table>';
     }
@@ -21190,7 +20257,7 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
             area.innerHTML = us.map(function(u) {
                 return '<span style="background:#eef2ff;padding:4px 10px;border-radius:14px;font-size:0.75rem;display:flex;align-items:center;gap:4px;">' +
                     escapeHtml(u.name) + ' <span style="color:#94a3b8;">' + escapeHtml(u.email || '') + '</span>' +
-                    '<span onclick="event.stopPropagation();var s=this.closest(\'.modal-overlay\');var uu=s._fpSelected||[];uu=uu.filter(function(x){return x.name!==\'' + u.name.replace(/'/g,"\\'") + '\';});s._fpSelected=uu;window.renderFeishuSelected(s);" style="cursor:pointer;color:#c0392b;">✕</span></span>';
+                    '<span onclick="event.stopPropagation();var s=this.closest(\'.modal-overlay\');var uu=s._fpSelected||[];uu=uu.filter(function(x){return x.name!==\'' + escapeJsInAttr(u.name) + '\';});s._fpSelected=uu;window.renderFeishuSelected(s);" style="cursor:pointer;color:#c0392b;">✕</span></span>';
             }).join('');
         };
         function updateEmailCount() {
@@ -21543,6 +20610,26 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
     let currentExamId = null;
     let currentExamAnswers = {};
 
+    // 2026-09-13 联动修复：倒计时句柄与「到点已触发」标志必须是模块级变量。
+    //   原实现把句柄挂在 exam._timerInterval 上，而 exam 来自 getExamHistory() ——
+    //   该函数每次调用都返回全新 JSON.parse 的对象，挂上去的句柄谁也拿不回来。后果：
+    //     ① updateTimerDisplay 到点时 clearInterval(exam._timerInterval) 清的是 undefined → 定时器继续跑
+    //     ② submitExam 里的同一句同样是空操作 → 提交后计时器仍在每秒跑
+    //     ③ 取消/离开考试页后计时器不停 → 到点后照旧调 submitExam()，而它读的是全局 currentExamId
+    //        → 会把「当前这一场」（可能已是另一场新考试）自动交掉
+    //     ④ 更要命的是「读起来像是对的」：exam._timerInterval 看着像个存活的句柄，实际每次都是
+    //        写进一个即将被丢弃的临时对象 —— 三处 clearInterval 全都是安慰剂。
+    //   改为模块级句柄后，三处清理调用的是同一个真实句柄。
+    let _examTimerHandle = null;
+    let _examSubmitted = false;
+    function _examTimerStop() {
+        if (_examTimerHandle) { clearInterval(_examTimerHandle); _examTimerHandle = null; }
+    }
+    function _examTimerReset() {
+        _examTimerStop();
+        _examSubmitted = false;
+    }
+
     // 独立考试模式（扫码/链接直达，不显示管理后台）
     async function startStandaloneExam(examCode) {
         var history = getExamHistory();
@@ -21554,9 +20641,16 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
                 });
                 var rows = await resp.json();
                 if (Array.isArray(rows) && rows.length > 0 && rows[0].value) {
-                    localStorage.setItem(EXAM_HISTORY_KEY, rows[0].value);
-                    history = JSON.parse(rows[0].value);
-                    exam = Object.values(history).find(e => e.examCode === examCode);
+                    // 2026-09-13 修复：原来直接拿云端原文整份覆盖本地，会把本机「已考完但还没推送成功」的
+                    // 考试记录（含错题集）冲掉。saveExamHistory 与 _syncPullAll 都走 mergeExamHistories 合并，
+                    // 只有这里裸覆盖 —— 现统一为合并语义。
+                    var _cloudH = null;
+                    try { _cloudH = JSON.parse(rows[0].value); } catch(e) { _cloudH = null; }
+                    if (_cloudH) {
+                        history = mergeExamHistories(history, _cloudH);
+                        localStorage.setItem(EXAM_HISTORY_KEY, JSON.stringify(history));
+                        exam = Object.values(history).find(e => e.examCode === examCode);
+                    }
                 }
             } catch(e) {}
         }
@@ -22298,7 +21392,9 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
             var r = reports[id];
             var label = (r.extraData && r.extraData.title) ? r.extraData.title : id;
             if (type === 'exam') {
-                var qb = getQuestionBank();
+                // 2026-09-13 热读点：这一行在「每条反馈」的循环里 —— 原来每条都要深拷贝一次整库
+                // ★禁止修改返回值★
+                var qb = qbRead();
                 var q = (qb.questions || []).find(function(qq) { return qq.id === id; });
                 label = q ? (q.question || '').substring(0, 60) : '(试题已删除)';
             }
@@ -22338,14 +21434,14 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
             '<th style="padding:8px;text-align:center;border-bottom:2px solid #eef2f6;">操作</th>' +
             '</tr></thead><tbody>';
             entries.forEach(function(e) {
-                var safeId = e.id.replace(/'/g, "\\'");
+                var safeId = escapeJsInAttr(e.id);
                 var statusBadge = e.resolved
                     ? '<span style="color:#27ae60;">✅ 已解决</span>'
                     : '<span style="color:#e67e22;">⚠️ 待处理</span>';
                 var actionBtn = e.resolved
                     ? ''
-                    : '<button onclick="event.stopPropagation();resolveReportItem(\'' + e.type + '\',\'' + safeId + '\');renderExamTabContent();" style="background:#27ae60;color:white;border:none;padding:3px 10px;border-radius:12px;cursor:pointer;font-size:0.7rem;">✅ 标记已解决</button>';
-                html += '<tr style="border-bottom:1px solid #eef2f6;cursor:pointer;" onclick="showAnomalyDetail(\'' + e.type + '\',\'' + safeId + '\')" onmouseover="this.style.background=\'#f8fafc\'" onmouseout="this.style.background=\'\'">' +
+                    : '<button onclick="event.stopPropagation();resolveReportItem(\'' + escapeJsInAttr(e.type) + '\',\'' + safeId + '\');renderExamTabContent();" style="background:#27ae60;color:white;border:none;padding:3px 10px;border-radius:12px;cursor:pointer;font-size:0.7rem;">✅ 标记已解决</button>';
+                html += '<tr style="border-bottom:1px solid #eef2f6;cursor:pointer;" onclick="showAnomalyDetail(\'' + escapeJsInAttr(e.type) + '\',\'' + safeId + '\')" onmouseover="this.style.background=\'#f8fafc\'" onmouseout="this.style.background=\'\'">' +
                     '<td style="padding:8px;">' + escapeHtml(e.label) + '</td>' +
                     (type==='exam'?'<td style="padding:8px;">' + escapeHtml(e.category) + '</td>':'') +
                     '<td style="padding:8px;max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="' + escapeHtml(e.reason) + '">' + escapeHtml(e.reason) + '</td>' +
@@ -22461,7 +21557,6 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
     }
 
 
-
     function startExam(examId) {
         const history = getExamHistory();
         const exam = history[examId];
@@ -22575,6 +21670,7 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
         examArea.style.display = 'block';
         // 检查是否已过截止时间（关闭页面后重新打开的情况）
         if (exam._examStartTime && Date.now() > exam._examStartTime + (exam.timeLimit||40)*60*1000) {
+            _examTimerReset();   // 2026-09-13：这条早退路径也要清表，避免残留句柄与自动提交打架
             showAlert('⏱️ 考试时间已过，系统将自动提交答卷', '⏰').then(function() { submitExam(); });
             return;
         }
@@ -22612,7 +21708,6 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
         var endTime = exam._examStartTime + timeLimit * 60 * 1000;
         var timerEl = document.getElementById('examTimer');
         var timerBar = document.getElementById('examTimerBar');
-        var submitted = false;
         function updateTimerDisplay() {
             var left = Math.max(0, Math.ceil((endTime - Date.now()) / 1000));
             var min = Math.floor(left / 60);
@@ -22621,14 +21716,17 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
             if (timerBar) timerBar.style.width = (left / (timeLimit * 60) * 100) + '%';
             if (left <= 300 && timerEl) timerEl.style.color = '#e67e22';
             if (left <= 60 && timerEl) timerEl.style.color = '#c0392b';
-            if (left <= 0 && !submitted) {
-                submitted = true;
-                clearInterval(exam._timerInterval);
+            if (left <= 0 && !_examSubmitted) {
+                _examSubmitted = true;
+                _examTimerStop();
                 showAlert('⏱️ 考试时间到，系统将自动提交答卷', '⏰').then(function() { submitExam(); });
             }
         }
+        // 2026-09-13：先清掉上一场的句柄与「已到点」标志，再首次渲染 —— 顺序反了的话，
+        //   如果进入时 endTime 已过，首次 updateTimerDisplay 会触发自动提交，紧接着被 reset 抹掉标志，可能重复触发
+        _examTimerReset();
         updateTimerDisplay();
-        exam._timerInterval = setInterval(updateTimerDisplay, 1000);
+        _examTimerHandle = setInterval(updateTimerDisplay, 1000);
 
         setTimeout(() => {
             document.querySelectorAll('.exam-option').forEach(opt => {
@@ -22679,6 +21777,7 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
                 var ok = await showConfirm('确定取消考试吗？已作答内容将丢失。', '⚠️');
                 if (ok) {
                     document.getElementById('examActiveArea').style.display = 'none';
+                    _examTimerReset();   // 2026-09-13：取消必须停表，否则到点仍会调 submitExam()
                     currentExamId = null; currentExamAnswers = { _questions: [] };
                 }
             };
@@ -22769,8 +21868,10 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
         const exam = history[currentExamId];
         if (!exam) return;
 
-        // 停止计时器
-        if (exam._timerInterval) { clearInterval(exam._timerInterval); exam._timerInterval = null; }
+        // 停止计时器（2026-09-13：改用模块级句柄，原 exam._timerInterval 恒为 undefined → 空操作）
+        // 顺手置 _examSubmitted，防止手动提交后倒计时到点再触发一次自动提交
+        _examSubmitted = true;
+        _examTimerStop();
 
         // 补考使用错题集，首次考试使用全部题目
         const isRetake = exam.attempts > 0;
@@ -23082,21 +22183,10 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
         }).then(function(ok){ _updateSyncBadge(); return ok; });
     }
 
-    function _syncPushAll() {
-        var batch = [];
-        for (var i = 0; i < _realLS.length; i++) {
-            var k = _realLS.key(i);
-            if (k && !k.startsWith('_')) {
-                batch.push({ key: k, value: String(_realLS.getItem(k)), updated_at: new Date().toISOString() });
-            }
-        }
-        if (batch.length === 0) return Promise.resolve();
-        return fetch(SUPABASE_URL + '/rest/v1/app_data', {
-            method: 'POST',
-            headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY, 'Content-Type': 'application/json', 'Prefer': 'resolution=merge-duplicates' },
-            body: JSON.stringify(batch)
-        });
-    }
+    // 2026-09-13 删除 _syncPushAll()：全文件零调用方，且它把「每个非 _ 前缀 key」整批 POST 上云
+    //   （含 questionBankData）——等于「点一下就把本机源区快照推成所有人的权威」。
+    //   属于已上膛但没接扳机的枪，比 _syncClear 更该直接拆（连语义都是多余的）。
+    //   要推数据请走 _syncQueue + _syncFlush。【不要重建这个函数】
     // 侧边栏同步按钮点击事件（2026-09-07 统一语义：云端权威）
     // ① 先把本机未推送的改动推上云端（防丢）→ ② 全量拉取云端 → ③ 云端内容覆盖本地 → ④ 刷新显示云端最新
     document.getElementById('sidebarSyncBadge').addEventListener('click', function(){
@@ -23126,16 +22216,103 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
         }
     }
 
+    // ==================== 云端 key 注册表（2026-09-13）====================
+    // 背景：哪些 key 会上云、哪些不给游客拉、哪些要给学员直链，原本散在三处手写约定里：
+    //   ① _syncSetItem 里「key 不以 _ 开头 → 自动上云」（隐式，改不了，仍是主闸门）
+    //   ② _GUEST_EXCLUDE_LIST：游客启动白名单，手写 17 个 key
+    //   ③ _EXAM_KEYS_LIST：学员直链，手写 5 个 key
+    // 新增数据模块时漏登记任何一处都会静默出错：漏 ② → 游客白下载大 key（烧出站流量）；漏 ③ → 学员
+    // 打开直链显示「考试不存在」。现改为单一登记处，②③ 两张清单都从本表派生。
+    // 登记项：guest=false → 进游客排除表；exam=true → 进学员直链清单。
+    // 没登记的 key 仍按老规则（不带 _ 就上云），由 _yxtKeyRegistrySelfCheck 在启动时 console 报出来。
+    var YXT_KEY_REGISTRY = {
+        questionBankData:          { guest: false, exam: false },  // 题库（约 0.9MB，绝不能给游客/学员）
+        generatedReports:          { guest: false, exam: false },  // 生成的报告 HTML
+        adminAuditLog:             { guest: false, exam: false },  // 管理操作日志
+        trainingPushRecords:       { guest: false, exam: false },
+        learnPlanPushRecords:      { guest: false, exam: false },
+        samplingModule3Data:       { guest: false, exam: false },
+        samplingModule3MistakeMap: { guest: false, exam: false },
+        reviewerTotalMistakeMap:   { guest: false, exam: false },
+        newcomerAnalysisData:      { guest: false, exam: false },
+        newcomerGlobalData:        { guest: false, exam: false },
+        adminPersonSiteMap:        { guest: false, exam: false },
+        biweeklyCases:             { guest: false, exam: false },
+        knowledgeCases:            { guest: false, exam: false },
+        // 2026-09-13 流量优化：手工培训案例（云端实测约 97KB，本表最大单键）。
+        //   游客读不到 —— 唯一入口「案例库 → 📝 培训案例收集」tab 标了 admin:true，
+        //   渲染时加 admin-only 类，配合 body.guest-mode .admin-only{display:none} 游客点不到。
+        //   注意：每次管理员编辑案例，所有游客下次开页面都要重下这 97KB，是持续消耗。
+        manualCases:               { guest: false, exam: false },
+        reviewerAccRateData:       { guest: false, exam: false },  // 审核员准确率：只在数据分析模块读，而 dataAnalysis 在 guestBlocked 里；另一处 viewExamRecords 有 isAdminMode 前置
+        samplingCardCache:         { guest: false, exam: false },  // 抽查卡 innerHTML 快照：全文件只写不读（无 getItem），_lsCleanup 自己标注「可重建」并会清它 —— 本不该上云
+        autoPushQueue:             { guest: false, exam: false },
+        departedReviewers:         { guest: false, exam: false },
+        onboardingReviewers:       { guest: false, exam: false },
+        panzeSyncCacheV1:          { guest: false, exam: false },
+        examHistoryData:           { guest: true,  exam: true  },  // 学员直链必须能拿到
+        reportedQuestions:         { guest: true,  exam: true  },
+        reportedTraining:          { guest: true,  exam: true  },
+        feishu_token:              { guest: true,  exam: true  },
+        feishu_tenant_token:       { guest: true,  exam: true  }
+    };
+    function _yxtGuestExcludeList() {
+        return Object.keys(YXT_KEY_REGISTRY).filter(function(k) { return !YXT_KEY_REGISTRY[k].guest; }).join(',');
+    }
+    function _yxtExamKeysList() {
+        return Object.keys(YXT_KEY_REGISTRY).filter(function(k) { return YXT_KEY_REGISTRY[k].exam; }).join(',');
+    }
+    // 2026-09-13 联动修复：原为「启动后 8 秒跑一次」——运行期新写入的 key 永远查不到，
+    //   而「忘登记」正是本清单要防的事故（漏登记 → 游客多下载 / 学员直链拿不到）。
+    //   现改为周期运行，结果落到 _ 前缀 key（不上云）便于事后核查；同一份清单只告警一次，避免刷屏。
+    //   仍只告警，不改任何行为 —— 硬性拦截有把现有功能卡死的风险。
+    var _YXT_UNREG_KEY = '_yxtUnregisteredKeys';
+    var _yxtLastUnregSig = null;
+    try { _yxtLastUnregSig = _realLS.getItem(_YXT_UNREG_KEY); } catch(e) {}
+    function _yxtKeyRegistrySelfCheck() {
+        var unregistered = [];
+        try {
+            for (var i = 0; i < localStorage.length; i++) {
+                var k = localStorage.key(i);
+                if (!k || k.charAt(0) === '_') continue;
+                if (YXT_KEY_REGISTRY[k]) continue;
+                if (/^(feishu_panze|auto_push_)/.test(k)) continue;   // 这两类走 like 通配排除，不需逐个登记
+                unregistered.push(k);
+            }
+        } catch(e) {}
+        var sig = unregistered.join(',');
+        if (sig === _yxtLastUnregSig) return;
+        _yxtLastUnregSig = sig;
+        try {
+            if (unregistered.length > 0) _realLS.setItem(_YXT_UNREG_KEY, sig);
+            else _realLS.removeItem(_YXT_UNREG_KEY);
+        } catch(e) {}
+        if (unregistered.length > 0) {
+            console.warn('⚠️ [key登记] 以下 ' + unregistered.length + ' 个 key 会自动上云但未登记进 YXT_KEY_REGISTRY，请补登记（漏登记可能导致游客多下载 / 学员直链取不到）：\n  ' + unregistered.join('\n  '));
+        } else {
+            console.log('[key登记] ✅ 全部 key 已登记');
+        }
+    }
+    // 首查 8 秒；其后每 5 分钟复扫（覆盖运行期新增的 key）
+    setTimeout(function() { try { _yxtKeyRegistrySelfCheck(); } catch(e) {} }, 8000);
+    setInterval(function() { try { _yxtKeyRegistrySelfCheck(); } catch(e) {} }, 5 * 60 * 1000);
+
     function _syncPullAll(force, mode) {
         // 云端权威同步（2026-09-07 重写）：拉取到的云端行一律覆盖本地，裁决依据=云端 updated_at（最后写云端者胜）
         // force=true（手动点 ☁️ 同步）→ 全量拉取（不用增量起点，保证任何设备点同步后看到的都是同一份云端内容）
         // mode='guest'（游客启动，2026-09-07 流量优化）→ 白名单：排除题库/判责/管理专属大 key，独立游标增量
         // mode='exam'（考试直链 ?exam=）→ 只拉考试相关 key（学员答题不下载题库/学员全量）
         // 其余（管理员启动/登录补拉/手动同步）→ 全表增量（原行为）
-        var _GUEST_EXCLUDE_LIST = 'questionBankData,generatedReports,adminAuditLog,trainingPushRecords,learnPlanPushRecords,samplingModule3Data,samplingModule3MistakeMap,reviewerTotalMistakeMap,newcomerAnalysisData,newcomerGlobalData,adminPersonSiteMap,biweeklyCases,knowledgeCases,autoPushQueue,departedReviewers,onboardingReviewers,panzeSyncCacheV1';
-        var _EXAM_KEYS_LIST = 'examHistoryData,reportedQuestions,reportedTraining,feishu_token,feishu_tenant_token';
+        // 2026-09-13：两张清单改为从 YXT_KEY_REGISTRY 派生（登记处唯一化，避免新增模块漏登记）
+        var _GUEST_EXCLUDE_LIST = _yxtGuestExcludeList();
+        var _EXAM_KEYS_LIST = _yxtExamKeysList();
         // 游客与管理员各自独立增量游标：游客白名单拉取不推进管理员游标，登录后管理员增量不会漏掉「比白名单最新行更旧」的管理 key
-        var _cursorKey = (mode === 'guest' || mode === 'exam') ? '_lastGuestSyncAt' : '_lastCloudSyncAt';
+        // 2026-09-13 联动修复：考试模式原本与游客共用 _lastGuestSyncAt，两条链路的拉取范围完全不同
+        //   （游客=排除表取反，考试=只取考试 key），共用游标会互相把对方推走 → 静默漏数据。
+        //   现三种模式各自独立游标。
+        var _cursorKey = (mode === 'guest') ? '_lastGuestSyncAt'
+                       : (mode === 'exam')  ? '_lastExamSyncAt'
+                       : '_lastCloudSyncAt';
         var _lastSyncAt = null;
         try { _lastSyncAt = _realLS.getItem(_cursorKey); } catch(e) {}
         var _pullUrl = SUPABASE_URL + '/rest/v1/app_data?select=*&order=updated_at.desc';
@@ -23292,21 +22469,28 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
         }
     }
 
+    // 2026-09-13 联动修复：原实现本地清空后，把整批 key 拼成一条 DELETE 打到云端，
+    //   即「清本机缓存」= 「删所有人的云端数据」。当前无调用方，是一支已上膛的枪 —— 拆掉引信。
+    //   新语义：只清本机，永不动云端。云端删除只能走 _syncRemoveItem 的逐 key 精确删除（有调用方时）。
+    //   注意：_ 前缀的 key（游标 / _syncPendingQueue / KV 脏队列）必须原样保留 ——
+    //   它们存着「还没推上云」的待发写入，清掉就真丢了。
     function _syncClear() {
-        var keys = [];
+        var keep = [];
         for (var i = 0; i < _realLS.length; i++) {
             var k = _realLS.key(i);
-            if (k && !k.startsWith('_')) keys.push(k);
+            if (k && k.charAt(0) === '_') {
+                try { keep.push([k, _realLS.getItem(k)]); } catch(e) {}
+            }
         }
         _realLS.clear();
-        // 批量删除云端数据
-        if (keys.length > 0) {
-            var filter = keys.map(function(k) { return 'key=eq.' + encodeURIComponent(k); }).join(',');
-            fetch(SUPABASE_URL + '/rest/v1/app_data?or=(' + filter + ')', {
-                method: 'DELETE',
-                headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY }
-            }).catch(function(){});
+        for (var j = 0; j < keep.length; j++) {
+            try { _realLS.setItem(keep[j][0], keep[j][1]); } catch(e) {}
         }
+        _syncQueue = {};
+        try { _realLS.setItem('_syncPendingQueue', '{}'); } catch(e) {}
+        if (_syncTimer) { clearTimeout(_syncTimer); _syncTimer = null; }
+        _qbMemBank = null;   // 本机题库缓存作废，下次读盘重取
+        console.log('[本机清除] 已清空本机缓存 ' + (keep.length ? '(保留 ' + keep.length + ' 个 _ 前缀 key)' : '') + '；云端数据未改动');
     }
 
     // 替换 localStorage 为带同步的版本
@@ -23552,7 +22736,7 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
                 if (entry.images && entry.images.length > 0) {
                     html += '<div class="fb-img-gallery">';
                     entry.images.forEach(function(img, imgIdx) {
-                        html += '<div class="fb-img-thumb" onclick="window._fbLightbox(\'' + entry.id + '_' + imgIdx + '\')">';
+                        html += '<div class="fb-img-thumb" onclick="window._fbLightbox(\'' + escapeJsInAttr(entry.id + '_' + imgIdx) + '\')">';
                         html += '<img src="' + img.data + '" alt="图片' + (imgIdx + 1) + '" loading="lazy">';
                         html += '</div>';
                     });
@@ -23961,7 +23145,11 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
             migrateOldPushRecords();
             initAutoPush();
             // 自动加载每日判责量数据（无需进管理后台，增量：只拉比缓存最新日期新的，2026-09-03 流量优化）
-            // 直接读 localStorage 缓存（getPanzeCache 定义在管理后台函数作用域内，顶层访问不到）
+            // 2026-09-13 联动修复：这里原本自己解析云端行、直接覆写 window._panzeAllData，
+            //   且从不落缓存 —— 它拉到的云端日期之后会被「以缓存为底」的 fetchPanzeLocal 丢掉。
+            //   现改为调管理后台作用域暴露的统一入口（合并进缓存+内存，不渲染）。
+            //   不渲染是对的：本块跑在管理后台渲染之前，卡片/表格元素还不存在；
+            //   渲染交给进入后台时的 refreshPanzeStatus（它读的正是刚被更新的缓存）。
             var _panzeCacheInit = null;
             try { _panzeCacheInit = JSON.parse(localStorage.getItem('panzeSyncCacheV1') || 'null'); } catch(e) {}
             var _panzeUrlInit = SUPABASE_URL + '/rest/v1/app_data?key=like.feishu_panze_2026*&select=key,value&order=key.desc';
@@ -23970,26 +23158,9 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
                 headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY }
             }).then(function(r){return r.json();}).then(function(rows){
                 // 云端返回错误对象（402 配额耗尽等）→ 走本地兜底
-                if (!Array.isArray(rows)) { fetchPanzeLocal(); return; }
-                window._panzeAllData = (_panzeCacheInit && _panzeCacheInit.data) ? _panzeCacheInit.data.slice() : [];
-                rows.forEach(function(r){
-                    try {
-                        var pd = JSON.parse(r.value);
-                        var ds = r.key.replace('feishu_panze_', '');
-                        if (ds === 'latest') return;
-                        var m = pd.map || {};
-                        // 同日期去重替换
-                        for (var pi2 = 0; pi2 < window._panzeAllData.length; pi2++) {
-                            if (window._panzeAllData[pi2].date === ds) {
-                                window._panzeAllData[pi2] = { date: ds, count: Object.keys(m).length, total: panzeMapTotal(m), map: m };
-                                return;
-                            }
-                        }
-                        window._panzeAllData.push({ date: ds, count: Object.keys(m).length, total: panzeMapTotal(m), map: m });
-                    } catch(e) {}
-                });
-                window._panzeAllData.sort(function(a,b){ return b.date.localeCompare(a.date); });
-            }).catch(function(){ fetchPanzeLocal(); });
+                if (!Array.isArray(rows)) { window._panzeFetchLocal && window._panzeFetchLocal(); return; }
+                if (typeof window._panzeMergeRowsIntoCache === 'function') window._panzeMergeRowsIntoCache(rows);
+            }).catch(function(){ window._panzeFetchLocal && window._panzeFetchLocal(); });
             getFeishuToken().then(function(){
                 fetchLearningMapData(false).then(function(){ buildLMCache(); });
                 // 独立考试/报告/学习地图页不预加载看板，避免授权页覆盖页面
@@ -24511,7 +23682,6 @@ updateAdminUI();
 })();
 
 
-
     function showEditStudentModal(sid, parentOverlay) {
         var stu = students.find(function(s) { return s.id === sid; });
         if (!stu) { alert('学员不存在'); return; }
@@ -24649,9 +23819,4 @@ updateAdminUI();
     setTimeout(check, 20000);      // 启动 20s 后首检（避开首屏加载）
     setInterval(check, 600000);    // 之后每 10 分钟
     document.addEventListener('visibilitychange', function() {
-        if (document.visibilityState === 'visible') check(); // 切回前台补检一次
-    });
-})();
-</script>
-</body>
-</html>
+        if (doc
