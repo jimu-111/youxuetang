@@ -44,6 +44,9 @@ function httpJson(url, opts) {
       res.on('end', () => resolve({ status: res.statusCode, json: (() => { try { return JSON.parse(d); } catch (e) { return null; } })() }));
     });
     req.on('error', reject);
+    // 2026-09-13：原来漏了这句，POST 从不带 body —— 新 token「写回 KV」实际写了个空请求，
+    // 刷新成功后云端仍是旧 token，下次运行照样失败。
+    if (opts && opts.body) req.write(opts.body);
     req.end();
   });
 }
@@ -79,23 +82,70 @@ async function getToken() {
   if (!TOKEN) throw new Error('KV 里没有飞书 token');
   return TOKEN;
 }
+
+// —— 应用身份（2026-09-13 新增）——
+// 总表已授权给「优学堂」应用（2026-09-11 实测可读可写），应用凭据长期有效、不会过期，
+// 不再依赖个人 token。个人 token 的 refresh_token 是一次性的，一旦写回失败就断链、需重新授权，
+// 2026-09-13 题库同步失败即由此而来。按用户定的「双身份谁可用用谁」策略，读总表走应用身份。
+let TENANT = null;
+async function getTenantToken() {
+  if (TENANT && TENANT.exp > Date.now()) return TENANT.token;
+  const r = await viaProxy('/auth/v3/tenant_access_token/internal', '', {
+    method: 'POST',
+    body: JSON.stringify({ app_id: APP_ID, app_secret: APP_SECRET })
+  });
+  if (!r.json || r.json.code !== 0 || !r.json.tenant_access_token) throw new Error('tenant_access_token 获取失败: ' + r.status + ' ' + JSON.stringify(r.json).slice(0, 200));
+  TENANT = { token: r.json.tenant_access_token, exp: Date.now() + (r.json.expire || 7200) * 1000 - 300000 };
+  return TENANT.token;
+}
+
+// 刷新 user_access_token 必须用 app_access_token 做 Authorization（不是 tenant_access_token，
+// 也不是 body 里传 app_id/app_secret）。2026-09-13：原来往 body 塞 app_id/app_secret 的写法
+// 被飞书拒（20014 The app access token passed is invalid），刷新从来没成功过。
+async function getAppAccessToken() {
+  const body = JSON.stringify({ app_id: APP_ID, app_secret: APP_SECRET });
+  const r = await viaProxy('/auth/v3/app_access_token/internal', '', { method: 'POST', body });
+  if (!r.json || r.json.code !== 0 || !r.json.app_access_token) throw new Error('app_access_token 获取失败: ' + r.status + ' ' + JSON.stringify(r.json).slice(0, 200));
+  return r.json.app_access_token;
+}
+
 async function api(path, extra) {
+  // 应用身份优先（2026-09-13）：读总表只需应用权限，且应用凭据永不过期
+  try {
+    const at = await getTenantToken();
+    const ra = await viaProxy(path, at, extra);
+    if (ra.json && ra.json.code === 0) return ra;
+    console.log('  ⚠️ 应用身份返回 code=' + (ra.json && ra.json.code) + '（' + (ra.json && ra.json.msg || '') + '），回退用户 token');
+  } catch (e) {
+    console.log('  ⚠️ 应用身份不可用：' + e.message + '，回退用户 token');
+  }
+  // —— 以下为用户 token 路径（含刷新），作为兜底 ——
+  if (!TOKEN) throw new Error('应用身份与用户 token 均不可用');
   let r = await viaProxy(path, TOKEN.access_token, extra);
-  if (r.status === 401 || (r.json && (r.json.code === 99991663 || r.json.code === 99991661))) {
+  // 99991668 = Invalid access token for authorization：飞书对「已失效/已作废」的 token 返回这个码，
+  // 而不是 99991663「过期」。2026-09-13 题库同步就因为它不在名单里、没触发刷新而直接失败。
+  if (r.status === 401 || (r.json && (r.json.code === 99991663 || r.json.code === 99991661 || r.json.code === 99991668))) {
     console.log('  access token 失效，刷新中…');
     const rt = TOKEN.refresh_token;
     if (!rt) throw new Error('无 refresh_token 可刷新');
-    const ref = await viaProxy('/authen/v1/oidc/refresh_access_token', '', {
+    const aat = await getAppAccessToken();
+    const ref = await viaProxy('/authen/v1/oidc/refresh_access_token', aat, {
       method: 'POST',
-      body: JSON.stringify({ grant_type: 'refresh_token', refresh_token: rt, app_id: APP_ID, app_secret: APP_SECRET })
+      body: JSON.stringify({ grant_type: 'refresh_token', refresh_token: rt })
     });
     if (ref.status !== 200 || !ref.json || !ref.json.data) throw new Error('刷新失败: ' + ref.status + ' ' + JSON.stringify(ref.json).slice(0, 200));
-    TOKEN = ref.json.data;
-    console.log('  刷新成功，有效期至 ' + new Date(Date.now() + TOKEN.expires_in * 1000).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' }));
+    // 保留 owner 等原字段：页面靠 owner 判断是否上云、靠 expiresAt 决定是否自动刷新
+    const d = ref.json.data;
+    TOKEN = Object.assign({}, TOKEN, {
+      access_token: d.access_token,
+      refresh_token: d.refresh_token || TOKEN.refresh_token,
+      expiresAt: Date.now() + (d.expires_in || 7200) * 1000
+    });
+    console.log('  刷新成功，有效期至 ' + new Date(TOKEN.expiresAt).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' }));
     // 新 refresh_token 写回 KV（永不断）
     await httpJson(PAGES + '/token', {
       method: 'POST', headers: { 'x-yxt-secret': SECRET, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ access_token: TOKEN.access_token, refresh_token: TOKEN.refresh_token })
+      body: JSON.stringify(TOKEN)
     }).catch(() => console.log('  ⚠️ 新 token 写回 KV 失败（不影响本次运行）'));
     r = await viaProxy(path, TOKEN.access_token, extra);
   }
@@ -242,8 +292,8 @@ function supabaseWrite(key, value) {
 
 async function main() {
   console.log('========== 题库周一同步 ' + new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' }) + (DRY_RUN ? ' [DRY_RUN 只读不写]' : '') + ' ==========');
-  await getToken();
-  console.log('✅ 飞书 token 就绪');
+  try { await getToken(); console.log('✅ 用户 token 就绪（兜底身份）'); }
+  catch (e) { console.log('⚠️ ' + e.message + '（不影响：主路径走应用身份）'); }
 
   // 1. 子表列表
   const q = await api('/sheets/v3/spreadsheets/' + SS_TOKEN + '/sheets/query');

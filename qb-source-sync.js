@@ -186,6 +186,21 @@ async function getAppAccessToken() {
   return r.json.app_access_token;
 }
 async function refreshUserToken() {
+  // 并发防护（2026-09-13）：refresh_token 是一次性的，刷新前先重读 KV ——
+  // 主电脑页面/其他设备可能刚刷新过并写回了 KV，此时拿内存里那份旧的去换，
+  // 不但换不到，还会把本来有效的新 refresh_token 链条撞断。
+  try {
+    const kv = await httpsRequest(PAGES + '/token', { headers: { 'x-yxt-secret': SECRET } });
+    let s = kv.json && kv.json.value;
+    if (typeof s === 'string') { try { s = JSON.parse(s); } catch (e) { s = null; } }
+    if (s && s.access_token && s.access_token !== USER_TOKEN.access_token
+        && (!s.expiresAt || s.expiresAt > Date.now() + 60000)) {
+      console.log('  ♻️ KV 里已有别的设备刚刷新的 token，直接采用（省掉一次 refresh）');
+      USER_TOKEN = Object.assign({}, USER_TOKEN, s);
+      if (String(USER_TOKEN.owner || '').indexOf('徐行') < 0 && USER_TOKEN.owner) console.log('  ⚠️ 采用的新 token owner=' + USER_TOKEN.owner);
+      return USER_TOKEN;
+    }
+  } catch (e) {}
   const rt = USER_TOKEN && USER_TOKEN.refresh_token;
   if (!rt) throw new Error('无 refresh_token，无法刷新（需徐行重新授权）');
   console.log('  🔄 徐行 token 失效，用 refresh_token 换新…');
@@ -235,7 +250,9 @@ async function saveImgPairCache(pairKey) {
 async function apiAsUser(path, opt) {
   if (!USER_TOKEN) await loadUserToken();
   let r = await feishu(path, Object.assign({}, opt, { token: USER_TOKEN.access_token }));
-  if (r.status === 401 || (r.json && (r.json.code === 99991663 || r.json.code === 99991661))) {
+  // 99991668 = Invalid access token for authorization：飞书对「已失效/已作废」的 token 返回这个码，
+  // 而不是 99991663「过期」。2026-09-13 题库同步就因为它不在名单里、没触发刷新而直接失败。
+  if (r.status === 401 || (r.json && (r.json.code === 99991663 || r.json.code === 99991661 || r.json.code === 99991668))) {
     await refreshUserToken();
     r = await feishu(path, Object.assign({}, opt, { token: USER_TOKEN.access_token }));
   }

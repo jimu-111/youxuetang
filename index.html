@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <!-- 版本行：每次部署新代码必须 bump 此 content（YYYYMMDD.N），旧设备靠它自检静默升级 -->
-    <meta name="yxt-ver" content="20260912.2">
+    <meta name="yxt-ver" content="20260913.2">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
     <title>优学堂</title>
     <script src="https://cdn.sheetjs.com/xlsx-0.20.2/package/dist/xlsx.full.min.js" defer></script>
@@ -2323,13 +2323,23 @@
                 .then(function(r) { return r.json(); })
                 .then(function(result) {
                     if (result.ok) {
-                        showToast('✅ ' + result.date + ' 判责量已同步（' + result.count + '人，' + result.total + '次）', 'success');
-                        logAdminAction('判责量', '手动同步', result.date + '（' + result.count + '人，' + result.total + '次，由本地同步服务导入）');
+                        // 服务端返回的字段是 latestDate（曾误写成 result.date，成功时一直显示 undefined）
+                        var syncedDate = result.latestDate || result.date || '';
+                        showToast('✅ ' + syncedDate + ' 判责量已同步（' + result.count + '人，' + result.total + '次）', 'success');
+                        logAdminAction('判责量', '手动同步', syncedDate + '（' + result.count + '人，' + result.total + '次，由本地同步服务导入）');
                         refreshPanzeStatus();
                         btn.innerHTML = '✅ 同步完成';
                         btn.style.background = '#d1fae5';
                         btn.style.borderColor = '#6ee7b7';
                         btn.style.color = '#166534';
+                    } else if (result.quota) {
+                        // 402 期间这个按钮同步不了，但数据不会丢：目录监听 + 每日 09:00 任务会转存 KV，
+                        // 页面读取也自动走 KV 兜底，Supabase 恢复后自动回灌（2026-09-13）
+                        showToast('⏸ 云端配额已满，数据会由自动同步暂存到 KV，恢复后自动回灌', 'warning');
+                        btn.innerHTML = '⏸ 云端配额已满';
+                        btn.style.background = '#fef3c7';
+                        btn.style.borderColor = '#f59e0b';
+                        btn.style.color = '#b45309';
                     } else {
                         showToast('❌ 同步失败：' + (result.error || '未知错误'), 'error');
                         btn.innerHTML = '❌ 同步失败';
@@ -17054,7 +17064,21 @@ async function importQBFromFeishu() {
             });
             var data = await resp.json();
             if (data.code === 0 && data.data) {
-                saveErrorDashboardToken(data.data.access_token, data.data.refresh_token, data.data.expires_in);
+                // 2026-09-13：原来这里没传 owner。若本机 token 的 owner 字段已丢失（例如曾被脚本写回过），
+                // saveErrorDashboardToken 会因「非徐行」静默跳过上云 → 刷新成功却不上云 → 云端 token 越放越旧，
+                // 最终 refresh_token 作废、全线断链（今天的故障）。刷新后主动查一次姓名把 owner 补回来。
+                var _owner = (stored && stored.owner) || '';
+                if (_owner.indexOf('徐行') < 0) {
+                    try {
+                        var _uiResp = await feishuApiFetch('https://open.feishu.cn/open-apis/authen/v1/user_info', {
+                            headers: { 'Authorization': 'Bearer ' + data.data.access_token }
+                        });
+                        var _uiData = await _uiResp.json();
+                        _owner = (_uiData.data && _uiData.data.name) || _owner;
+                        if (_owner) console.log('🔎 刷新后补回 owner: ' + _owner);
+                    } catch(e) {}
+                }
+                saveErrorDashboardToken(data.data.access_token, data.data.refresh_token, data.data.expires_in, _owner);
                 return data.data.access_token;
             }
         } catch(e) {}
