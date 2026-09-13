@@ -1,8 +1,17 @@
 /**
- * 题库每周一同步（2026-09-05）：
- * 每周一 8:00（北京时间，GitHub Actions UTC 周一 0:00）读飞书总表 7 个品类 tab
- * 全量覆盖 7 个源品类，跳过「手动录入题目」区（独立第 8 品类永不触碰）
- * 写入 Supabase questionBankData（402 挂断则 KV 兜底），本地不备份（Actions 无持久盘）
+ * 题库每周同步（2026-09-05 建，2026-09-13 加固）：
+ * 每周日 8:00（北京时间 = GitHub Actions UTC 周日 0:00）读飞书总表 7 个品类 tab，
+ * 全量覆盖 7 个源品类，写入 Supabase questionBankData（402 挂断则 KV 兜底）。
+ *
+ * ⚠️ 写之前有四道闸门（2026-09-13 加）。原则：**宁可这周不同步，也不要把坏数据推上去**——
+ *    不同步只是题库晚一周更新（看得出来），推上去是题目凭空消失（看不出来）。
+ *    ① 任一品类读值失败          → 中止（原来只 console.log + continue，会让那个品类的题从云端全消失）
+ *    ② 7 个品类有任何一个没解析出题 → 中止（sheet 被改名/删掉的典型症状）
+ *    ③ 现有题库两端都读不到       → 中止（无法比对缩水，不能盲写）
+ *    ④ 新题数 < 现有题数 × 0.9    → 中止（防飞书侧被误删、或读取被 row_count 截断）
+ *    FORCE=1 可越过 ①②③④（日志会写明「已越过闸门」）；不能用它越过写后校验。
+ *
+ * 手动区已砍（2026-09-13）：页面不再增删改题，题库全量由本脚本维护，没有需要「保留」的区域。
  * 与 qb-import-categories.js 同套：user token 自持循环（KV /token 取，401 用 refresh_token 换新写回）
  */
 const https = require('https');
@@ -16,8 +25,11 @@ const APP_SECRET = '1uLKmOkzQpoac6Ixw3Qhsb6KR1gCrcTn';
 const SUPABASE_URL = (process.env.SUPABASE_URL || 'https://zfxwnixlvdxawoylhgxj.supabase.co').replace(/\/$/, '').replace(/\s/g, '');
 const SUPABASE_KEY = (process.env.SUPABASE_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InpmeHduaXhsdmR4YXdveWxoZ3hqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODIyMDEyNzIsImV4cCI6MjA5Nzc3NzI3Mn0.aPfO4Ry_LzoOColCVx64JQPF-BWga-_J2fX9hg-E4G8').replace(/\s/g, '');
 const DRY_RUN = process.env.DRY_RUN === 'true' || process.env.DRY_RUN === '1';
+const FORCE = process.env.FORCE === 'true' || process.env.FORCE === '1';
 
-// 8 个品类定义（categories key = 品类中文名；key 字段为英文标识）
+// 7 个品类定义（categories key = 品类中文名；key 字段为英文标识）
+//   2026-09-13：原第 8 类「手动录入题目」已随页面手动区一起砍掉，从这里删掉后，下次同步会把云端那个空分类一并覆盖掉。
+//   ⚠️ 页面 index.html 的 QB_DEFAULT_CATEGORIES 必须与本表保持一致（页面会按那张表把缺失分类补回来）。
 const CATEGORIES = {
   '手机':           { name: '手机',            key: 'phone',    order: 1, source: true },
   '平板':           { name: '平板',            key: 'tablet',   order: 2, source: true },
@@ -25,8 +37,7 @@ const CATEGORIES = {
   '手表':           { name: '手表',            key: 'watch',    order: 4, source: true },
   '耳机':           { name: '耳机',            key: 'earphone', order: 5, source: true },
   '相机&镜头':      { name: '相机&镜头',       key: 'camera',   order: 6, source: true },
-  '游戏机&游戏卡带': { name: '游戏机&游戏卡带', key: 'console',  order: 7, source: true },
-  '手动录入题目':    { name: '手动录入题目',    key: 'manual',   order: 8, source: false }
+  '游戏机&游戏卡带': { name: '游戏机&游戏卡带', key: 'console',  order: 7, source: true }
 };
 // sheet 标题 → 品类中文名
 const SHEET_MATCHERS = [
@@ -238,29 +249,46 @@ function parseSheetRows(rows, sheetTitle) {
 }
 
 // —— 读现有题库（Supabase 优先，失败 KV 兜底）——
+// 2026-09-13 改为三态返回 { ok:true, bank, count, from } / { ok:false, error }。
+//   原来把「两端都读不到」和「题库真的是空的」合并成同一个 {questions:[]} 返回，调用方分不出来 ——
+//   缩水闸门拿 0 当基准等于形同虚设。现在读不到就明确 ok:false，由 main() 决定中止。
+//   「真的是空的」有明确信号：Supabase 返回 200 + 0 行；KV 返回 200 + {"value":null}（已实测）。
 async function readExistingBank() {
   try {
     const u = new URL(SUPABASE_URL + '/rest/v1/app_data?key=eq.questionBankData&select=value&limit=1');
     const r = await httpJson(u.toString(), { headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY } });
-    if (r.status === 200 && r.json && Array.isArray(r.json) && r.json.length > 0 && r.json[0].value) {
-      const parsed = JSON.parse(r.json[0].value);
-      console.log('✅ Supabase 读取现有题库: ' + (parsed.questions || []).length + ' 题');
-      return parsed;
+    if (r.status === 200 && Array.isArray(r.json)) {
+      if (r.json.length === 0) {
+        console.log('ℹ️ Supabase 无 questionBankData 记录（首次同步）');
+        return { ok: true, bank: { categories: {}, questions: [] }, count: 0, from: 'Supabase(空)' };
+      }
+      if (r.json[0] && r.json[0].value) {
+        const parsed = JSON.parse(r.json[0].value);
+        const n = (parsed.questions || []).length;
+        console.log('✅ Supabase 读取现有题库: ' + n + ' 题');
+        return { ok: true, bank: parsed, count: n, from: 'Supabase' };
+      }
     }
     throw new Error('Supabase 读题失败 HTTP ' + r.status);
   } catch (e) {
     console.log('⚠️ ' + e.message + '，转 KV 兜底读');
-    const kv = await httpJson(PAGES + '/data?key=questionBankData', { headers: { 'x-yxt-secret': SECRET } });
-    if (kv.status === 200 && kv.json && typeof kv.json.value === 'string') {
-      try {
+    try {
+      const kv = await httpJson(PAGES + '/data?key=questionBankData', { headers: { 'x-yxt-secret': SECRET } });
+      if (kv.status !== 200) throw new Error('KV 读题失败 HTTP ' + kv.status);
+      // KV 对不存在的 key 返回 200 + {"value":null}（2026-09-13 实测）
+      if (kv.json && typeof kv.json.value === 'string') {
         const o = JSON.parse(kv.json.value);
         const parsed = JSON.parse(o.v);
-        console.log('✅ KV 读取现有题库: ' + (parsed.questions || []).length + ' 题');
-        return parsed;
-      } catch (e2) {}
+        const n = (parsed.questions || []).length;
+        console.log('✅ KV 读取现有题库: ' + n + ' 题');
+        return { ok: true, bank: parsed, count: n, from: 'KV' };
+      }
+      console.log('ℹ️ KV 无 questionBankData 记录（首次同步）');
+      return { ok: true, bank: { categories: {}, questions: [] }, count: 0, from: 'KV(空)' };
+    } catch (e2) {
+      console.log('❌ 现有题库两端都读不到: ' + e2.message);
+      return { ok: false, error: e2.message };
     }
-    console.log('⚠️ 现有题库读不到（Supabase/KV 均失败），视为题库为空，同步后全量重建源区');
-    return { categories: {}, questions: [] };
   }
 }
 
@@ -303,7 +331,8 @@ async function main() {
 
   // 2. 逐品类读取解析
   const srcQuestions = []; // 源区 7 类新题
-  const stat = {};
+  const stat = {};         // 品类 → 题数（相机/镜头是两个 sheet 同一个品类，必须累加不能覆盖）
+  const readErrors = [];   // 读值失败的品类 —— 闸门①用
   for (const s of sheets) {
     const title = String(s.title || '').trim();
     let catName = null;
@@ -314,7 +343,11 @@ async function main() {
     const rowsCount = (s.grid_properties && s.grid_properties.row_count) || 500;
     console.log('\n📄 读取品类 [' + title + '] → ' + catName + '（' + rowsCount + ' 行）');
     const v = await api('/sheets/v2/spreadsheets/' + SS_TOKEN + '/values/' + s.sheet_id + '!A1:AB' + rowsCount);
-    if (v.status !== 200 || !v.json || v.json.code !== 0) { console.log('  ❌ 读值失败:', v.status, JSON.stringify(v.json).slice(0, 150)); continue; }
+    if (v.status !== 200 || !v.json || v.json.code !== 0) {
+      console.log('  ❌ 读值失败:', v.status, JSON.stringify(v.json).slice(0, 150));
+      readErrors.push(catName + '（sheet「' + title + '」HTTP ' + v.status + '）');
+      continue;
+    }
     const rows = v.json.data.valueRange.values || [];
     const qs = parseSheetRows(rows, title);
     qs.forEach(question => {
@@ -323,40 +356,149 @@ async function main() {
       question.productCategory = catName;
       srcQuestions.push(question);
     });
-    stat[catName] = qs.length;
+    stat[catName] = (stat[catName] || 0) + qs.length;
     console.log('  ✅ ' + catName + ' 解析出 ' + qs.length + ' 题');
   }
 
-  // 3. 读现有题库，保留手动区题目（categoryId=manual 或 category=手动录入题目）
-  const existing = await readExistingBank();
-  const manualQuestions = (existing.questions || []).filter(q => {
-    return q.categoryId === 'manual' || q.category === '手动录入题目';
+  // 3. ★闸门①②：飞书侧必须完整 —— 先于读云端，飞书侧不完整就没必要碰云端
+  const emptyCats = Object.keys(CATEGORIES).filter(k => !stat[k]);
+  console.log('\n========== 飞书侧汇总 ==========');
+  Object.keys(CATEGORIES).forEach(k => {
+    console.log('  ' + (stat[k] ? '✅' : '❌') + ' ' + CATEGORIES[k].name + ': ' +
+      (stat[k] === undefined ? '未找到对应 sheet' : stat[k] + ' 题'));
   });
-  console.log('\n手动区保留: ' + manualQuestions.length + ' 题（永不触碰）');
+  console.log('  合计: ' + srcQuestions.length + ' 题');
 
-  // 4. 组装新题库：源区全量覆盖 + 手动区保留
-  const result = { categories: JSON.parse(JSON.stringify(CATEGORIES)), questions: srcQuestions.concat(manualQuestions) };
-  const total = result.questions.length;
-  console.log('\n========== 汇总 ==========');
-  Object.keys(stat).forEach(k => console.log('  ' + CATEGORIES[k].name + ': ' + stat[k] + ' 题（全量覆盖）'));
-  console.log('  手动录入题目: ' + manualQuestions.length + ' 题（保留）');
-  console.log('  总计: ' + total + ' 题');
-  if (srcQuestions.length === 0) { console.log('❌ 源区解析 0 题，终止（保护现有题库不被清空）'); process.exitCode = 1; return; }
+  if (readErrors.length) {
+    console.log('\n' + (FORCE ? '⚠️ 已越过闸门①（FORCE=1）' : '🛑 闸门① 拦下') + '：品类读值失败 —— ' + readErrors.join('；'));
+    if (!FORCE) {
+      console.log('   若继续，这些品类的题会从云端**全部消失**。已中止，云端未被修改。');
+      console.log('   确认这些品类确实该清空 → 加 FORCE=1 重跑。');
+      process.exitCode = 1;
+      return;
+    }
+  }
+  if (emptyCats.length) {
+    console.log('\n' + (FORCE ? '⚠️ 已越过闸门②（FORCE=1）' : '🛑 闸门② 拦下') + '：以下品类没解析出任何题 —— ' + emptyCats.join('、'));
+    if (!FORCE) {
+      console.log('   常见原因：sheet 被改名或删除，或 SHEET_MATCHERS 匹配不上。');
+      console.log('   若继续，这些品类的题会从云端**全部消失**。已中止，云端未被修改。');
+      console.log('   确认这些品类确实该清空 → 加 FORCE=1 重跑。');
+      process.exitCode = 1;
+      return;
+    }
+  }
 
-  // 5. 写入
+  // 4. ★闸门③④：与现有题库比对 —— 读不到不盲写；缩水超 10% 不写
+  const existing = await readExistingBank();
+  if (!existing.ok) {
+    console.log('\n' + (FORCE ? '⚠️ 已越过闸门③（FORCE=1）：现有题库读不到，无法比对缩水' : '🛑 闸门③ 拦下：现有题库两端都读不到'));
+    if (!FORCE) {
+      console.log('   没法比对缩水，不能盲写。已中止，云端未被修改。');
+      console.log('   确认新数据完整、就是要覆盖 → 加 FORCE=1 重跑。');
+      process.exitCode = 1;
+      return;
+    }
+  } else if (existing.count > 0) {
+    const floor = Math.floor(existing.count * 0.9);
+    console.log('\n现有题库（' + existing.from + '）' + existing.count + ' 题 → 本次 ' + srcQuestions.length +
+      ' 题（缩水中止线 ' + floor + '）');
+    if (srcQuestions.length < floor) {
+      console.log('\n' + (FORCE ? '⚠️ 已越过闸门④（FORCE=1）' : '🛑 闸门④ 拦下') + '：新题数比现有少 ' +
+        (existing.count - srcQuestions.length) + ' 题（超过 10%）');
+      if (!FORCE) {
+        console.log('   常见原因：飞书侧被误删，或 sheet 行数读取被截断。');
+        console.log('   已中止，云端未被修改。确认确实删了这么多题 → 加 FORCE=1 重跑。');
+        process.exitCode = 1;
+        return;
+      }
+    }
+  } else {
+    console.log('\nℹ️ 云端还没有题库（' + existing.from + '），本次为首次全量写入');
+  }
+
+  // 5. 组装（手动区已砍：源区 7 类就是全部）
+  const result = { categories: JSON.parse(JSON.stringify(CATEGORIES)), questions: srcQuestions };
   const json = JSON.stringify(result);
-  console.log('\n💾 新题库 JSON: ' + (json.length / 1024 / 1024).toFixed(2) + ' MB');
-  if (DRY_RUN) { console.log('🔍 DRY_RUN：跳过写入'); return; }
-  console.log('☁️ 写入云端…');
+  console.log('\n========== 待写入 ==========');
+  console.log('  ' + result.questions.length + ' 题 / ' + Object.keys(result.categories).length + ' 个品类 / ' +
+    (json.length / 1024 / 1024).toFixed(2) + ' MB');
+
+  // 6. 写入
+  if (DRY_RUN) { console.log('\n🔍 DRY_RUN：闸门全部通过，跳过写入'); return; }
+  console.log('\n☁️ 写入云端…');
+  let writeTo = '';
   try {
     await supabaseWrite('questionBankData', json);
+    writeTo = 'Supabase';
     console.log('✅ 已写入 Supabase');
   } catch (e) {
     console.log('⚠️ ' + e.message);
-    const ok = await kvWrite('questionBankData', json);
-    console.log(ok ? '✅ 已转存 KV 兜底（Supabase 恢复后页面自动回灌）' : '❌ KV 写入也失败，请检查网络');
+    if (await kvWrite('questionBankData', json)) {
+      writeTo = 'KV';
+      console.log('✅ 已转存 KV 兜底（Supabase 恢复后页面自动回灌）');
+    } else {
+      console.log('❌ KV 写入也失败');
+    }
   }
-  console.log('\n🎉 同步流程结束');
+  if (!writeTo) { console.log('\n❌ 写入失败，同步未完成'); process.exitCode = 1; return; }
+
+  // 7. ★闸门⑤：写后回读校验 —— POST 返回 2xx 不代表真写进去了
+  //    KV 有最终一致延迟，所以重试 3 次、每次隔 3 秒。校验不通过只报错并退出码 1（不覆盖、不回滚）。
+  console.log('\n🔎 回读校验（目标 ' + writeTo + '）…');
+  let verified = false, lastCount = -1, lastFrom = '';
+  for (let i = 0; i < 3 && !verified; i++) {
+    if (i) await new Promise(r => setTimeout(r, 3000));
+    const after = await readExistingBank();
+    if (!after.ok) { console.log('  第 ' + (i + 1) + ' 次：读不到'); continue; }
+    lastCount = after.count; lastFrom = after.from;
+    if (after.count === result.questions.length) {
+      verified = true;
+      console.log('✅ 回读一致：' + after.count + ' 题（' + after.from + '）');
+      break;
+    }
+    console.log('  第 ' + (i + 1) + ' 次：回读 ' + after.count + ' 题 ≠ 写入 ' + result.questions.length + ' 题');
+  }
+  if (!verified) {
+    console.log('\n❌ 闸门⑤：回读校验未通过（最后读到 ' +
+      (lastCount < 0 ? '读不到' : lastCount + ' 题 / ' + lastFrom) + '，写入 ' + result.questions.length + ' 题 / ' + writeTo + '）');
+    process.exitCode = 1;
+    return;
+  }
+  console.log('\n🎉 同步完成' + (FORCE ? '（本次有闸门被 FORCE=1 越过，请确认结果符合预期）' : ''));
 }
 
-main().catch(e => { console.log('❌ 异常: ' + e.message); process.exit(1); });
+// —— 飞书告警卡片（workflow 的失败兜底步骤调用：node qb-weekly-sync.js --alert-only "消息"）——
+//   复用 api()：它优先走应用身份，应用凭据不过期，所以告警不受个人 token 失效影响。
+const REPORT_EMAIL = process.env.REPORT_EMAIL || 'xuhang02@zhuanzhuan.com';
+const RUN_URL = process.env.RUN_URL || '';
+async function sendCard(title, msg, color) {
+  if (process.env.NO_CARD === '1') { console.log('📨（NO_CARD=1，未发送飞书卡片）'); return; }
+  try {
+    const card = {
+      config: { wide_screen_mode: true },
+      header: { title: { tag: 'plain_text', content: title }, template: color || 'red' },
+      elements: [{ tag: 'div', text: { tag: 'lark_md', content: msg } }]
+        .concat(RUN_URL ? [{ tag: 'action', actions: [{ tag: 'button', text: { tag: 'plain_text', content: '📋 查看日志' }, type: 'primary', url: RUN_URL }] }] : [])
+    };
+    const r = await api('/im/v1/messages?receive_id_type=email', {
+      method: 'POST',
+      body: JSON.stringify({ receive_id: REPORT_EMAIL, msg_type: 'interactive', content: JSON.stringify(card) })
+    });
+    if (!r.json || r.json.code !== 0) throw new Error('HTTP ' + r.status + ' ' + JSON.stringify(r.json).slice(0, 200));
+    console.log('📨 飞书卡片已发送');
+  } catch (e) {
+    console.log('⚠️ 飞书卡片发送失败: ' + e.message);
+  }
+}
+
+const ARGV = process.argv.slice(2);
+if (ARGV[0] === '--alert-only') {
+  // 告警分支不走 main()，TOKEN 从未加载 → 应用身份一旦失败，用户 token 兜底会直接抛「均不可用」。
+  // 这里补一次预加载（拿不到就算了，不影响应用身份那条路）。
+  getToken().catch(e => console.log('ℹ️ 用户 token 预加载失败（不影响应用身份发送）：' + e.message))
+    .then(() => sendCard('❌ 题库同步未完成', ARGV[1] || '（无详情）', 'red'))
+    .then(() => process.exit(0));
+} else {
+  main().catch(e => { console.log('❌ 异常: ' + e.message); process.exit(1); });
+}

@@ -12116,7 +12116,9 @@ URL.revokeObjectURL(url);
     //   → 题库只剩这一个 key，全量由 qb-weekly-sync.js 维护。
     //   ⚠️ 这个 key 绝不能加 `_` 前缀 —— _syncSetItem 的穿透规则是「不以 _ 开头就自动入队」，
     //   而备份导出与 kvMirrorWrite 都过滤 `_` 前缀；带了就既不进备份、KV 兜底也失效。
-    // 8 类固定品类（2026-09-05 改版：7 源品类 + 手动录入题目；key = 品类中文名，source=true 为飞书源区）
+    // 7 个固定品类（2026-09-13：原第 8 类「手动录入题目」已随页面手动区一起砍掉）
+    //   key = 品类英文标识；source=true 表示由飞书源文档 + 周同步维护
+    //   ⚠️ ensureQBCategories 会按这张表把缺失的分类补回来 —— 从这里删掉的分类，页面才不会再自动长出卡片
     const QB_DEFAULT_CATEGORIES = {
         '手机': { name: '手机', key: 'phone', order: 1, source: true },
         '平板': { name: '平板', key: 'tablet', order: 2, source: true },
@@ -12124,8 +12126,7 @@ URL.revokeObjectURL(url);
         '手表': { name: '手表', key: 'watch', order: 4, source: true },
         '耳机': { name: '耳机', key: 'earphone', order: 5, source: true },
         '相机&镜头': { name: '相机&镜头', key: 'camera', order: 6, source: true },
-        '游戏机&游戏卡带': { name: '游戏机&游戏卡带', key: 'console', order: 7, source: true },
-        '手动录入题目': { name: '手动录入题目', key: 'manual', order: 8, source: false }
+        '游戏机&游戏卡带': { name: '游戏机&游戏卡带', key: 'console', order: 7, source: true }
     };
     // 失误品类名 → 品类 key（出卷品类边界用）
     const QB_PRODUCT_TO_KEY = {
@@ -12487,7 +12488,7 @@ URL.revokeObjectURL(url);
             catCards = categories.map(cat => {
                 const count = allQuestions.filter(q => q.category === cat).length;
                 // 2026-09-05 改版：8 品类固定图标；source=true 源区只读（飞书同步管理），手动区全功能
-                const iconMap = { '手机':'📱','平板':'🖥️','笔记本':'💻','手表':'⌚','耳机':'🎧','相机&镜头':'📷','游戏机&游戏卡带':'🎮','手动录入题目':'✍️' };
+                const iconMap = { '手机':'📱','平板':'🖥️','笔记本':'💻','手表':'⌚','耳机':'🎧','相机&镜头':'📷','游戏机&游戏卡带':'🎮' };
                 const icon = iconMap[cat] || '📋';
                 const isSource = qb.categories[cat] && qb.categories[cat].source === true;
                 const safeCat = escapeJsInAttr(cat);
@@ -12607,9 +12608,6 @@ URL.revokeObjectURL(url);
         _qbSelfHeal();
     }
 
-    // 2026-09-13 热读点：返回冻结数组。调用方只做 .filter/.find 等只     _qbSelfHeal();
-    }
-
     // 2026-09-13 热读点：返回冻结数组。调用方只做 .filter/.find 等只读操作（见 openQBDetailModal：
     //   qbDetailQuestions 全程只被读取和整体重新赋值，从不原地改）★禁止修改返回值★
     function getAllQBQuestions() { return qbRead().questions || []; }
@@ -12651,7 +12649,7 @@ URL.revokeObjectURL(url);
             } else {
                 catCards = categories.map(cat => {
                     const count = allQuestions.filter(q => q.category === cat).length;
-                    const iconMap = { '手机':'📱','平板':'🖥️','笔记本':'💻','手表':'⌚','耳机':'🎧','相机&镜头':'📷','游戏机&游戏卡带':'🎮','手动录入题目':'✍️' };
+                    const iconMap = { '手机':'📱','平板':'🖥️','笔记本':'💻','手表':'⌚','耳机':'🎧','相机&镜头':'📷','游戏机&游戏卡带':'🎮' };
                     const icon = iconMap[cat] || '📋';
                     const isSource = qb.categories[cat] && qb.categories[cat].source === true;
                     const safeCat = escapeJsInAttr(cat);
@@ -23819,4 +23817,9 @@ updateAdminUI();
     setTimeout(check, 20000);      // 启动 20s 后首检（避开首屏加载）
     setInterval(check, 600000);    // 之后每 10 分钟
     document.addEventListener('visibilitychange', function() {
-        if (doc
+        if (document.visibilityState === 'visible') check(); // 切回前台补检一次
+    });
+})();
+</script>
+</body>
+</html>
