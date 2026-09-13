@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <!-- 版本行：每次部署新代码必须 bump 此 content（YYYYMMDD.N），旧设备靠它自检静默升级 -->
-    <meta name="yxt-ver" content="20260913.3">
+    <meta name="yxt-ver" content="20260913.4">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
     <title>优学堂</title>
     <script src="https://cdn.sheetjs.com/xlsx-0.20.2/package/dist/xlsx.full.min.js" defer></script>
@@ -12130,12 +12130,44 @@ URL.revokeObjectURL(url);
             }
         });
         if (migrated) {
-            try { localStorage.setItem(QB_STORAGE_KEY, JSON.stringify(data)); } catch(e) {}
+            try { _qbWriteLocal(data); } catch(e) {}
         }
         return data;
     }
+    // ==================== 题库本地写入加固 + 云端版本检查（2026-09-13） ====================
+    // 背景：点「🔄 同步题库」提示「✅ 同步成功 1319 题」但页面纹丝不动 —— 云端数据已取回，
+    // 卡在写 localStorage 这一步：_pullRemoteQB 用 _realLS.setItem 直写，绕过了 _syncSetItem 里的
+    // _lsGuard() 容量护栏（2026-09-06 已知问题：配额满 → QuotaExceededError → 被 try/catch 吞掉）。
+    // 三道加固：① 内存缓存，写不进 local 也让本次会话显示最新；② 写前过容量护栏，失败清一次再重试；
+    // ③ 仍失败则明确提示（原来只在 console.warn，用户完全无感）。
+    var _qbMemBank = null;   // 本次会话已确认的最新题库（优先于 localStorage 返回）
+    function _qbWriteLocal(data) {
+        _qbMemBank = data;
+        var s;
+        try { s = JSON.stringify(data); } catch(e) { return false; }
+        try { _lsGuard(); } catch(e) {}
+        try { _realLS.setItem(QB_STORAGE_KEY, s); return true; }
+        catch(e) {
+            console.warn('⚠️ 题库写本地失败（' + (e && e.message) + '），清一次可再生物后重试');
+            try { _lsGuardTs = 0; _lsGuard(); } catch(e2) {}
+            try { _realLS.setItem(QB_STORAGE_KEY, s); return true; }
+            catch(e3) { console.warn('⚠️ 题库写本地仍失败: ' + (e3 && e3.message)); return false; }
+        }
+    }
+    // 云端版本时间戳：内存 + localStorage 双写（本地存不下时本次会话仍能比对，不会反复拉取）
+    var _qbStampKey = '_qbCloudStamp', _qbStampMem = null;
+    function _qbGetStamp() {
+        if (_qbStampMem) return _qbStampMem;
+        try { return localStorage.getItem(_qbStampKey); } catch(e) { return null; }
+    }
+    function _qbSetStamp(t) {
+        if (!t) return;
+        _qbStampMem = String(t);
+        try { localStorage.setItem(_qbStampKey, String(t)); } catch(e) {}
+    }
     function getQuestionBank() {
         try {
+            if (_qbMemBank) return migrateQBTypes(ensureQBCategories(_qbMemBank));   // 2026-09-13 内存优先（local 写不进时的兜底）
             var local = localStorage.getItem(QB_STORAGE_KEY);
             if (local) return migrateQBTypes(ensureQBCategories(JSON.parse(local)));
             // Supabase 兜底：本地没有则尝试从云端加载
@@ -12150,7 +12182,8 @@ URL.revokeObjectURL(url);
                 if (rows && rows.length > 0 && rows[0].value) {
                     var data = JSON.parse(rows[0].value);
                     // 2026-09-07 流量优化：拉取写缓存用纯本地写，避免题库被镜像回云端（浪费出站流量）
-                    try { _realLS.setItem(QB_STORAGE_KEY, rows[0].value); } catch(e) {}
+                    // 2026-09-13：改走 _qbWriteLocal（内存兜底 + 容量护栏 + 失败可见）
+                    try { _qbWriteLocal(data); } catch(e) {}
                     return migrateQBTypes(ensureQBCategories(data));
                 }
             }
@@ -12159,18 +12192,23 @@ URL.revokeObjectURL(url);
     }
     // 从云端/KV 拉取题库（fetch 包装：Supabase 失败自动转 KV 兜底读）；手动同步按钮 + 本地空题库自愈共用
     function _pullRemoteQB(callback) {
-        fetch(SUPABASE_URL + '/rest/v1/app_data?select=value&key=eq.' + encodeURIComponent(QB_STORAGE_KEY) + '&limit=1', {
+        fetch(SUPABASE_URL + '/rest/v1/app_data?select=value,updated_at&key=eq.' + encodeURIComponent(QB_STORAGE_KEY) + '&limit=1', {
             headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY }
         }).then(function(r) { return r.json(); }).then(function(rows) {
-            var data = null;
+            var data = null, stamp = null;
             if (Array.isArray(rows) && rows.length > 0 && rows[0].value) {
+                stamp = rows[0].updated_at || null;
                 try { data = JSON.parse(rows[0].value); } catch(e) { data = null; }
             }
             if (data && (data.questions || []).length > 0) {
                 // 2026-09-06 修复：原 setItem 无 try/catch，配额满时会把「数据已读到但写不进本地」误报成「云端没有数据」
                 // 2026-09-07 流量优化：改纯本地写，避免题库被镜像回云端（游客设备拉取即推回，浪费出站流量）
-                try { _realLS.setItem(QB_STORAGE_KEY, JSON.stringify(data)); }
-                catch(e) { console.warn('⚠️ 题库已同步但本地写入失败: ' + e.message); }
+                // 2026-09-13 修复「提示同步成功但页面毫无变化」：改走 _qbWriteLocal ——
+                // 写本地失败时不再只是 console.warn 被无视，而是内存兜底（页面立刻显示最新）+ 明确提示
+                var wrote = false;
+                try { wrote = _qbWriteLocal(data); } catch(e) { wrote = false; }
+                if (!wrote) showToast('⚠️ 题库已取回但本地存不下（浏览器存储空间不足），本次会话可正常使用；建议清理浏览器数据后刷新', 'warning');
+                if (stamp) _qbSetStamp(stamp);
                 if (callback) callback(data);
             } else if (callback) callback(null);
         }).catch(function() { if (callback) callback(null); });
@@ -12189,20 +12227,86 @@ URL.revokeObjectURL(url);
             }
         });
     }
+    // 云端版本轻量检查（2026-09-13）：解决「同步脚本说 1319 题、页面却是 1301」的静默不一致。
+    // 根因：getQuestionBank() 本地优先 + _qbSelfHeal() 只在本地为空时才拉 → 浏览器里一份非空旧缓存
+    // 会永远显示旧数据。这里在打开题库页时只探「云端 updated_at」这一个字段：
+    //   Supabase 直连约 200 字节（select=updated_at&limit=1 被 fetch 包装判定为轻量探测，直连不转 KV）；
+    //   Supabase 挂断（402 配额期）→ 读 KV 元数据 list，复用已有的 2 小时跨标签缓存，几乎零成本。
+    // 只有云端确实比本机新才自动拉一次全量（等同点「🔄 同步题库」），没变化时一个字节都不多下。
+    var _qbVerCheckGap = 600000, _qbVerCheckMem = 0;   // 10 分钟节流（内存 + localStorage 双记，local 写不进也不失效）
+    function _qbVerCheckLast() {
+        var t = _qbVerCheckMem;
+        try { t = Math.max(t, parseInt(localStorage.getItem('_qbVerCheckTs'), 10) || 0); } catch(e) {}
+        return t;
+    }
+    function _qbVerCheckMark() {
+        _qbVerCheckMem = Date.now();
+        try { localStorage.setItem('_qbVerCheckTs', String(_qbVerCheckMem)); } catch(e) {}
+    }
+    function _qbKvFindStamp(ks) {
+        var hit = null;
+        (ks || []).forEach(function(it) { if (it && it.key === QB_STORAGE_KEY) hit = it.t; });
+        return hit;
+    }
+    function _qbKvStamp(cb) {
+        try {
+            var c = JSON.parse(localStorage.getItem('_yxtKvListCache') || 'null');
+            if (c && c.k && Date.now() - c.t < 7200000) { cb(_qbKvFindStamp(c.k)); return; }
+        } catch(e) {}
+        fetch('https://yxt-feishu.pages.dev/data/list', { headers: { 'x-yxt-secret': 'yxt-feishu-2026' } })
+            .then(function(r) { return r.json(); })
+            .then(function(j) {
+                var ks = (j && j.keys) || [];
+                try { localStorage.setItem('_yxtKvListCache', JSON.stringify({ t: Date.now(), k: ks })); } catch(e) {}
+                cb(_qbKvFindStamp(ks));
+            }).catch(function() { cb(null); });
+    }
+    function _qbApplyRemoteStamp(remoteT) {
+        var localT = _qbGetStamp();
+        // ISO 时间戳字符串可直接按字典序比较；本机无版本戳（首次启用 / 本地存不下）→ 拉一次对齐
+        if (localT && String(remoteT) <= String(localT)) return;
+        console.log('[题库版本] 云端 ' + remoteT + (localT ? ' > 本机 ' + localT : '（本机无版本戳）') + '，自动同步');
+        _pullRemoteQB(function(data) {
+            if (!data) return;
+            showToast('🔄 云端题库已更新，已自动同步 ' + (data.questions || []).length + ' 题', 'success');
+            if (typeof currentNav !== 'undefined' && currentNav === 'questionBank') renderQuestionBank();
+        });
+    }
+    function _qbCloudVersionCheck() {
+        if (Date.now() - _qbVerCheckLast() < _qbVerCheckGap) return;
+        // 本地为空的情况由 _qbSelfHeal 负责拉取（避免同一次渲染里拉两遍），这里只管「本地非空但是旧的」
+        try { if (!_qbMemBank && !localStorage.getItem(QB_STORAGE_KEY)) return; } catch(e) {}
+        _qbVerCheckMark();
+        fetch(SUPABASE_URL + '/rest/v1/app_data?select=updated_at&key=eq.' + encodeURIComponent(QB_STORAGE_KEY) + '&limit=1', {
+            headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY }
+        }).then(function(r) {
+            if (!r.ok) throw new Error('HTTP ' + r.status);
+            return r.json();
+        }).then(function(rows) {
+            var t = Array.isArray(rows) && rows[0] && rows[0].updated_at;
+            if (!t) throw new Error('无 updated_at');
+            _qbApplyRemoteStamp(t);
+        }).catch(function() {
+            // Supabase 不可用（402 配额期）→ 退到 KV 侧时间戳
+            _qbKvStamp(function(t) { if (t) _qbApplyRemoteStamp(t); });
+        });
+    }
     // 题库写云端（POST app_data；402 期间 fetch 包装自动镜像 KV）
     function _qbPostSave(data) {
         try {
             var val = JSON.stringify(data);
+            var stamp = new Date().toISOString();
+            _qbSetStamp(stamp);   // 2026-09-13：本机版本戳对齐，避免版本检查把自己刚写入的改动误判成「云端更新」而回拉一遍
             fetch(SUPABASE_URL + '/rest/v1/app_data', {
                 method: 'POST',
                 headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY, 'Content-Type': 'application/json', 'Prefer': 'resolution=merge-duplicates' },
-                body: JSON.stringify({ key: QB_STORAGE_KEY, value: val, updated_at: new Date().toISOString() })
+                body: JSON.stringify({ key: QB_STORAGE_KEY, value: val, updated_at: stamp })
             }).catch(function(){});
         } catch(e) {}
     }
     function saveQuestionBank(data) {
         ensureQBCategories(data);
-        localStorage.setItem(QB_STORAGE_KEY, JSON.stringify(data));
+        _qbWriteLocal(data);
         // 2026-09-05 防覆盖守卫：本地源区为空时（旧空缓存/尚未自愈），先拉远端合并——远端源区 + 本地手动区
         // 防止 KV 兜底期的 1302 题源数据被本地空缓存覆盖（12:22 事件）
         var localSrc = (data.questions || []).filter(function(q) { return q.categoryId !== 'manual' && q.category !== '手动录入题目'; });
@@ -12213,7 +12317,7 @@ URL.revokeObjectURL(url);
                 var localManual = (data.questions || []).filter(function(q) { return q.categoryId === 'manual' || q.category === '手动录入题目'; });
                 var merged = { categories: remote.categories || data.categories, questions: remoteSrc.concat(localManual) };
                 ensureQBCategories(merged);
-                localStorage.setItem(QB_STORAGE_KEY, JSON.stringify(merged));
+                _qbWriteLocal(merged);
                 _qbPostSave(merged);
             } else {
                 _qbPostSave(data);
@@ -12228,6 +12332,8 @@ URL.revokeObjectURL(url);
     function renderQuestionBank() {
         // 题库懒加载（2026-09-07 流量优化）：点入题库页时本地为空才从云端/KV 拉，不再启动全量下载
         try { _qbSelfHeal(); } catch(e) {}
+        // 2026-09-13：本地非空也可能已过期（周一同步后不会自动刷新）→ 轻量探一次云端版本，新则自动拉
+        try { _qbCloudVersionCheck(); } catch(e) {}
         const container = document.getElementById('mainContent');
         const qb = getQuestionBank();
         // 按 order 字段排序分类（保持上传时的顺序）
@@ -23011,6 +23117,7 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
     function _syncSetItem(key, value) {
         if (key && typeof value === 'string' && value.length > 200000) _lsGuard(); // 大键写入前先过容量护栏（2026-09-06）
         _realLS.setItem(key, value);
+        if (key === QB_STORAGE_KEY) _qbMemBank = null;   // 2026-09-13：题库被别的路径覆写本地 → 内存缓存同步失效
         if (key && !key.startsWith('_')) {
             _syncQueue[key] = value;
             try { _realLS.setItem('_syncPendingQueue', JSON.stringify(_syncQueue)); } catch(e) {}   // 队列持久化（2026-09-07）
@@ -23141,7 +23248,12 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
                     }
                     // trainee_data_sync_time 是仅本地管理的同步时间戳；其余所有 key 一律云端覆盖本地（2026-09-07 统一语义）
                     if (row.key === 'trainee_data_sync_time') return;
-                    if (row.key && row.value !== null) _realLS.setItem(row.key, row.value);
+                    if (row.key && row.value !== null) {
+                        _realLS.setItem(row.key, row.value);
+                        // 2026-09-13：题库读取是 _qbMemBank 内存优先（写不进本地时的兜底），这里覆盖了本地副本
+                        // 必须同时失效内存缓存，并把版本戳对齐云端 updated_at（否则版本检查会拿旧戳判定「云端更新」再拉一遍）
+                        if (row.key === QB_STORAGE_KEY) { _qbMemBank = null; if (row.updated_at) _qbSetStamp(row.updated_at); }
+                    }
                 });
             }
             // 写回本次同步时间（增量拉取的下一次起点；游客写游客游标，管理员写管理员游标）
