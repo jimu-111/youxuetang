@@ -1,5 +1,12 @@
 name: 题库定期同步
 
+# 2026-09-13 加固：
+#   ① 题库步骤加 id:qbsync，补上缺失的 FORCE 透传（原来手动触发选 force 对题库无效）
+#   ② 新增「题库同步失败告警（飞书）」——之前题库同步失败是**静默**的：脚本 exitCode=1 只让 job
+#      变红，没人会天天盯 Actions 页面，结果会是「题库悄悄停在旧数据上」而无人察觉。
+#   ③ 修正「对账失败告警」文案 —— 06ab400 给题库步骤加了 if: ...== 'success' 之后，对账失败时
+#      题库同步是**被跳过**的，原文案却写「仍会继续执行」，正好说反了。
+
 on:
   workflow_dispatch:
     inputs:
@@ -7,7 +14,7 @@ on:
         description: '只读演练（不写任何数据）'
         default: 'false'
       force:
-        description: '强制（跳过守卫：行数骤降 / 删除量过大）'
+        description: '强制（越过守卫：对账删除量过大 / 题库题数骤降超 10%）'
         default: 'false'
   # 每周日 8:00 北京时间 = UTC 周日 0:00（GitHub Actions cron 用 UTC）
   # 2026-09-13 改：只保留周日一次，取消原来的 周一/周三/周五 三次
@@ -42,11 +49,12 @@ jobs:
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
 
       # 对上一步的"失败"告警：continue-on-error 会让 job 层面仍是成功，所以必须看 step 的 outcome
-      # 目的：对账没成功也要让你知道（因为下面的题库同步仍会继续上线）
+      # 2026-09-13 修正文案：题库同步现在是 if: srcsync.outcome == 'success'，对账异常时它**会被跳过**，
+      # 所以这次运行优学堂用的仍是**上周的题库**（安全，只是没更新），而不是「用未对账的数据上线」。
       - name: 对账失败告警（飞书）
         if: steps.srcsync.outcome == 'failure'
         continue-on-error: true
-        run: node qb-source-sync.js --alert-only "⚠️ **源1→源2 对账未跑完**（脚本异常退出，详见上方运行日志）。注意：下面的「题库同步」**仍会继续执行**，优学堂可能用**未对账的源2 数据**上线，请尽快人工检查。"
+        run: node qb-source-sync.js --alert-only "⚠️ **源1→源2 对账未跑完**（脚本异常退出，详见运行日志）。本次运行的**题库同步已被跳过** —— 优学堂仍是**上周的题库**，数据不会错乱，只是这周不更新。修好后手动触发一次即可补上。"
         env:
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
 
@@ -64,7 +72,10 @@ jobs:
       # 停在半截状态（删了几行然后挂掉），全量覆盖会把半截数据搬上优学堂。
       # 脚本「写前中止」（安全阀拦下、源2 一个格都没动）算正常退出 outcome=success，此时照常同步，
       # 只是这周没有更新 —— 这是安全的。（对账异常时会有飞书告警，修好后手动触发一次即可补上）
-      - name: 读飞书总表 7 品类 → 全量覆盖源区（保留手动区）
+      #
+      # 手动区已砍（2026-09-13）：页面不再增删改题，题库全量由本脚本维护，没有需要「保留」的区域。
+      - name: 读飞书总表 7 品类 → 全量覆盖题库
+        id: qbsync
         if: steps.srcsync.outcome == 'success'
         run: node qb-weekly-sync.js
         env:
@@ -72,3 +83,19 @@ jobs:
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
           # 手动触发选 dry_run 时，题库同步也只读不写（原来漏了这个，演练会真的写库）
           DRY_RUN: ${{ github.event.inputs.dry_run || 'false' }}
+          # 2026-09-13 补：原来只透传给对账脚本，手动触发选 force 对题库无效
+          FORCE: ${{ github.event.inputs.force || 'false' }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+      # 2026-09-13 新增：题库同步失败告警。
+      #   用 steps.qbsync.outcome == 'failure' 而不是 failure()：对账失败时题库步骤是被 **skip**
+      #   的，那种情况已由上面的「对账失败告警」负责，不该在这里误报成「题库同步失败」。
+      #   脚本内部四道闸门（某品类读值失败 / 某品类 0 题 / 现有题库读不到 / 题数缩水超 10%）
+      #   拦下时会以 exitCode=1 退出，所以都会走到这里，日志里写明了是哪道闸门。
+      - name: 题库同步失败告警（飞书）
+        if: steps.qbsync.outcome == 'failure'
+        continue-on-error: true
+        run: |
+          node qb-weekly-sync.js --alert-only "⚠️ **题库同步未完成**（脚本异常退出，详见运行日志）。**云端题库没有被修改** —— 优学堂用的仍是上周的题库，不是数据错乱，只是这周没更新。常见原因：某品类读值失败 / sheet 被改名或删除 / 题数骤降超 10% / 云端题库读不到。运行日志里会写明是哪一道闸门拦下的。"
+        env:
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
