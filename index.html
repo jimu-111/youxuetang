@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <!-- 版本行：每次部署新代码必须 bump 此 content（YYYYMMDD.N），旧设备靠它自检静默升级 -->
-    <meta name="yxt-ver" content="20260913.2">
+    <meta name="yxt-ver" content="20260913.3">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
     <title>优学堂</title>
     <script src="https://cdn.sheetjs.com/xlsx-0.20.2/package/dist/xlsx.full.min.js" defer></script>
@@ -17051,6 +17051,70 @@ async function importQBFromFeishu() {
         }
     }
 
+    // 常驻飞书授权面板（2026-09-13）
+    // 起因：取 token 链路的兜底 getFeishuToken() 会返回应用 tenant token（永不过期），
+    // 于是 refreshErrorDashboardData 永远走不到「🔐 需要飞书授权」那一页；
+    // 其余授权链接又都挂在 errorDashboardAllFailed 条件下，而应用身份能读全部表 → 条件恒为假。
+    // 结果：页面上没有任何地方可以重新授权。这里补一个常驻入口。
+    function showFeishuAuthPanel() {
+        var baseUrl = encodeURIComponent(window.location.origin + window.location.pathname.replace(/\/?$/, '/'));
+        var authUrl = 'https://open.feishu.cn/open-apis/authen/v1/authorize?app_id=' + FEISHU_CONFIG.appId + '&redirect_uri=' + baseUrl + '&scope=sheets:spreadsheet:readonly%20drive:drive:readonly%20wiki:wiki:readonly';
+        var old = document.getElementById('feishuAuthPanel');
+        if (old) old.remove();
+        var box = document.createElement('div');
+        box.id = 'feishuAuthPanel';
+        box.style.cssText = 'position:fixed;inset:0;background:rgba(15,23,42,.45);z-index:99999;display:flex;align-items:center;justify-content:center;padding:20px;';
+        box.innerHTML =
+            '<div style="background:white;border-radius:16px;max-width:540px;width:100%;padding:22px;box-shadow:0 20px 60px rgba(0,0,0,.25);">' +
+                '<div style="display:flex;justify-content:space-between;align-items:center;">' +
+                    '<div style="font-size:1.05rem;font-weight:700;color:#1f3a6b;">🔑 飞书授权（徐行）</div>' +
+                    '<span onclick="document.getElementById(\'feishuAuthPanel\').remove()" style="cursor:pointer;color:#94a3b8;font-size:1.1rem;">✕</span>' +
+                '</div>' +
+                '<p style="font-size:0.72rem;color:#5e6f8d;margin:6px 0 14px;">必须用「徐行」的飞书账号。授权后本页自动保存，并同步到云端供每周题库对账使用。</p>' +
+                '<div style="display:flex;gap:20px;align-items:flex-start;flex-wrap:wrap;justify-content:center;">' +
+                    '<div style="text-align:center;">' +
+                        '<div id="feishuAuthQr" style="display:inline-block;background:white;padding:8px;border-radius:12px;border:1px solid #eef2f6;"></div>' +
+                        '<p style="font-size:0.65rem;color:#94a3b8;margin-top:6px;">手机飞书扫码</p>' +
+                    '</div>' +
+                    '<div style="flex:1;min-width:210px;">' +
+                        '<a href="' + authUrl + '" target="_blank" rel="noopener" style="display:block;text-align:center;background:#1f3a6b;color:white;padding:10px 18px;border-radius:24px;text-decoration:none;font-size:0.82rem;font-weight:600;margin-bottom:10px;">🔗 电脑端前往飞书授权</a>' +
+                        '<p style="font-size:0.68rem;color:#5e6f8d;margin-bottom:6px;">授权后页面跳回本页会自动完成。若没自动完成，把地址栏 <code>code=</code> 后面那串粘到这里：</p>' +
+                        '<input id="feishuAuthCodeInput" type="text" placeholder="粘贴授权码…" style="width:100%;padding:8px 12px;border:1px solid #cbd5e1;border-radius:10px;font-size:0.78rem;font-family:monospace;margin-bottom:8px;box-sizing:border-box;">' +
+                        '<button id="feishuAuthCodeBtn" style="width:100%;padding:9px;background:#2a5298;color:white;border:none;border-radius:10px;cursor:pointer;font-size:0.8rem;font-weight:600;">🔓 激活</button>' +
+                        '<div id="feishuAuthMsg" style="margin-top:8px;font-size:0.72rem;min-height:18px;"></div>' +
+                    '</div>' +
+                '</div>' +
+            '</div>';
+        document.body.appendChild(box);
+        box.onclick = function(e) { if (e.target === box) box.remove(); };
+        setTimeout(function() {
+            var qrEl = document.getElementById('feishuAuthQr');
+            if (qrEl && typeof QRCode !== 'undefined') { qrEl.innerHTML = ''; new QRCode(qrEl, { text: authUrl, width: 150, height: 150, correctLevel: QRCode.CorrectLevel.L }); }
+        }, 60);
+        document.getElementById('feishuAuthCodeBtn').onclick = async function() {
+            var btn = this;
+            var msg = document.getElementById('feishuAuthMsg');
+            var code = (document.getElementById('feishuAuthCodeInput').value || '').trim();
+            if (!code) { msg.innerHTML = '<span style="color:#c0392b;">请先粘贴授权码</span>'; return; }
+            btn.disabled = true; btn.textContent = '⏳ 激活中…'; msg.textContent = '';
+            try {
+                var r = await exchangeCodeForToken(code);
+                if (r.success) {
+                    msg.innerHTML = '<span style="color:#16a34a;">✅ 授权成功，正在刷新数据…</span>';
+                    errorDashboardData = []; errorDashboardSheetStatus = {}; errorDashboardAllFailed = false;
+                    localStorage.removeItem('errorDashboardCache');
+                    setTimeout(function() { var p = document.getElementById('feishuAuthPanel'); if (p) p.remove(); refreshErrorDashboardData(true, false); }, 800);
+                } else {
+                    btn.disabled = false; btn.textContent = '🔓 激活';
+                    msg.innerHTML = '<span style="color:#c0392b;">❌ ' + escapeHtml(String(r.error || '未知错误')) + '</span>';
+                }
+            } catch(e) {
+                btn.disabled = false; btn.textContent = '🔓 激活';
+                msg.innerHTML = '<span style="color:#c0392b;">❌ ' + escapeHtml(String(e.message || e)) + '</span>';
+            }
+        };
+    }
+
     async function feishuRefreshToken() {
         var stored = null;
         try { stored = JSON.parse(localStorage.getItem('feishu_token') || 'null'); } catch(e) {}
@@ -20080,6 +20144,9 @@ async function importQBFromFeishu() {
                         '</select>' +
                         '<span>' + refreshStr + '</span>' +
                         '<button onclick="refreshErrorDashboardData(true)" style="background:#2a5298;color:white;border:none;padding:4px 10px;border-radius:14px;cursor:pointer;font-size:0.7rem;">🔄 刷新</button>' +
+                        // 常驻授权入口（2026-09-13）：原来所有授权链接都藏在 errorDashboardAllFailed 分支里，
+                        // 而应用身份能读到全部表 → 那个条件永远不成立 → 页面上根本没地方重新授权。
+                        '<button onclick="showFeishuAuthPanel()" title="重新授权飞书（徐行账号）" style="background:#f1f5f9;color:#1f3a6b;border:1px solid #cbd5e1;padding:4px 10px;border-radius:14px;cursor:pointer;font-size:0.7rem;">🔑 授权</button>' +
                     '</div>' +
                 '</div>' +
                 '<div class="sheet-status">' + statusDots + '<span style="margin-left:12px;font-size:0.75rem;color:#5e6f8d;">总失误数（' + errorDashboardData.length + '条）</span></div>' +
