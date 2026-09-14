@@ -21250,17 +21250,23 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
                 '<div style=\"display:'+disp2+';\">' +
                 g.items.map(function(p){
                     var hasReport = p.reportName && !!reports[p.reportName];
+                    var isExam = p.type === 'exam'; // 考试推送记录（2026-09-14 补录起）
                     var scopeLabel = p.scope || '培训资料';
-                    var titleText = scopeLabel.indexOf('个人')>=0 ? escapeHtml(p.reviewerName)+' 的培训资料' :
+                    var titleText = isExam ? (p.title || (p.reviewerName+' 精准考试')) :
+                        scopeLabel.indexOf('个人')>=0 ? escapeHtml(p.reviewerName)+' 的培训资料' :
                         (scopeLabel.indexOf('全站')>=0 ? '全站培训资料（'+(p.reviewerName||'').split(',').length+'人）' :
                         scopeLabel.replace('站点培训资料','站点培训资料')+'（'+(p.reviewerName||'').split(',').length+'人）');
-                    var isPushed = isPushedThisPeriod(p.reviewerName, 'train');
+                    var isPushed = isPushedThisPeriod(p.reviewerName, isExam ? 'exam' : 'train');
                     var pushTag = isPushed ? '<span style=\"background:#d4edda;color:#166534;padding:2px 8px;border-radius:8px;font-size:0.65rem;\">✅ 已推送</span> ' : '';
                     return '<div class=\"exam-card\" style=\"display:flex;gap:12px;align-items:center;flex-wrap:wrap;\">' +
-                        '<div style=\"flex:1;\"><div style=\"font-weight:700;\">📄 '+pushTag+escapeHtml(titleText)+'</div>' +
-                        '<div style=\"font-size:0.75rem;color:#5e6f8d;\">'+new Date(p.time).toLocaleString('zh-CN')+' | '+(p.caseCount||0)+'案例 | '+escapeHtml(scopeLabel)+'</div></div>' +
+                        '<div style=\"flex:1;\"><div style=\"font-weight:700;\">'+(isExam?'📝 ':'📄 ')+pushTag+escapeHtml(titleText)+'</div>' +
+                        '<div style=\"font-size:0.75rem;color:#5e6f8d;\">'+new Date(p.time).toLocaleString('zh-CN')+(isExam
+                            ? ' | 考试码 '+escapeHtml(p.examCode||'—')+(p.questionCount?' | '+p.questionCount+'题':'')
+                            : ' | '+(p.caseCount||0)+'案例 | '+escapeHtml(scopeLabel))+'</div></div>' +
                         '<div style=\"display:flex;gap:6px;flex-wrap:wrap;\">' +
-                            (hasReport
+                            (isExam
+                                ? (p.examCode ? '<button class=\"primary\" data-openexam=\"'+escapeHtml(p.examCode)+'\">📝 打开考试</button>' : '')
+                                : hasReport
                                 ? '<button class=\"primary\" data-openreport=\"'+p.reportName+'\">👁️ 查看</button><button class=\"small-outline\" data-download=\"'+p.reportName+'\">📥 下载</button>'
                                 : '<span style=\"color:#94a3b8;font-size:0.7rem;\">'+(p.reportName?'📌 已清理':'📌 无报告')+'</span>') +
                             '<button class=\"small-outline\" data-dltrain=\"'+(p.reportName||p.time)+'\">🗑️ 删除</button>' +
@@ -21271,6 +21277,7 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
         });
         content.innerHTML = '<div class=\"report-box\">'+html+'</div>';
         content.querySelectorAll('[data-openreport]').forEach(function(btn){ btn.onclick = function(){ openTrainingReport(btn.dataset.openreport); }; });
+        content.querySelectorAll('[data-openexam]').forEach(function(btn){ btn.onclick = function(){ window.open(location.origin+location.pathname+'?exam='+btn.dataset.openexam, '_blank'); }; });
         content.querySelectorAll('[data-download]').forEach(function(btn){
             btn.onclick = function(){
                 var reports = JSON.parse(localStorage.getItem('generatedReports')||'{}');

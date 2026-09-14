@@ -131,6 +131,30 @@ async function supabaseGet(key) {
     }
 }
 
+// 写推送记录（trainingPushRecords / learnPlanPushRecords），send 与 full 阶段共用
+async function writePushRecords(pushRecords) {
+    if (!pushRecords || pushRecords.length === 0) { console.log('  📋 无推送记录需写入'); return; }
+    var examRecords = pushRecords.filter(function(r){ return r.type === 'exam'; });
+    var learnRecords = pushRecords.filter(function(r){ return r.type === 'learn'; });
+    var trainRecords = pushRecords.filter(function(r){ return r.type === 'train'; });
+    var existingTraining = await supabaseGet('trainingPushRecords');
+    var existingLearn = await supabaseGet('learnPlanPushRecords');
+    // 读不到现有记录时绝不续写 —— 否则会把历史记录整表覆盖掉
+    if (existingTraining === null || existingLearn === null) {
+        console.log('  ⚠️ 读不到现有推送记录（training=' + (existingTraining === null ? '失败' : 'OK') + ', learn=' + (existingLearn === null ? '失败' : 'OK') + '），本次不写，避免覆盖历史');
+        return;
+    }
+    var base = Date.now();
+    var newTraining = existingTraining.concat(examRecords.concat(trainRecords).map(function(r, i){ return { key: r.type+'_'+r.reviewerName+'_'+(base+i), type: r.type, title: r.reviewerName+' 精准'+(r.type==='exam'?'考试':'培训'), reviewerName: r.reviewerName, users: [{name: r.email}], site: '', time: r.pushedAt }; }));
+    var newLearn = existingLearn.concat(learnRecords.map(function(r, i){ return { key: 'learn_'+r.reviewerName+'_'+(base+examRecords.length+trainRecords.length+i), type: 'learn', title: r.reviewerName+' 学习地图', reviewerName: r.reviewerName, users: [{name: r.email}], site: '', time: r.pushedAt }; }));
+    await fetch(SUPABASE_URL + '/rest/v1/app_data', {
+        method: 'POST',
+        headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY, 'Content-Type': 'application/json', 'Prefer': 'resolution=merge-duplicates' },
+        body: JSON.stringify([{ key: 'trainingPushRecords', value: JSON.stringify(newTraining), updated_at: new Date().toISOString() }, { key: 'learnPlanPushRecords', value: JSON.stringify(newLearn), updated_at: new Date().toISOString() }])
+    }).catch(function(){});
+    console.log('  📋 推送记录已写：考试/培训 ' + newTraining.length + ' 条(+' + (examRecords.length + trainRecords.length) + ')，学习 ' + newLearn.length + ' 条(+' + learnRecords.length + ')');
+}
+
 async function sendCard(email, card, token) {
     const body = JSON.stringify({ receive_id: email, msg_type: 'interactive', content: JSON.stringify(card) });
     const r = await fetch('https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=email', {
@@ -186,20 +210,7 @@ async function main() {
             }
         }
         // 写入推送记录到 Supabase
-        if (pushRecords.length > 0) {
-            var examRecords = pushRecords.filter(function(r){ return r.type === 'exam'; });
-            var learnRecords = pushRecords.filter(function(r){ return r.type === 'learn'; });
-            var trainRecords = pushRecords.filter(function(r){ return r.type === 'train'; });
-            var existingTraining = (await supabaseGet('trainingPushRecords')) || [];
-            var existingLearn = (await supabaseGet('learnPlanPushRecords')) || [];
-            var newTraining = existingTraining.concat(examRecords.concat(trainRecords).map(function(r){ return { key: r.type+'_'+r.reviewerName+'_'+Date.now(), type: r.type, title: r.reviewerName+' 精准'+(r.type==='exam'?'考试':'培训'), reviewerName: r.reviewerName, users: [{name: r.email}], site: '', time: r.pushedAt }; }));
-            var newLearn = existingLearn.concat(learnRecords.map(function(r){ return { key: 'learn_'+r.reviewerName+'_'+Date.now(), type: 'learn', title: r.reviewerName+' 学习地图', reviewerName: r.reviewerName, users: [{name: r.email}], site: '', time: r.pushedAt }; }));
-            await fetch(SUPABASE_URL + '/rest/v1/app_data', {
-                method: 'POST',
-                headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY, 'Content-Type': 'application/json', 'Prefer': 'resolution=merge-duplicates' },
-                body: JSON.stringify([{ key: 'trainingPushRecords', value: JSON.stringify(newTraining), updated_at: new Date().toISOString() }, { key: 'learnPlanPushRecords', value: JSON.stringify(newLearn), updated_at: new Date().toISOString() }])
-            }).catch(function(){});
-        }
+        await writePushRecords(pushRecords);
         // 标记已推送（以此为准）
         await fetch(SUPABASE_URL + '/rest/v1/app_data', {
             method: 'POST',
@@ -222,6 +233,7 @@ async function main() {
 
     let sent = 0, fail = 0;
     let pushQueue = []; // 推送队列
+    let pushRecords = []; // 推送记录（full 阶段写回 trainingPushRecords/learnPlanPushRecords，供网页查看）
     let generatedExamCodes = {}; // 记录本次生成的考试码，供发送时直接使用
 
     // 从飞书获取用户的 token 读表格（优先 refresh，失败才降级 appToken）
@@ -579,7 +591,7 @@ async function main() {
                 console.log('  📝 加入队列 → ' + name + '(' + count + ') [' + examCode + ']');
             } else {
                 var card = { config: { wide_screen_mode: true }, header: { title: { tag: 'plain_text', content: '📝 ' + name + ' 精准考试' }, template: 'orange' }, elements: [{ tag: 'div', text: { tag: 'lark_md', content: '**' + name + '** 上周失误 **' + count + ' 次**，已达出卷阈值\n考试码：**' + examCode + '**' } }, { tag: 'action', actions: [{ tag: 'button', text: { tag: 'plain_text', content: '📝 开始考试' }, type: 'primary', url: SITE_URL + '?exam=' + examCode }] }] };
-                try { await sendCard(email, card, appToken); console.log('  📝 考试 → ' + name+'('+count+') [' + examCode + ']'); sent++; }
+                try { await sendCard(email, card, appToken); console.log('  📝 考试 → ' + name+'('+count+') [' + examCode + ']'); sent++; pushRecords.push({ type: 'exam', reviewerName: name, examCode: examCode, email: email, pushedAt: new Date().toISOString() }); }
                 catch(e) { console.log('  ❌ ' + name + ': ' + e.message); fail++; }
             }
         }
@@ -664,7 +676,7 @@ async function main() {
                     console.log('  🗺️ 加入队列 → ' + name + ' [' + planCode + '] ' + allItems.length + '课');
                 } else {
                     var lcard = {config:{wide_screen_mode:true},header:{title:{tag:'plain_text',content:'🗺️ '+name+' 学习地图'},template:'blue'},elements:[{tag:'div',text:{tag:'lark_md',content:'**'+name+'** 上周失误 **'+count+' 次**，已达学习阈值\n课程：'+allItems.length+' 节\n涉及：'+areaNames}},{tag:'action',actions:[{tag:'button',text:{tag:'plain_text',content:'🗺️ 学习地图'},type:'primary',url:SITE_URL+'?learnPlan='+planCode}]}]};
-                    try { await sendCard(email, lcard, appToken); console.log('  🗺️ 学习 → '+name+' ['+planCode+'] '+allItems.length+'课'); sent++; }
+                    try { await sendCard(email, lcard, appToken); console.log('  🗺️ 学习 → '+name+' ['+planCode+'] '+allItems.length+'课'); sent++; pushRecords.push({ type: 'learn', reviewerName: name, planCode: planCode, email: email, pushedAt: new Date().toISOString() }); }
                     catch(e) { console.log('  ❌ '+name+': '+e.message); fail++; }
                 }
             } else { console.log('  ⏭ '+name+' 未匹配到课程'); }
@@ -750,7 +762,7 @@ async function main() {
                     console.log('  📖 加入队列 → ' + name + ' (' + matched.length + '条)');
                 } else {
                     var tcard = { config: { wide_screen_mode: true }, header: { title: { tag: 'plain_text', content: '📖 ' + name + ' 精准培训' }, template: 'purple' }, elements: [{ tag: 'div', text: { tag: 'lark_md', content: '**' + name + '** 上周失误 **' + count + ' 次**，已达培训阈值\n匹配案例：' + matched.length + ' 条' } }, { tag: 'action', actions: [{ tag: 'button', text: { tag: 'plain_text', content: '📖 查看培训' }, type: 'primary', url: SITE_URL + '?report=' + encodeURIComponent(reportName) }] }] };
-                    try { await sendCard(email, tcard, appToken); console.log('  📖 培训 → ' + name+' (' + matched.length + '条)'); sent++; }
+                    try { await sendCard(email, tcard, appToken); console.log('  📖 培训 → ' + name+' (' + matched.length + '条)'); sent++; pushRecords.push({ type: 'train', reviewerName: name, reportName: reportName, email: email, pushedAt: new Date().toISOString() }); }
                     catch(e) { console.log('  ❌ ' + name + ': ' + e.message); fail++; }
                 }
             } else {
@@ -772,6 +784,8 @@ async function main() {
             console.log('=== 分析完成: 无人达到推送阈值 ===');
         }
     } else if (PHASE === 'full') {
+        // 写推送记录（供网页「培训推送记录」「学习地图推送记录」查看）
+        await writePushRecords(pushRecords);
         // 标记已推送（防止下周重复发送）
         await fetch(SUPABASE_URL + '/rest/v1/app_data', {
             method: 'POST',
