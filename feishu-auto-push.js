@@ -131,7 +131,12 @@ async function supabaseGet(key) {
     }
 }
 
-// 写推送记录（trainingPushRecords / learnPlanPushRecords），send 与 full 阶段共用
+// 写推送记录。语义（2026-09-14 定，用户规则：「生成不是推送，发飞书卡片到对应才算推送记录」）：
+//   ① 三个 pushRecords.push 都发生在 await sendCard() 之后、同一个 try 块里 → 只有真发成功才走到这里
+//   ② 考试不进 trainingPushRecords ——「培训推送记录」tab 只放培训资料；考试的去处是 feishuPushRecords（下面的「已推送」标记）
+//   ③ 学习进 learnPlanPushRecords（有专门的「学习地图推送记录」tab），培训进 trainingPushRecords
+//   ④ 三类都写一份「已推送」标记到 feishuPushRecords —— 这是页面 ✅ 标签读的表，不写的话周一脚本推完页面还显示未推，管理员会重复推
+// 每张表各自独立守卫：读不到自己的底表就一个字都不写（避免把历史整表覆盖）
 async function writePushRecords(pushRecords) {
     if (!pushRecords || pushRecords.length === 0) { console.log('  📋 无推送记录需写入'); return; }
     var examRecords = pushRecords.filter(function(r){ return r.type === 'exam'; });
@@ -139,20 +144,58 @@ async function writePushRecords(pushRecords) {
     var trainRecords = pushRecords.filter(function(r){ return r.type === 'train'; });
     var existingTraining = await supabaseGet('trainingPushRecords');
     var existingLearn = await supabaseGet('learnPlanPushRecords');
-    // 读不到现有记录时绝不续写 —— 否则会把历史记录整表覆盖掉
-    if (existingTraining === null || existingLearn === null) {
-        console.log('  ⚠️ 读不到现有推送记录（training=' + (existingTraining === null ? '失败' : 'OK') + ', learn=' + (existingLearn === null ? '失败' : 'OK') + '），本次不写，避免覆盖历史');
-        return;
-    }
+    var existingPush = await supabaseGet('feishuPushRecords');
     var base = Date.now();
-    var newTraining = existingTraining.concat(examRecords.concat(trainRecords).map(function(r, i){ return { key: r.type+'_'+r.reviewerName+'_'+(base+i), type: r.type, title: r.reviewerName+' 精准'+(r.type==='exam'?'考试':'培训'), reviewerName: r.reviewerName, users: [{name: r.email}], site: '', time: r.pushedAt }; }));
-    var newLearn = existingLearn.concat(learnRecords.map(function(r, i){ return { key: 'learn_'+r.reviewerName+'_'+(base+examRecords.length+trainRecords.length+i), type: 'learn', title: r.reviewerName+' 学习地图', reviewerName: r.reviewerName, users: [{name: r.email}], site: '', time: r.pushedAt }; }));
+    var rows = [];
+    var summary = [];
+
+    // ① 培训 → trainingPushRecords（只有培训，不含考试）
+    if (trainRecords.length > 0) {
+        if (existingTraining === null) {
+            console.log('  ⚠️ 读不到 trainingPushRecords，本次培训记录不写，避免覆盖历史');
+        } else {
+            var newTraining = existingTraining.concat(trainRecords.map(function(r, i){ return { key: 'train_'+r.reviewerName+'_'+(base+i), type: 'train', title: r.reviewerName+' 精准培训', reviewerName: r.reviewerName, users: [{name: r.email}], site: '', time: r.pushedAt }; }));
+            rows.push({ key: 'trainingPushRecords', value: JSON.stringify(newTraining), updated_at: new Date().toISOString() });
+            summary.push('培训 ' + newTraining.length + ' 条(+' + trainRecords.length + ')');
+        }
+    }
+
+    // ② 学习 → learnPlanPushRecords
+    if (learnRecords.length > 0) {
+        if (existingLearn === null) {
+            console.log('  ⚠️ 读不到 learnPlanPushRecords，本次学习记录不写，避免覆盖历史');
+        } else {
+            var newLearn = existingLearn.concat(learnRecords.map(function(r, i){ return { key: 'learn_'+r.reviewerName+'_'+(base+i), type: 'learn', title: r.reviewerName+' 学习地图', reviewerName: r.reviewerName, users: [{name: r.email}], site: '', time: r.pushedAt }; }));
+            rows.push({ key: 'learnPlanPushRecords', value: JSON.stringify(newLearn), updated_at: new Date().toISOString() });
+            summary.push('学习 ' + newLearn.length + ' 条(+' + learnRecords.length + ')');
+        }
+    }
+
+    // ③ 三类都写「已推送」标记 → feishuPushRecords（key 与页面 markFeishuPushed 完全一致；同一个 pushKey 覆盖旧条目）
+    if (existingPush === null) {
+        console.log('  ⚠️ 读不到 feishuPushRecords，本次「已推送」标记不写，避免覆盖历史');
+    } else {
+        var pushList = existingPush.slice();
+        var marks = [];
+        examRecords.forEach(function(r){ if (r.examCode) marks.push({ pushKey: 'exam_' + r.examCode, meta: { type: 'exam', title: r.reviewerName + ' 精准考试', reviewerName: r.reviewerName, users: [r.reviewerName], site: '' } }); });
+        learnRecords.forEach(function(r){ if (r.planCode) marks.push({ pushKey: 'learning_' + r.planCode, meta: { type: 'learning', title: r.reviewerName + ' 学习地图', reviewerName: r.reviewerName, users: [r.reviewerName], site: '' } }); });
+        trainRecords.forEach(function(r){ if (r.reportName) marks.push({ pushKey: 'train_' + r.reportName, meta: { type: 'train', title: r.reviewerName + ' 精准培训', reviewerName: r.reviewerName, users: [r.reviewerName], site: '' } }); });
+        marks.forEach(function(mk){
+            var hit = pushList.filter(function(x){ return x && x.pushKey === mk.pushKey; })[0];
+            if (hit) { hit.time = new Date().toISOString(); hit.meta = mk.meta; }      // 同 key 覆盖 —— 与页面 markFeishuPushed 一致
+            else pushList.push({ pushKey: mk.pushKey, time: new Date().toISOString(), meta: mk.meta });
+        });
+        rows.push({ key: 'feishuPushRecords', value: JSON.stringify(pushList), updated_at: new Date().toISOString() });
+        summary.push('已推送标记 ' + pushList.length + ' 条(+' + marks.length + ')');
+    }
+
+    if (rows.length === 0) { console.log('  📋 无推送记录需写入'); return; }
     await fetch(SUPABASE_URL + '/rest/v1/app_data', {
         method: 'POST',
         headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY, 'Content-Type': 'application/json', 'Prefer': 'resolution=merge-duplicates' },
-        body: JSON.stringify([{ key: 'trainingPushRecords', value: JSON.stringify(newTraining), updated_at: new Date().toISOString() }, { key: 'learnPlanPushRecords', value: JSON.stringify(newLearn), updated_at: new Date().toISOString() }])
+        body: JSON.stringify(rows)
     }).catch(function(){});
-    console.log('  📋 推送记录已写：考试/培训 ' + newTraining.length + ' 条(+' + (examRecords.length + trainRecords.length) + ')，学习 ' + newLearn.length + ' 条(+' + learnRecords.length + ')');
+    console.log('  📋 推送记录已写：' + summary.join('，'));
 }
 
 async function sendCard(email, card, token) {
@@ -233,7 +276,7 @@ async function main() {
 
     let sent = 0, fail = 0;
     let pushQueue = []; // 推送队列
-    let pushRecords = []; // 推送记录（full 阶段写回 trainingPushRecords/learnPlanPushRecords，供网页查看）
+    let pushRecords = []; // 推送记录（full 阶段写回：培训→trainingPushRecords / 学习→learnPlanPushRecords / 三类都→feishuPushRecords 已推送标记）
     let generatedExamCodes = {}; // 记录本次生成的考试码，供发送时直接使用
 
     // 从飞书获取用户的 token 读表格（优先 refresh，失败才降级 appToken）
