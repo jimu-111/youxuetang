@@ -11,6 +11,19 @@ on:
   schedule:
     - cron: "30 2 * * 1"
 
+# 2026-09-15 新增：同一个 concurrency group 的作业不能同时跑 —— 后来的排队等，等前一个跑完再启动。
+# 为什么需要：现在有两条通道都会在周一 10:30（北京）触发本工作流 ——
+#   ① GitHub 自己的 schedule（保留当兜底）  ② Cloudflare Worker 的 cron 调 workflow_dispatch（主力）
+# 而 feishu-auto-push.js 的防重是「先读「已推送」标记 → 发完卡片才写标记」（第 268 行读、第 836 行写），
+# 中间隔着拉 token、读飞书表格、分析上周、生成考试、发卡片整个流程（几十秒）。
+# 两条通道若同时开跑，会双双读到「还没有标记」→ 各发一遍 → 员工收到重复卡片。
+# 加了 concurrency 后第二个 run 会排队，等第一个落锁后才启动，一读标记就跳过。零延迟，且对以后新增的触发源自动生效。
+# 注：cancel-in-progress 保持 false（默认值），是「排队等待」而不是「取消前一个」——
+#     取消会打断正在发的推送，排队才安全。
+concurrency:
+  group: auto-push
+  cancel-in-progress: false
+
 jobs:
   push:
     runs-on: ubuntu-latest
