@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <!-- 版本行：每次部署新代码必须 bump 此 content（YYYYMMDD.N），旧设备靠它自检静默升级 -->
-    <meta name="yxt-ver" content="20260914.1">
+    <meta name="yxt-ver" content="20260915.1">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
     <title>优学堂</title>
     <script src="https://cdn.sheetjs.com/xlsx-0.20.2/package/dist/xlsx.full.min.js" defer></script>
@@ -396,7 +396,7 @@
             <button id="adminLoginBtn" class="nav-btn" style="font-size:0.75rem;text-align:center;padding:8px;background:rgba(255,255,255,0.12);border:1px solid rgba(255,255,255,0.25);color:#fff;border-radius:10px;cursor:pointer;font-weight:600;">🔒 游客模式</button>
             <div style="display:flex;align-items:stretch;gap:6px;">
                 <button class="nav-btn" data-nav="admin" style="font-size:0.72rem;flex:1;text-align:center;padding:6px 8px;display:flex;align-items:center;justify-content:center;">⚙️ 管理后台</button>
-                <span id="sidebarSyncBadge" class="nav-btn" style="font-size:0.72rem;flex:1;text-align:center;padding:6px 8px;display:flex;align-items:center;justify-content:center;cursor:pointer;min-width:0;overflow:hidden;text-overflow:ellipsis;" title="点击手动同步">☁️ 同步中</span>
+                <span id="sidebarSyncBadge" class="nav-btn" style="font-size:0.72rem;flex:1;text-align:center;padding:6px 8px;display:flex;align-items:center;justify-content:center;cursor:pointer;min-width:0;overflow:hidden;text-overflow:ellipsis;" title="点击手动同步">☁️ 未同步</span>
             </div>
         </div>
     </div>
@@ -570,6 +570,57 @@
                 }
                 return true; // 未识别的操作符宽松放行（KV 兜底不追求完美语义）
             }
+            // ===== 精确 key 快速通道（2026-09-15）=====
+            // key=eq.x / key=in.(a,b,c) 这类条件**本身就把 key 列全了**，根本不需要 key 清单。
+            // 走这条通道：不取 list、不做增量剪枝、不读/写 URL 结果缓存、不按游标过滤。
+            // 为什么必须这样：进面板的对时（_yxtPanelCheck）和判责量分片拉取都是 key=in.(...) 形状，
+            //   此前它们和全表拉取共用同一套「拿最多 2 小时前的清单剪枝」逻辑 —— 清单里的 t 是
+            //   「取清单那一刻」的快照，之后变过的 key 还带着旧时间戳，被判成「没变」直接跳过 GET，
+            //   于是云端真变了也拉不回来（表现为：切模块看到的永远是旧的，只有点 ☁️ 强制全量才行）。
+            // 代价：每次多 GET 这几个 key（面板对时本来也就这几个），但**省掉了 list 调用**，总量是降的。
+            var _exactKeys = null;
+            (function(){
+                if (!keyConds.length) return;
+                var acc = [];
+                for (var _i = 0; _i < keyConds.length; _i++) {
+                    var _c = keyConds[_i];
+                    if (_c.indexOf('eq.') === 0) { acc.push(_c.slice(3)); continue; }
+                    if (_c.indexOf('in.') === 0) {
+                        var _iv = _c.slice(3);
+                        if (_iv.charAt(0) === '(' && _iv.charAt(_iv.length - 1) === ')') _iv = _iv.slice(1, -1);
+                        acc = acc.concat(_iv.split(','));
+                        continue;
+                    }
+                    return;   // 出现 neq./gt./like./not.* 等需要枚举清单的条件 → 不走快速通道
+                }
+                if (acc.length > 500) return;   // 兜底：异常大的 in. 列表退回原路径
+                _exactKeys = acc.filter(function(k){ return k && k !== 'generatedReports'; });
+            })();
+            if (_exactKeys) {
+                return Promise.all(_exactKeys.map(function(k2){
+                    return _origFetch(KV_PAGES + '/data?key=' + encodeURIComponent(k2), { headers: { 'x-yxt-secret': KV_SECRET } })
+                        .then(function(r){ return r.json(); })
+                        .then(function(vj){
+                            // KV 信封是 {v,t}：v=真值，t=镜像时间
+                            try {
+                                var o = JSON.parse(vj.value);
+                                // o.v 缺失 = 信封不是 {v,t} 形状 → 丢掉。放过去会让 _yxtApplyCloudRow
+                                //   的 row.value !== null 判断（undefined !== null 为真）把本地写成字符串 "undefined"
+                                if (!o || o.v === undefined) return null;
+                                return { key: k2, value: o.v, updated_at: o.t };
+                            } catch(e) { return null; }
+                        }).catch(function(){ return null; });
+                })).then(function(rows){
+                    var out = rows.filter(function(r){ return !!r; });
+                    // 维持 PostgREST 语义：order=updated_at.desc / limit
+                    if (String(q['order'] || '').indexOf('updated_at.desc') >= 0) {
+                        out.sort(function(a, b){ return String(b.updated_at || '') < String(a.updated_at || '') ? -1 : 1; });
+                    }
+                    var _lim = parseInt(q['limit'], 10);
+                    if (_lim > 0) out = out.slice(0, _lim);
+                    return out;
+                });
+            }
             // 结果缓存：402 期间判责量/看板轮询同 URL 直接复用，不重复打 KV。
             // 2026-09-09 KV 限额修复：5 分钟 → 10 分钟。原 5 分钟缓存与页面 5 分钟轮询周期相同，
             // 每轮轮询都恰好在缓存过期边界上（严格 < 比较）→ 缓存永远 miss → 每个 GET 都真实打 KV。
@@ -585,11 +636,17 @@
             // list 失败（429）时回退共享缓存旧列表（258 个 key 集合稳定，新增 key 最坏晚 2 小时可见；
             // 防「失败当成功返回空」覆盖本地——429 期页面照常工作）。
             // _ 前缀必须保留：无前缀 key 会被同步队列当数据 POST 上云、失败后镜像进 KV（2026-09-09.3 泄漏修复）
+            // 2026-09-15：带游标（=要剪枝）的请求必须用「刚取的」清单 —— 清单里的 t 是取清单那一刻的快照，
+            //   之后的变动它看不见。拿最多 2 小时前的旧清单剪枝，会把这段时间里变过的 key 判成「没变」、
+            //   直接跳过 GET → 云端真变了也拉不回来（表现为：切模块看到的永远是旧的，只有点 ☁️ 强制全量才行）。
+            //   所以带游标时强制落到 else 分支真实拉取清单。
+            var _gtC = null;
+            if (typeof q['updated_at'] === 'string' && q['updated_at'].indexOf('gt.') === 0) _gtC = q['updated_at'].slice(3);
             var listP = null;
             var lsList = _lsListCache();
             // 空清单不算有效缓存（2026-09-13）：历史版本可能已把 [] 写进 localStorage，读到要当没有
-            if (_kvListCache && _kvListCache.length && Date.now() - _kvListCacheTs < 7200000) listP = Promise.resolve(_kvListCache);
-            else if (lsList && lsList.k && lsList.k.length && Date.now() - lsList.t < 7200000) { _kvListCache = lsList.k; _kvListCacheTs = lsList.t; listP = Promise.resolve(lsList.k); }
+            if (!_gtC && _kvListCache && _kvListCache.length && Date.now() - _kvListCacheTs < 7200000) listP = Promise.resolve(_kvListCache);
+            else if (!_gtC && lsList && lsList.k && lsList.k.length && Date.now() - lsList.t < 7200000) { _kvListCache = lsList.k; _kvListCacheTs = lsList.t; listP = Promise.resolve(lsList.k); }
             else {
                 listP = _origFetch(KV_PAGES + '/data/list', { headers: { 'x-yxt-secret': KV_SECRET } })
                     .then(function(r){ return r.json(); }).then(function(j){
@@ -621,8 +678,7 @@
                 // 此前增量拉取也要把全部 KV key（259 个）逐个 GET 回来再客户端过滤 → 每台设备每次
                 // 刷页面/登录补拉 = 259 次 KV 读，页面加载一多就把读限烧到 50%~90%。剪枝后稳态
                 // 增量拉取只 GET 游标后真正变过的少量 key（本设备脏 key 无 t 一律放行）。
-                var _gtC = null;
-                if (typeof q['updated_at'] === 'string' && q['updated_at'].indexOf('gt.') === 0) _gtC = q['updated_at'].slice(3);
+                // _gtC 已在上方（list 缓存判断处）算好 —— 那时就要用它决定清单能不能吃缓存。
                 if (_gtC) {
                     var _metaT = {};
                     if (Array.isArray(list)) list.forEach(function(it){ _metaT[it.key] = it.t; });
@@ -20501,10 +20557,40 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
 
     // ==================== 考试系统模块 ====================
     const EXAM_HISTORY_KEY = 'examHistoryData';
+    // ==================== 考试「删除标记」（墓碑，2026-09-15） ====================
+    // 为什么需要它：examHistoryData 的合并（mergeExamHistories）只做并集，并集在数学上无法表达「删除」——
+    //   本地删掉的考试，云端副本还在，下一次合并就原样搬回来（表现为：点删除 → 卡片消失几百毫秒 → 自己回来，
+    //   确认弹窗里那句「云端数据也将同步删除」是空头支票）。
+    // 做法：删除时在一个独立 key 里立一条墓碑（id → 删除时间），合并时先把墓碑里的 id 排除掉，「有去无回」。
+    // 为什么另开 key 而不是塞进 examHistoryData：所有读考试记录的地方都是 Object.keys(d).forEach(...)，
+    //   塞个特殊键进去会被当成一场考试去渲染 —— 独立 key 对现有读者零影响。
+    // 为什么不加 _ 前缀：_ 开头的不上云、不进备份，墓碑必须上云才能跨设备生效。
+    const EXAM_DELETED_KEY = 'examDeletedIds';
+    const EXAM_TOMBSTONE_DAYS = 180;   // 墓碑保留期，防无限增长
+    function getExamDeleted() {
+        try {
+            var o = JSON.parse(localStorage.getItem(EXAM_DELETED_KEY) || '{}');
+            return (o && typeof o === 'object' && !Array.isArray(o)) ? o : {};
+        } catch(e) { return {}; }
+    }
+    function markExamDeleted(ids) {   // 立墓碑（本机主动删除时调；走 localStorage 代理 → 自动入队上云）
+        if (!ids || !ids.length) return;
+        var o = getExamDeleted(), nowIso = new Date().toISOString();
+        ids.forEach(function(id) { if (id) o[id] = nowIso; });
+        var now = Date.now(), keep = {};
+        Object.keys(o).forEach(function(k) {
+            var t = Date.parse(o[k]);
+            if (!isNaN(t) && now - t < EXAM_TOMBSTONE_DAYS * 86400000) keep[k] = o[k];
+        });
+        try { localStorage.setItem(EXAM_DELETED_KEY, JSON.stringify(keep)); } catch(e) {}
+    }
     function getExamHistory() {
         try { return JSON.parse(localStorage.getItem(EXAM_HISTORY_KEY) || '{}'); } catch(e) { return {}; }
     }
-    function saveExamHistory(data) {
+    // deletedIds（第二参，2026-09-15）：本次删掉的考试 id。必须在写本地/拉云端合并之前先立墓碑，
+    //   否则下面那次 mergeExamHistories 会把刚删的考试从云端副本里合并回来。
+    function saveExamHistory(data, deletedIds) {
+        markExamDeleted(deletedIds);
         var val = JSON.stringify(data);
         localStorage.setItem(EXAM_HISTORY_KEY, val);
         // 推送云端前先拉云端合并，避免本地旧数据覆盖云端新增的考试（如周一自动推送的场次）
@@ -20993,6 +21079,9 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
     }
     // 合并本地与云端的考试历史：按考试ID逐条比较，取进度更新的一方（状态/次数/记录数），双方记录合并去重
     function mergeExamHistories(localH, cloudH) {
+        // 2026-09-15：本地删过的考试（墓碑里有 id），云端副本还在也不许搬回来。
+        // 判断放在函数内部 → 三处调用点（保存后合并、30 秒轮询、云端落地）一行都不用改，一处都漏不掉。
+        var _tomb = getExamDeleted();
         var statusRank = { pending: 0, in_progress: 1, completed: 2 };
         function isNewer(a, b) {
             var ra = statusRank[a.status] || 0, rb = statusRank[b.status] || 0;
@@ -21008,6 +21097,7 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
         Object.keys(localH).forEach(function(k) { ids[k] = true; });
         Object.keys(cloudH).forEach(function(k) { ids[k] = true; });
         Object.keys(ids).forEach(function(id) {
+            if (_tomb[id]) return;   // ★ 墓碑优先：不论来自本地还是云端，一律不输出
             var l = localH[id], c = cloudH[id];
             if (!l) { out[id] = c; return; }
             if (!c) { out[id] = l; return; }
@@ -21233,7 +21323,8 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
             btn.onclick = async function(){
                 if (!isAdminMode()) { showToast('🔒 请先登录管理员', 'warning'); return; }
                 if (!await confirmDelete('考试记录')) return;
-                var d = getExamHistory(); delete d[btn.dataset.delexam]; saveExamHistory(d); renderExamRecordsTab(document.getElementById('examTabContent'));
+                // 第二参 = 本次删掉的考试 id → 立墓碑，保证云端也真的删掉、且不会被合并回来（2026-09-15）
+                var d = getExamHistory(); delete d[btn.dataset.delexam]; saveExamHistory(d, [btn.dataset.delexam]); renderExamRecordsTab(document.getElementById('examTabContent'));
                 logAdminAction('考试', '删除考试记录', btn.dataset.delexam);
                 showToast('✅ 已删除', 'success');
             };
@@ -22104,6 +22195,10 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
     } catch(e) {}
 
     function _updateSyncBadge(){
+        // 2026-09-15：手动同步进行中就别覆写徽章 —— 本函数被 6 处调用（含 _syncFlush 的收尾），
+        //   它无条件覆写 textContent/color/background，会在同一轮微任务里把刚设的「☁️ 同步中」擦掉，
+        //   于是那行文案从来没被画出来过（用户看到的就是「点了没反应」）。
+        if (_syncBusy) return;
         var t = localStorage.getItem('trainee_data_sync_time');
         var sidebarBadge = document.getElementById('sidebarSyncBadge');
         if (t) {
@@ -22170,6 +22265,7 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
     }
 
     var _syncRetryTimer = null;
+    var _syncBusy = false;         // 手动同步进行中：期间不许 _updateSyncBadge 覆写徽章（2026-09-15）
     var _syncRetryDelay = 60000;   // 重试退避起点 1 分钟（2026-09-07：30 秒太勤会推高 Cloudflare 请求数）
     function _syncFlush() {
         var keys = Object.keys(_syncQueue);
@@ -22206,16 +22302,39 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
     // ① 先把本机未推送的改动推上云端（防丢）→ ② 全量拉取云端 → ③ 云端内容覆盖本地 → ④ 刷新显示云端最新
     document.getElementById('sidebarSyncBadge').addEventListener('click', function(){
         var badge = document.getElementById('sidebarSyncBadge');
-        if (badge) { badge.textContent = '☁️ 同步中…'; badge.style.color = '#4fc3f7'; }
-        _syncFlush().then(function(){
+        if (!badge || badge.dataset.running === '1') return;   // 防重入（span 没有 disabled，借用 dataset）
+        badge.dataset.running = '1';
+        _syncBusy = true;   // 让 _updateSyncBadge 让位，否则下面这行文案会被同一轮微任务里的刷新擦掉
+        badge.textContent = '☁️ 同步中';   // 文案必须极短：侧边栏 220px，徽章可用宽约 90px，超了会被截成 …
+        badge.style.color = '#4fc3f7';
+        badge.style.background = 'rgba(79,195,247,0.12)';
+        badge.style.cursor = 'wait';
+
+        function _done(text, color, bg, toast, type) {
+            _syncBusy = false;
+            badge.textContent = text;
+            badge.style.color = color;
+            badge.style.background = bg;
+            badge.style.cursor = 'pointer';
+            badge.dataset.running = '';
+            if (toast && typeof showToast === 'function') { try { showToast(toast, type); } catch(e) {} }
+        }
+
+        _syncFlush().then(function(flushed){
+            // 推送失败（返回 false，已放回队列等重试）→ 不能假装成功往下走
+            if (flushed === false) throw new Error('本机改动还没推上云');
             return _syncPullAll(true);
-        }).then(function(){
+        }).then(function(n){
+            // 拉取失败 resolve null（见 _syncPullAll）→ 同样不能假装成功
+            if (n === null || n === undefined) throw new Error('云端拉取失败');
             localStorage.setItem('trainee_data_sync_time', new Date().toISOString());
-            _updateSyncBadge();
-            location.reload();
-        }).catch(function(){
-            var b = document.getElementById('sidebarSyncBadge');
-            if (b) { b.textContent = '☁️ 同步失败'; b.style.color = '#c0392b'; }
+            _done('☁️ 同步完成', '#27ae60', 'rgba(39,174,96,0.12)',
+                  '✅ 同步完成，云端 ' + n + ' 条已取回', 'success');
+            // ★ 延后刷新：原来 reload 紧跟刷新徽章、在同一个微任务里，浏览器没机会绘制 → 完成态根本看不见
+            setTimeout(function(){ location.reload(); }, 1200);
+        }).catch(function(e){
+            _done('☁️ 同步失败', '#c0392b', 'rgba(192,57,43,0.12)',
+                  '❌ 同步失败：' + (e && e.message ? e.message : '网络错误') + '（本地数据未动）', 'error');
         });
     });
 
@@ -22266,6 +22385,9 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
         onboardingReviewers:       { guest: false, exam: false },
         panzeSyncCacheV1:          { guest: false, exam: false },
         examHistoryData:           { guest: true,  exam: true  },  // 学员直链必须能拿到
+        // 2026-09-15：考试删除墓碑。guest/exam 都必须为 true —— 否则游客和学员直链拿不到墓碑，
+        //   他们那边的合并会把管理员已删掉的考试又合回来（并集语义）。体积极小（几个 id）。
+        examDeletedIds:            { guest: true,  exam: true  },
         reportedQuestions:         { guest: true,  exam: true  },
         reportedTraining:          { guest: true,  exam: true  },
         feishu_token:              { guest: true,  exam: true  },
@@ -22316,46 +22438,88 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
     // 只管「这一行怎么落地」，不管游标推进/重排序 —— 那两件事仍归调用方。
     // _syncPullAll（整表同步）与 _yxtPanelCheck（进面板对时间戳）共用这一份，避免两处语义漂移。
     // 对 KV 兜底同样生效：402 期间 fetch 失败自动换 KV rows，走的是同一个应用循环。
+    // 本函数返回值语义（2026-09-15 新增，专供增量游标判断）：
+    //   true  = 这行已与本地同步（真写了，或者内容本来就一致）
+    //   false = 刻意跳过 / 没落地（如 trainee_data_sync_time 是纯本地的时间戳）
+    // 为什么必须区分：_syncPullAll 原来把「本批返回行里最大的 updated_at」无条件当游标，
+    //   而 trainee_data_sync_time 从不落地、却每次有人点同步就变成全表最新的一行
+    //   → 游标被顶到「别的设备点同步的墙钟时刻」，任何稍早于它变过的 key 从此落在游标之后，
+    //   永久拉不回来（表现为：别的电脑改了，本机怎么刷都是旧的，只有点 ☁️ 强制全量才行）。
+    // _yxtApplyWrites：真正写了新内容的次数，供 _yxtPanelCheck 判断「要不要重画」。
+    var _yxtApplyWrites = 0;
     function _yxtApplyCloudRow(row) {
-        if (!row || !row.key) return;
+        if (!row || !row.key) return false;
         if (row.key === 'feishu_token') {
             var localToken = null;
             try { localToken = JSON.parse(_realLS.getItem('feishu_token') || 'null'); } catch(e) {}
             var cloudToken = null;
             try { cloudToken = JSON.parse(row.value); } catch(e) {}
-            if (localToken && cloudToken && localToken.expiresAt > cloudToken.expiresAt) return;
+            if (localToken && cloudToken && localToken.expiresAt > cloudToken.expiresAt) return false;
         }
         // 学员数据：云端权威覆盖本地（2026-09-07 统一语义：拉取即云端覆盖，时间戳以云端 updated_at 为准）
         if (row.key === 'trainee_full_admin_backup') {
+            if (_realLS.getItem(row.key) === row.value) return true;   // 内容一致 → 不写、不触发重画
+            _yxtApplyWrites++;
             _realLS.setItem(row.key, row.value);
             _realLS.setItem('trainee_data_sync_time', row.updated_at || new Date().toISOString());
-            return;
+            return true;
+        }
+        // 考试删除标记（墓碑）：云端墓碑并入本机墓碑表（并集；本机已有的不动）
+        // 2026-09-15：必须排在 examHistoryData 之前被应用 —— 否则同批里考试数据先合并会把删掉的考试搬回来
+        if (row.key === EXAM_DELETED_KEY) {
+            try {
+                var _cloudTomb = JSON.parse(row.value);
+                if (_cloudTomb && typeof _cloudTomb === 'object' && !Array.isArray(_cloudTomb)) {
+                    var _localTomb = getExamDeleted(), _tombMerged = false;
+                    Object.keys(_cloudTomb).forEach(function(id) {
+                        if (!_localTomb[id]) { _localTomb[id] = _cloudTomb[id]; _tombMerged = true; }
+                    });
+                    if (_tombMerged) {
+                        // 用 _realLS 直接写：内容来自云端，不必再回推（回推会让两端无限对推）
+                        try { _realLS.setItem(EXAM_DELETED_KEY, JSON.stringify(_localTomb)); } catch(e) {}
+                        _yxtApplyWrites++;
+                        return true;
+                    }
+                }
+            } catch(e) {}
+            return true;
         }
         // 考试历史：按考试逐条合并取进度更新的一方（学员端/管理端状态推进，不能裸覆盖丢状态）——唯一保留合并语义的 key（2026-09-07）
         if (row.key === 'examHistoryData') {
             var localRaw = _realLS.getItem(row.key);
-            if (!localRaw) { _realLS.setItem(row.key, row.value); return; }
-            if (localRaw === row.value) return;
+            // 新设备（本地没有）：云端就是权威，但仍要过一遍合并 —— 墓碑是在 mergeExamHistories 里生效的，
+            //   直接 setItem(row.value) 会把云端副本里「已删但还没清干净」的考试原样写进新设备（2026-09-15）。
+            var _freshLocal = !localRaw;
+            if (_freshLocal) localRaw = '{}';
+            if (localRaw === row.value) return true;   // 值一致 = 已同步
             try {
                 var localData = JSON.parse(localRaw);
                 var cloudData = JSON.parse(row.value);
                 if (localData && cloudData && !Array.isArray(localData) && !Array.isArray(cloudData)) {
                     var mergedH = mergeExamHistories(localData, cloudData);
                     var mergedRaw = JSON.stringify(mergedH);
-                    _realLS.setItem(row.key, mergedRaw);
-                    fetch(SUPABASE_URL + '/rest/v1/app_data', {
-                        method: 'POST',
-                        headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY, 'Content-Type': 'application/json', 'Prefer': 'resolution=merge-duplicates' },
-                        body: JSON.stringify({ key: row.key, value: mergedRaw, updated_at: new Date().toISOString() })
-                    }).catch(function() {});
-                    if (typeof refreshExamListIfVisible === 'function') refreshExamListIfVisible();
+                    if (mergedRaw !== localRaw) {
+                        _yxtApplyWrites++;
+                        _realLS.setItem(row.key, mergedRaw);
+                        // 新设备首次落地不回推：云端本来就是这份，回推只会白顶高 updated_at、惊动其他设备的轮询
+                        if (!_freshLocal) {
+                            fetch(SUPABASE_URL + '/rest/v1/app_data', {
+                                method: 'POST',
+                                headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY, 'Content-Type': 'application/json', 'Prefer': 'resolution=merge-duplicates' },
+                                body: JSON.stringify({ key: row.key, value: mergedRaw, updated_at: new Date().toISOString() })
+                            }).catch(function() {});
+                            if (typeof refreshExamListIfVisible === 'function') refreshExamListIfVisible();
+                        }
+                    }
+                    // 合并结果与本地一致 → 不回推（回推会顶高云端 updated_at，让其他设备的轮询以为有变，
+                    //   两边来回对推；轮询那条路早就有这个判断，这里此前漏了）
                     try { _examCloudLastTime = new Date().toISOString(); localStorage.setItem('_examCloudTime', _examCloudLastTime); } catch(e) {}
-                    return;
+                    return true;
                 }
             } catch(e) {}
             // 结构异常兜底：云端覆盖
             _realLS.setItem(row.key, row.value);
-            return;
+            return true;
         }
         // 题库/推送记录/上报记录（trainingPushRecords、learnPlanPushRecords、reportedQuestions、
         // reportedTraining、questionBankData）：2026-09-07 统一为云端权威覆盖——不再按条数比较、
@@ -22392,6 +22556,7 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
                     }
                     var _audFinal2 = JSON.stringify(_aud);
                     if (!_audRaw0 || _audFinal2 !== _audRaw0) {
+                        _yxtApplyWrites++;
                         _realLS.setItem(row.key, _audFinal2);
                         fetch(SUPABASE_URL + '/rest/v1/app_data', {
                             method: 'POST',
@@ -22399,30 +22564,37 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
                             body: JSON.stringify({ key: 'adminAuditLog', value: _audFinal2, updated_at: new Date().toISOString() })
                         }).catch(function() {});
                     }
-                    return;
+                    return true;
                 }
             } catch(e) {}
         }
         // generatedReports 太大，不做双向同步，只用云端兜底
         if (row.key === 'generatedReports') {
-            if (!_realLS.getItem(row.key)) _realLS.setItem(row.key, row.value);
-            return;
+            if (!_realLS.getItem(row.key)) { _yxtApplyWrites++; _realLS.setItem(row.key, row.value); }
+            return true;
         }
-        // trainee_data_sync_time 是仅本地管理的同步时间戳；其余所有 key 一律云端覆盖本地（2026-09-07 统一语义）
-        if (row.key === 'trainee_data_sync_time') return;
+        // trainee_data_sync_time 是仅本地管理的同步时间戳（每次点同步都会刷新它，所以它常年是全表最新的一行）；
+        // 它从不落地 → 必须 return false，绝不能让它参与增量游标推进（2026-09-15）
+        if (row.key === 'trainee_data_sync_time') return false;
         if (row.key && row.value !== null) {
+            if (_realLS.getItem(row.key) === row.value) return true;   // 内容一致 → 不写、不算「变了」
+            _yxtApplyWrites++;
             _realLS.setItem(row.key, row.value);
             // 2026-09-13：题库读取是 _qbMemBank 内存优先（写不进本地时的兜底），这里覆盖了本地副本
             // 必须同时失效内存缓存，并把版本戳对齐云端 updated_at（否则版本检查会拿旧戳判定「云端更新」再拉一遍）
             if (row.key === QB_STORAGE_KEY) { _qbMemBank = null; if (row.updated_at) _qbSetStamp(row.updated_at); }
+            return true;
         }
+        return false;   // 空值行（墓碑式 key）：没落地，不参与游标推进
     }
     // ==================== 进面板「对时间戳」通用机制（2026-09-14） ====================
     // 背景：云端数据此前只有两条路进本地 —— 打开页面时的整表增量同步、以及手动点 ☁️ 同步。
     //   于是 GitHub 定时任务刚推上云的内容，本地必须点一次同步才看得到。
-    // 做法（只发时间戳，由云端比对）：把本机「上次同步到哪」当作增量起点发给云端（updated_at=gt.），
-    //   比较完全在服务端做 —— 云端没变就返回空数组（几十字节），变了才把变的那几行发回来直接落地。
-    //   本机不参与判断、不回传任何本地数据。一次往返同时完成「比对」与「拉取」。
+    // 做法（2026-09-15 改）：直接按 key 把这几行取回来，与本地比对 —— 有差异才落地、才重画。
+    //   本机不参与判断、不回传任何本地数据。
+    //   改之前是把「本机上次同步到哪」当增量起点发过去（updated_at=gt.），由云端比对省流量；
+    //   但那套会静默漏数据（游标被心跳键顶飞 + KV 侧拿 2 小时前的清单剪枝，云端真变了也查不回来），
+    //   而这几个 key 本来就少又小，直接实拉最稳。
     // 与题库那套 _qbCloudVersionCheck 的区别：那套是「先问时间戳、再决定拉不拉」（两次往返 + 单独维护版本戳）；
     //   这里复用整表同步的落地语义（_yxtApplyCloudRow），不存在第二套裁决逻辑。
     // 节流分两档（2026-09-14）：考试系统是高频进出模块，1 分钟；其余模块 10 分钟
@@ -22440,7 +22612,8 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
         // 题库不放 questionBankData：题库有自己那套版本检查（_qbCloudVersionCheck，还管 questionBankManual），
         //   重复登记会在题库真更新时一次拉两遍 0.9MB
         examSystem:      ['examHistoryData', 'trainingPushRecords', 'learnPlanPushRecords', 'reportedQuestions',
-                          'feishuPushRecords'],            // 「✅已推送」标记：isFeishuPushed/markFeishuPushed 读它
+                          'feishuPushRecords', 'examDeletedIds'],   // 最后一个：删除墓碑，必须和考试数据一起对时，
+                                                                    //   晚了会把已删的考试合并回来（2026-09-15）
         questionBank:    ['reportedQuestions'],
         caseLibrary:     ['biweeklyCases', 'knowledgeCases', 'manualCases', 'reportedTraining'],
         knowledgeBase:   ['knowledgeCases', 'adminPersonSiteMap',
@@ -22499,24 +22672,31 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
             if (_yxtPanelLastAt[panel] && (Date.now() - _yxtPanelLastAt[panel]) < gap) return;
             _yxtPanelLastAt[panel] = Date.now();
 
-            // 增量起点 = 本机上次同步到的时间戳。统一成 ISO（...T..:..:...Z）再发：
-            //   云端(PostgREST)回的是「6 位微秒 + +00:00」，KV 兜底侧是字符串比较 —— 两种格式混着比会判错方向
-            var cursor = null;
-            try { cursor = _realLS.getItem('_lastCloudSyncAt'); } catch(e) {}
-            if (cursor) { try { cursor = new Date(cursor).toISOString(); } catch(e) {} }
+            // 2026-09-15：这里**不再**带 updated_at=gt.游标。面板要的是「这几个 key 现在云端是什么」，
+            //   不是「比某时刻新的」。带游标的两个坑：① 游标一旦被心跳键顶飞（见 _syncPullAll），
+            //   云端真变了也查不回来；② KV 兜底侧的增量剪枝是拿「最多 2 小时前的 key 清单」做的，
+            //   清单里的时间戳是快照，期间变过的 key 被判成没变直接跳过 GET。
+            //   这几个 key 本来就少（最多 6 个，全是小键），每次实拉一遍最稳 ——
+            //   而且 KV 兜底侧对 key=in.(...) 走的是「精确 key 快速通道」，直接 GET 这 6 个、省掉一次 list。
             var url = SUPABASE_URL + '/rest/v1/app_data?select=*&key=in.(' + keys.join(',') + ')';
-            if (cursor) url += '&updated_at=gt.' + encodeURIComponent(cursor);
 
             fetch(url, { headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY } })
                 .then(function(r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
                 .then(function(rows) {
                     _yxtPanelFailed[panel] = false;
-                    if (!Array.isArray(rows) || rows.length === 0) return 0;   // 云端没变
+                    if (!Array.isArray(rows) || rows.length === 0) return 0;   // 云端没这几个 key
+                    // ★ 墓碑先于考试数据落地（否则同批里 examHistoryData 会把删掉的考试搬回来）
+                    // 用「真写入次数」判断要不要重画：_yxtApplyCloudRow 返回 true 有两种含义
+                    //   （真写了 / 内容本来就一致），拿返回值数会把「没变」也算成变了 → 每次切模块白重画一遍。
+                    var _w0 = _yxtApplyWrites;
+                    rows.forEach(function(row) { if (row && row.key === EXAM_DELETED_KEY) _yxtApplyCloudRow(row); });
                     rows.forEach(function(row) { _yxtApplyCloudRow(row); });
+                    var changed = _yxtApplyWrites - _w0;
+                    if (!changed) return 0;   // 取值都回来了、但没有一行跟本地不一样 → 不必重画
                     // 故意不推进 _lastCloudSyncAt：那个游标是「整表同步到哪」的标记，这里只拉了部分 key，
                     //   推进它会让本次没拉的 key 永远落在游标后面 → 静默漏数据
                     if (typeof onApplied === 'function') { try { onApplied(); } catch(e) {} }
-                    return rows.length;
+                    return changed;
                 })
                 .catch(function() { _yxtPanelFailed[panel] = true; return 0; });
         } catch(e) {}
@@ -22555,18 +22735,40 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
             headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY }
         }).then(function(r) { return r.json(); }).then(function(rows) {
             if (Array.isArray(rows)) {
+                // ★ 墓碑必须先于考试数据落地：否则同批里 examHistoryData 先合并会把刚删掉的考试搬回来
+                rows.forEach(function(row) { if (row && row.key === EXAM_DELETED_KEY) _yxtApplyCloudRow(row); });
                 rows.forEach(function(row) {
-                    // 记录本次返回行中最大的更新时间（同步完成后写回，作为下次增量起点）
+                    // 2026-09-15：游标只按「真被处理过」的行推进，且必须在落地之后判断。
+                    //   此前不管有没有落地都取最大值 —— 而 trainee_data_sync_time 这类心跳键从不落地
+                    //   却是全表最新的一行，会把游标顶到「别的设备点同步的墙钟时刻」，
+                    //   任何稍早于它变过的 key 从此落在游标之后（updated_at=gt.游标 永远查不到）→ 永久漏。
+                    var applied = _yxtApplyCloudRow(row);   // 逐行落地语义（各 key 的特判）见该函数
+                    if (applied === false) return;
                     if (row.updated_at && (!_maxCloudUpdated || row.updated_at > _maxCloudUpdated)) _maxCloudUpdated = row.updated_at;
-                    _yxtApplyCloudRow(row);   // 逐行落地语义（各 key 的特判）见该函数
                 });
             }
             // 写回本次同步时间（增量拉取的下一次起点；游客写游客游标，管理员写管理员游标）
             if (_maxCloudUpdated) {
-                try { _realLS.setItem(_cursorKey, _maxCloudUpdated); } catch(e) {}
+                var _prevC = null;
+                try { _prevC = _realLS.getItem(_cursorKey); } catch(e) {}
+                // 只前进：KV 兜底侧回的是 ...Z、Supabase 侧是 6 位微秒 +00:00，字符串直接比大小会判错方向
+                //   → 统一 Date.parse 后比毫秒。万一本机时钟异常导致永不前进，退化成「每次全量」，只是慢，不丢数据。
+                var _pMs = _prevC ? Date.parse(_prevC) : NaN, _cMs = Date.parse(_maxCloudUpdated);
+                if (isNaN(_pMs) || (!isNaN(_cMs) && _cMs > _pMs)) {
+                    // 存归一化的 ...Z 毫秒格式：两条通道回来的时间戳形状不同
+                    //   （Supabase 是「6 位微秒 + +00:00」、KV 是 toISOString 的 ...Z），
+                    //   而 KV 兜底侧剪枝/过滤是按**字符串**比大小的 —— 混着存会判错方向。
+                    //   微秒被截到毫秒 → 下次会把这行再取一遍，落地是幂等的（只多一行流量），安全侧。
+                    var _store = _maxCloudUpdated;
+                    try { if (!isNaN(_cMs)) _store = new Date(_cMs).toISOString(); } catch(e) {}
+                    try { _realLS.setItem(_cursorKey, _store); } catch(e) {}
+                }
             }
             return rows ? rows.length : 0;
-        }).then(function(n){ _updateSyncBadge(); return n || 0; }).catch(function(){ _updateSyncBadge(); return 0; });
+        }).then(function(n){ _updateSyncBadge(); return n || 0; })
+        // 失败时 resolve null（成功仍是数字）—— 让调用方能区分「拉了 0 条」和「根本没拉到」。
+        // 此前一律 resolve 0，导致同步按钮拉取失败也会显示成功、还把「上次同步」写成刚刚。
+        .catch(function(){ _updateSyncBadge(); return null; });
     }
 
     // 管理员登录补拉（2026-09-07 流量优化）：游客期间只同步了白名单数据，
