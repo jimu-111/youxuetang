@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <!-- 版本行：每次部署新代码必须 bump 此 content（YYYYMMDD.N），旧设备靠它自检静默升级 -->
-    <meta name="yxt-ver" content="20260916.1">
+    <meta name="yxt-ver" content="20260916.3">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
     <title>优学堂</title>
     <script src="https://cdn.sheetjs.com/xlsx-0.20.2/package/dist/xlsx.full.min.js" defer></script>
@@ -20585,7 +20585,24 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
         try { localStorage.setItem(EXAM_DELETED_KEY, JSON.stringify(keep)); } catch(e) {}
     }
     function getExamHistory() {
-        try { return JSON.parse(localStorage.getItem(EXAM_HISTORY_KEY) || '{}'); } catch(e) { return {}; }
+        try {
+            var _h = JSON.parse(localStorage.getItem(EXAM_HISTORY_KEY) || '{}');
+            // 2026-09-16：读取时就把「已立墓碑」的考试剔掉。
+            //   为什么必须加在这里、而不是只靠 mergeExamHistories 里那处墓碑判断：
+            //   两处墓碑判断的**触发条件不同**。merge 只在 examHistoryData 这一行真的被落地时才跑，
+            //   而 _yxtApplyCloudRow 对内容一致的行会在相等判断处提前 return true（不写、不合并）。
+            //   最典型的情形恰恰是内容一致：A 电脑删了考试 X → A 把剔除后的 examHistoryData 推上云
+            //   → B 电脑本地那份**早就是剔除过的**（B 从没同步到过 X）→ 落地时判等、直接返回 →
+            //   merge 不跑。此时若 B 的本地却残留 X（B 是在其它设备删除之前就存下了 X），
+            //   光靠 merge 的墓碑判断清不掉它。
+            //   放在读取处等于给所有读者（列表渲染、30 秒轮询、单场考试直链、统计）一次性兜底。
+            //   墓碑保留 180 天（EXAM_TOMBSTONE_DAYS），到期自动失效 —— 与 markExamDeleted 的清理一致。
+            var _tomb = getExamDeleted();
+            if (_h && typeof _h === 'object' && !Array.isArray(_h)) {
+                Object.keys(_tomb).forEach(function(id) { if (_h[id]) delete _h[id]; });
+            }
+            return _h;
+        } catch(e) { return {}; }
     }
     // deletedIds（第二参，2026-09-15）：本次删掉的考试 id。必须在写本地/拉云端合并之前先立墓碑，
     //   否则下面那次 mergeExamHistories 会把刚删的考试从云端副本里合并回来。
@@ -22185,6 +22202,16 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
     const _realLS = window.localStorage;
     let _syncQueue = {};
     let _syncTimer = null;
+    // _syncQueueAt（2026-09-16）：key → 本机最近一次把它写进待推送队列的时刻（毫秒）。
+    //   用途只有一个：让 _yxtPanelCheck 里那条「本机有未推送改动就跳过本次拉取」的守卫**有时间盒**。
+    //   原来那条守卫是无期的，而 402 期间队列根本排不掉（POST 必失败）→ 哪台电脑只要动过一次学员数据，
+    //   trainee_full_admin_backup 就永远挂在它队列里 → 这台电脑**从此再也不拉这个 key**，
+    //   于是几台电脑各改各的、越拉越远（用户看到的就是「每个电脑都不一致」）。
+    //   时间盒的意义：编辑 → 2 秒后 _syncFlush → 失败 → 镜像进 KV，整个过程 ~3 秒；
+    //   30 秒足够保护「别让云端旧值盖掉刚写的本地值」这个初衷，又不会永久锁死。
+    //   不从 _syncPendingQueue 恢复时间戳是有意的：恢复出来的条目一律当作「旧的」→ 不跳过 → 照常拉。
+    //   （安全侧：宁可多拉一次，也不要静默不同步。）
+    let _syncQueueAt = {};
     // 恢复上次未推送的队列（2026-09-07：Supabase 402 期间刷新页面不丢待推送改动；_ 前缀不经 proxy 不触发循环入队）
     try {
         var _savedQ = JSON.parse(_realLS.getItem('_syncPendingQueue') || '{}');
@@ -22360,6 +22387,7 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
         if (key === QB_STORAGE_KEY) _qbMemBank = null;   // 2026-09-13：题库被别的路径覆写本地 → 内存缓存同步失效
         if (key && !key.startsWith('_')) {
             _syncQueue[key] = value;
+            _syncQueueAt[key] = Date.now();   // 2026-09-16：记入队时刻，供 _yxtPanelCheck 的守卫算时间盒
             try { _realLS.setItem('_syncPendingQueue', JSON.stringify(_syncQueue)); } catch(e) {}   // 队列持久化（2026-09-07）
             if (_syncTimer) clearTimeout(_syncTimer);
             _syncTimer = setTimeout(_syncFlush, 2000);
@@ -22463,6 +22491,17 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
     //   永久拉不回来（表现为：别的电脑改了，本机怎么刷都是旧的，只有点 ☁️ 强制全量才行）。
     // _yxtApplyWrites：真正写了新内容的次数，供 _yxtPanelCheck 判断「要不要重画」。
     var _yxtApplyWrites = 0;
+    // _yxtTraineeApplied（2026-09-16）：本批里学员数据（trainee_full_admin_backup）真的被改写过。
+    //   为什么需要它：学员数据是**唯一**一份被读进模块级内存变量的业务数据 —— loadData() 把它灌进
+    //   全局数组 students，而 renderFrontend()/renderDashboard() 渲染时读的是 students 而不是
+    //   localStorage（renderDashboard 里那句「只在首次加载时」重读 localStorage 就是自证）。
+    //   _yxtApplyCloudRow 只写 _realLS，不碰 students → 落地后重画画的还是旧数组 →
+    //   用户看到的现象是「切模块永远是旧的，只有点 ☁️ 才行」（因为 ☁️ 结尾有 location.reload()，
+    //   整页重跑 loadData() 才把内存刷新了 —— 真正起作用的是那次刷新，不是拉取本身）。
+    //   启动路径（23479 行）和登录补拉（22800 行）都已经在落地后调了 loadData()，唯独进面板
+    //   这条路（_yxtPanelCheck）漏了。这里用标志把「哪个 key 变了」精确告诉调用方，
+    //   避免对不相关的面板白跑一次 34KB 的 JSON.parse。
+    var _yxtTraineeApplied = false;
     function _yxtApplyCloudRow(row) {
         if (!row || !row.key) return false;
         if (row.key === 'feishu_token') {
@@ -22478,6 +22517,7 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
             _yxtApplyWrites++;
             _realLS.setItem(row.key, row.value);
             _realLS.setItem('trainee_data_sync_time', row.updated_at || new Date().toISOString());
+            _yxtTraineeApplied = true;   // 2026-09-16：通知调用方「内存里的 students 该重读了」
             return true;
         }
         // 考试删除标记（墓碑）：云端墓碑并入本机墓碑表（并集；本机已有的不动）
@@ -22586,13 +22626,86 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
         }
         // generatedReports 太大，不做双向同步，只用云端兜底
         if (row.key === 'generatedReports') {
-            if (!_realLS.getItem(row.key)) { _yxtApplyWrites++; _realLS.setItem(row.key, row.value); }
+            if (!_realLS.getItem(row.key)) {
+                _yxtApplyWrites++; _realLS.setItem(row.key, row.value);
+                // 2026-09-16：内存里的 generatedReports（993 行 `let generatedReports = JSON.parse(...)`）
+                //   只在**页面加载时**读一次，而「📄 已生成的报告」列表（renderReportGen 9172/9198）
+                //   读的正是它 → 光写 localStorage 画不出来。这里一并刷新。
+                //   整份替换是安全的：本机根本没有报告（进入本分支的前提就是本地为空），
+                //   不存在「覆盖掉本机刚生成还没推上去的报告」的可能。
+                try { generatedReports = JSON.parse(row.value); } catch(e) {}
+            }
             return true;
         }
         // trainee_data_sync_time 是仅本地管理的同步时间戳（每次点同步都会刷新它，所以它常年是全表最新的一行）；
         // 它从不落地 → 必须 return false，绝不能让它参与增量游标推进（2026-09-15）
         if (row.key === 'trainee_data_sync_time') return false;
         if (row.key && row.value !== null) {
+            // ★ trainee_data_version 的**降级守卫**（2026-09-16）。
+            //   为什么必须挡：这个 key 不以 _ 开头 → 经 localStorage 代理自动上云，云端常年有一份版本戳。
+            //   而 loadData()（3033）的判据是 savedVersion == DATA_VERSION，**不匹配就走 else 分支：
+            //   removeItem('trainee_full_admin_backup') + removeItem('trainee_data_version') + initDefault()**
+            //   （3044-3047）。于是只要云端那份是旧值（典型来源：某台机器开着改动前的旧页面，
+            //   在它上面保存过一次学员数据，就往云上写了 2），任何一台正常机器进一次落地页 / 新人管理，
+            //   就会把**刚刚才拉下来的**学员数据当成旧版删掉、看板清空 —— 从外面看就是「数据凭空没了」。
+            //   规则：版本戳只升不降。云端比本地旧 → 不落地，也 return false（不推进增量游标）。
+            //   本地无版本戳（新设备）时照常落地，那正是它存在的意义。
+            if (row.key === 'trainee_data_version') {
+                var _lv = parseInt(_realLS.getItem(row.key), 10);
+                var _cv = parseInt(row.value, 10);
+                if (!isNaN(_lv) && !isNaN(_cv) && _cv < _lv) return false;
+            }
+            // ★★ 2026-09-16：以下三个 key 的**渲染读的是模块级内存变量**，只写 localStorage 画不出来 ——
+            //   和 trainee_full_admin_backup 是同一类毛病（那一处已由 _yxtTraineeApplied + loadData() 处理），
+            //   只是各自的内存变量不同。这里就地刷新它们，调用方随后重画就能看到新值。
+            //   三者都在本脚本（406-23665）顶层，作用域可见。
+            //
+            //   ⚠️ 位置很关键：必须放在下面那行「内容一致 → return true」**之前**。
+            //   放在之后的话，本地值与云端一致时会在判等处提前返回，刷新块整个不执行 ——
+            //   而「本地已经是新值、内存却停在启动快照」恰恰是最常见的情形（本机就是最后写入的那台，
+            //   或者本机启动时缓存已经是最新的，只是内存没灌进去）。墓碑那处（getExamHistory）踩的是同一个坑。
+            if (row.key === 'adminPersonSiteMap') {
+                // getAdminPersonSiteMap() 第 3091 行 `if (_adminPersonSiteMapCache) return _adminPersonSiteMapCache;`
+                //   直接短路 —— 缓存一旦在页面启动时被填就永久有效，_yxtApplyCloudRow 此前只失效 _qbMemBank、
+                //   从不碰它。读它的有 refreshAdminSiteTable（管理后台站点表）、updateSiteCard、linkNewStudent、
+                //   以及数据分析/错误看板的站点归属解析。
+                //   置 null 即可：下次调用会重新 JSON.parse 本地副本（3110-3112）。
+                _adminPersonSiteMapCache = null;
+            }
+            if (row.key === 'panzeSyncCacheV1') {
+                // 判责量：window._panzeAllData 只在页面启动时灌一次（2288 清空 / 2342 / 2365），
+                //   而 renderAnalysisResult（6753）、generateWeeklyReport（6197）、getPanzeCategoryData（5049）、
+                //   renderPersonPortraitPopup（16976）全都直接遍历它 —— 唯一会重灌内存的入口是
+                //   refreshPanzeStatus（2417，只有管理后台和手动同步会调）。
+                //   解析与净化逻辑照抄 getPanzeCache（2291-2298）：非 YYYY-MM-DD 的行一律丢掉
+                //   （2026-09-04 KV 兜底曾混入过其他 key 的行）。
+                try {
+                    var _pc = JSON.parse(row.value);
+                    if (_pc && Array.isArray(_pc.data)) {
+                        window._panzeAllData = _pc.data.filter(function(it){ return it && /^\d{4}-\d{2}-\d{2}$/.test(it.date || ''); });
+                    }
+                } catch(e) {}
+            }
+            if (row.key === 'lm_cache') {
+                // 学习地图：renderLearningMapView（15137）第一句就是
+                //   `if (learningMapData.length > 0) { 渲染; return; }` —— 内存非空就永不重新取数；
+                //   而 learningMapData 只由 fetchLearningMapData（14997）填。
+                //   更要紧的是：**cloudCacheGet（14957）是直接 fetch Supabase 的，根本不读 localStorage**，
+                //   所以此前把 lm_cache 写进本地对界面毫无意义（那个 key 登记在面板表里只产生了流量）。
+                //   这里同步刷新三个内存变量，等价于 fetchLearningMapData 走「云端缓存」那条分支的效果。
+                //   只升不降：云端缓存时间比内存里那份旧就不动 —— 防止把用户刚「从飞书同步」来的新数据顶掉。
+                try {
+                    var _lc = JSON.parse(row.value);
+                    if (_lc && _lc.groups) {
+                        var _lmT = _lc.time ? new Date(_lc.time) : null;
+                        if (!learningMapLastRefresh || !_lmT || _lmT >= learningMapLastRefresh) {
+                            learningMapData = _lc.groups;
+                            learningMapSheets = _lc.sheets || [];
+                            learningMapLastRefresh = _lmT;
+                        }
+                    }
+                } catch(e) {}
+            }
             if (_realLS.getItem(row.key) === row.value) return true;   // 内容一致 → 不写、不算「变了」
             _yxtApplyWrites++;
             _realLS.setItem(row.key, row.value);
@@ -22615,8 +22728,15 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
     //   这里复用整表同步的落地语义（_yxtApplyCloudRow），不存在第二套裁决逻辑。
     // 节流分两档（2026-09-14）：考试系统是高频进出模块，1 分钟；其余模块 10 分钟
     var _YXT_PANEL_GAP_EXAM = 60000;    // 考试系统：1 分钟内重复进入 / 切 tab 不再问云端
-    var _YXT_PANEL_GAP_OK   = 600000;   // 其他面板：10 分钟内不重复问
+    var _YXT_PANEL_GAP_OK   = 20000;    // 其他面板：20 秒内不重复问
+    // 2026-09-16：原来 600000（10 分钟）太粗 —— 进一次「新人管理」后 10 分钟内再进去都不问云端，
+    //   用户切来切去看到的永远是第一次的结果，体感就是「点模块根本不拉」。
+    //   收到 20 秒的依据：进面板走的是 key=in.(...) 精确 key 快速通道（kvFetchRows 的 2026-09-15 分支），
+    //   ① 不打 KV list（最稀缺配额，1000/日）② 只 GET 本面板那几个 key（1~7 个）。
+    //   按最坏情况估：一天切 200 次模块 × 平均 4 个 key = 800 次 KV 读（限额 10 万/日），可忽略；
+    //   Supabase 恢复后每次只是 1 条带索引的 in. 查询。20 秒也仍是节流 —— 连着狂点不会放大请求。
     var _YXT_PANEL_GAP_FAIL = 20000;    // 上次失败就 20 秒后重试（恢复后尽快补上）
+    var _YXT_PANEL_QUEUE_GRACE = 30000; // 本机刚写过某 key 的 30 秒内不拉它（见 _yxtPanelCheck 的守卫）
     var _yxtPanelLastAt = {};           // panel → 上次检查时刻（内存，刷新页面即重置）
     var _yxtPanelFailed = {};           // panel → 上次是否失败
 
@@ -22646,11 +22766,16 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
         //   摘掉不等于拉不到：三个考试 key 仍登记在 examSystem；autoPushQueue 由整表同步覆盖（_syncPullAll
         //   管理员模式是 key=neq.generatedReports，除它之外全拉），且它的读点是 initAutoPush（页面加载时跑，
         //   早于任何进面板）和 showFeishuContactPicker（考试推送流程），都不经过落地页。
-        dashboard:       ['trainee_full_admin_backup'],    // 落地页唯一读的 key。与 frontend 面板重复登记是有意的：
+        dashboard:       ['trainee_full_admin_backup', 'trainee_data_version'],    // 落地页唯一读的 key。与 frontend 面板重复登记是有意的：
                                                            //   两边各自节流、各自重画，不共享（_yxtPanelLastAt 是按面板存的）
+                                                           // trainee_data_version（2026-09-16）：20 字节，必须跟学员数据一起拉。
+                                                           //   loadData() 的判据是 savedVersion == DATA_VERSION，版本键缺失时它会
+                                                           //   走 else 分支 —— 把刚拉下来的 trainee_full_admin_backup 当旧版**删掉**
+                                                           //   再 initDefault()。带上它，落地后 loadData() 才一定读得进去。
         learningMapView: ['learningPlanData', 'reportedTraining',
                           'lm_cache'],                     // 学习地图的云端共享缓存（cloudCacheGet/cloudCacheSet）
-        frontend:        ['trainee_full_admin_backup'],    // 新人管理：loadData()/renderDashboard 读它
+        frontend:        ['trainee_full_admin_backup', 'trainee_data_version'],    // 新人管理：loadData()/renderDashboard 读它
+                                                           // trainee_data_version 同上：loadData() 的版本校验要用
         feedback:        ['app_feedback_entries']          // 问题/建议反馈：renderFeedback → getFeedbackEntries
     };
 
@@ -22678,9 +22803,17 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
             if (typeof isStandaloneExamView !== 'undefined' && isStandaloneExamView) return;
             var keys = YXT_PANEL_KEYS[panel];
             if (!keys || !keys.length) return;
-            // 本机有还没推上去的改动 → 这次不拉，免得云端旧内容盖掉本地刚改的
+            // 本机刚写过、还没推上去的改动 → 这次不拉，免得云端旧内容盖掉本地刚改的。
+            // 2026-09-16：加了**时间盒**（原来是无期的）。无期守卫在 402 期间会永久锁死：
+            //   推送必失败 → 队列永远排不掉 → 只要这台电脑动过一次学员数据，
+            //   trainee_full_admin_backup 就永远躺在队列里 → 这台电脑从此再也不拉这个 key，
+            //   几台电脑各改各的、越拉越远。30 秒足够覆盖「编辑→2 秒后 flush→失败→镜像进 KV」
+            //   那 ~3 秒的窗口，且过后自动恢复拉取。
+            //   _syncQueueAt 只在本次会话入队时记录；从 _syncPendingQueue 恢复的条目没有时间戳
+            //   → 当作 0（很旧）→ 不跳过。（安全侧：宁可多拉一次，也不要静默不同步。）
             for (var i = 0; i < keys.length; i++) {
-                if (_syncQueue && _syncQueue[keys[i]] !== undefined) return;
+                if (_syncQueue && _syncQueue[keys[i]] !== undefined
+                    && (Date.now() - (_syncQueueAt[keys[i]] || 0)) < _YXT_PANEL_QUEUE_GRACE) return;
             }
             // 节流：失败时缩短重试间隔
             var gap = _yxtPanelFailed[panel] ? _YXT_PANEL_GAP_FAIL
@@ -22709,6 +22842,15 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
                     rows.forEach(function(row) { _yxtApplyCloudRow(row); });
                     var changed = _yxtApplyWrites - _w0;
                     if (!changed) return 0;   // 取值都回来了、但没有一行跟本地不一样 → 不必重画
+                    // ★ 2026-09-16：学员数据必须先灌回内存再重画。
+                    //   loadData() 把 trainee_full_admin_backup 解析进全局数组 students，
+                    //   而 renderFrontend()/renderDashboard() 渲染读的是 students。
+                    //   少了这一步，上面刚写进 localStorage 的新值根本画不出来 ——
+                    //   表现为「切模块永远是旧的，只有点 ☁️（结尾整页 reload）才看得到新的」。
+                    //   启动路径（23479）和登录补拉（22800）早就在落地后调 loadData() 了，这里原来漏了。
+                    //   顺序要求：必须在两个 forEach 落地循环**都跑完之后**调 —— 否则同批里的
+                    //   trainee_data_version 还没写下去，loadData 的版本校验会把刚拉的数据当旧版清掉。
+                    if (_yxtTraineeApplied) { _yxtTraineeApplied = false; try { loadData(); } catch(e) {} }
                     // 故意不推进 _lastCloudSyncAt：那个游标是「整表同步到哪」的标记，这里只拉了部分 key，
                     //   推进它会让本次没拉的 key 永远落在游标后面 → 静默漏数据
                     if (typeof onApplied === 'function') { try { onApplied(); } catch(e) {} }
