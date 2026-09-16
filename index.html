@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <!-- 版本行：每次部署新代码必须 bump 此 content（YYYYMMDD.N），旧设备靠它自检静默升级 -->
-    <meta name="yxt-ver" content="20260915.1">
+    <meta name="yxt-ver" content="20260916.1">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
     <title>优学堂</title>
     <script src="https://cdn.sheetjs.com/xlsx-0.20.2/package/dist/xlsx.full.min.js" defer></script>
@@ -22320,16 +22320,32 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
             if (toast && typeof showToast === 'function') { try { showToast(toast, type); } catch(e) {} }
         }
 
+        var _pushFailed = false;
         _syncFlush().then(function(flushed){
-            // 推送失败（返回 false，已放回队列等重试）→ 不能假装成功往下走
-            if (flushed === false) throw new Error('本机改动还没推上云');
+            // 2026-09-16 修正：推送失败**不再中断同步**。
+            //   上一版在这里 throw —— 意图是「别让云端旧数据盖掉本机没推上去的改动」，但 402 期间
+            //   Supabase 的 POST 必然失败（实测 /rest/v1/app_data 返 402 exceed_egress_quota），
+            //   而队列里常年躺着 trainee_data_sync_time / feishu_tenant_token / autoPushQueue /
+            //   errorDashboardCache 这些**系统自动写的键**（不是用户的编辑，且 trainee_data_sync_time
+            //   正是本按钮成功后自己写进去的：22330 写 → 不以 _ 开头 → 22345 自动入队 → 402 排不掉）。
+            //   结果：按钮在 402 期间被彻底锁死，用户点一下只看到报错、数据一条都拉不回来。
+            //   推送本身有 KV 镜像兜底（fetch 包装 848 行）+ 队列持久化重试（22284），不会丢；
+            //   所以推送失败只降级成提示，拉取照走。
+            _pushFailed = (flushed === false);
             return _syncPullAll(true);
         }).then(function(n){
-            // 拉取失败 resolve null（见 _syncPullAll）→ 同样不能假装成功
+            // 拉取失败 resolve null（见 _syncPullAll）→ 这个仍然致命：拉不回来就等于没同步
             if (n === null || n === undefined) throw new Error('云端拉取失败');
             localStorage.setItem('trainee_data_sync_time', new Date().toISOString());
-            _done('☁️ 同步完成', '#27ae60', 'rgba(39,174,96,0.12)',
-                  '✅ 同步完成，云端 ' + n + ' 条已取回', 'success');
+            if (_pushFailed) {
+                var _pend = 0;
+                try { _pend = Object.keys(_syncQueue).length; } catch(e) {}
+                _done('☁️ 同步完成', '#e6a23c', 'rgba(230,162,60,0.12)',
+                      '✅ 已取回云端 ' + n + ' 条；⚠️ 云端推送暂不可用（' + _pend + ' 项待重试）', 'warning');
+            } else {
+                _done('☁️ 同步完成', '#27ae60', 'rgba(39,174,96,0.12)',
+                      '✅ 同步完成，云端 ' + n + ' 条已取回', 'success');
+            }
             // ★ 延后刷新：原来 reload 紧跟刷新徽章、在同一个微任务里，浏览器没机会绘制 → 完成态根本看不见
             setTimeout(function(){ location.reload(); }, 1200);
         }).catch(function(e){
