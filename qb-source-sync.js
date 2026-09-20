@@ -32,7 +32,13 @@ const crypto = require('crypto');
 const PAGES = 'https://yxt-feishu.pages.dev';
 const SECRET = 'yxt-feishu-2026';
 const APP_ID = 'cli_aab1fa4e87bbdbd3';
-const APP_SECRET = '1uLKmOkzQpoac6Ixw3Qhsb6KR1gCrcTn';
+// 2026-09-20：应用密钥不再写在本文件里 —— 本文件在**公开仓库**根目录，写上就等于公开。
+// 取值顺序：① 环境变量 FEISHU_APP_SECRET（GitHub Actions 由仓库 Secrets 注入）
+//           ② 本地密钥文件（在你自己电脑上手工跑时用；不进仓库）
+// 两个都没有就留空 —— 留空不等于死：见下面 getAppToken / getAppAccessToken 里的「留空就走代理」分支。
+const APP_SECRET = process.env.FEISHU_APP_SECRET || (function () {
+  try { return require('fs').readFileSync('C:/Users/xuhan/yxt/feishu-secret.txt', 'utf8').trim(); } catch (e) { return ''; }
+})();
 const REPORT_EMAIL = process.env.REPORT_EMAIL || 'xuhang02@zhuanzhuan.com';
 
 // 配对表（key 只能含字母/数字/下划线——CF KV key 规则；新增配对只加一条）
@@ -176,12 +182,17 @@ async function loadUserToken() {
 // 刷新 user_access_token 必须用 app_access_token 做 Authorization（不是 tenant_access_token，也不是 body 里传 app_id）
 async function getAppAccessToken() {
   const body = JSON.stringify({ app_id: APP_ID, app_secret: APP_SECRET });
-  let r;
-  try {
-    r = await httpsRequest('https://open.feishu.cn/open-apis/auth/v3/app_access_token/internal', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body });
-  } catch (e) {
-    r = await viaProxy('/auth/v3/app_access_token/internal', '', { method: 'POST', body });
+  let r = null;
+  // 2026-09-20：密钥为空（本机没放本地密钥文件、又不在 GitHub Actions 里）时**不能直连**。
+  // 直连没人替我们补密钥，飞书回的是 HTTP 200 + code 10003 —— 它**不抛异常**，所以原来那句
+  // catch 退不回代理那条路，直接就报错了。这种情况干脆跳过直连，交给代理：
+  // 代理会用 Cloudflare 环境变量 FEISHU_APP_SECRET 里的真值把 app_secret 补上。
+  if (APP_SECRET) {
+    try {
+      r = await httpsRequest('https://open.feishu.cn/open-apis/auth/v3/app_access_token/internal', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body });
+    } catch (e) { r = null; }
   }
+  if (!r) r = await viaProxy('/auth/v3/app_access_token/internal', '', { method: 'POST', body });
   if (!r.json || r.json.code !== 0 || !r.json.app_access_token) throw new Error('app_access_token 获取失败: ' + r.status + ' ' + JSON.stringify(r.json).slice(0, 200));
   return r.json.app_access_token;
 }
@@ -263,10 +274,14 @@ async function getAppToken() {
   if (APP_TOKEN) return APP_TOKEN;
   const body = JSON.stringify({ app_id: APP_ID, app_secret: APP_SECRET });
   let d = null;
-  try {
-    const r = await httpsRequest('https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body });
-    d = r.json;
-  } catch (e) {
+  // 2026-09-20：同 getAppAccessToken —— 密钥为空就别直连（直连不抛异常，退不回代理），直接让代理补。
+  if (APP_SECRET) {
+    try {
+      const r = await httpsRequest('https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body });
+      d = r.json;
+    } catch (e) { d = null; }
+  }
+  if (!d) {
     const p = await viaProxy('/auth/v3/tenant_access_token/internal', '', { method: 'POST', body });
     d = p.json;
   }

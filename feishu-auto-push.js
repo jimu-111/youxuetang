@@ -6,7 +6,20 @@
  */
 const PHASE = process.env.PHASE || 'full';
 const FEISHU_APP_ID = 'cli_aab1fa4e87bbdbd3';
-const FEISHU_APP_SECRET = '1uLKmOkzQpoac6Ixw3Qhsb6KR1gCrcTn';
+// 2026-09-20：应用密钥不再写在本文件里 —— 本文件在**公开仓库**根目录，写上就等于公开。
+// 取值顺序：① 环境变量 FEISHU_APP_SECRET（GitHub Actions 由仓库 Secrets 注入）
+//           ② 本地密钥文件（在你自己电脑上手工跑时用；不进仓库）
+const FEISHU_APP_SECRET = process.env.FEISHU_APP_SECRET || (function () {
+    try { return require('fs').readFileSync('C:/Users/xuhan/yxt/feishu-secret.txt', 'utf8').trim(); } catch (e) { return ''; }
+})();
+// 这个脚本跟别的不一样：它**不经过代理**，是直连飞书的 —— 所以密钥为空时没人能替它补，
+// 必须当场喊停。之前有段时间是靠写死的密钥在跑，静默失败的代价太大（周一推送整个不发）。
+if (!FEISHU_APP_SECRET) {
+    console.error('❌ 没拿到飞书应用密钥（FEISHU_APP_SECRET）：');
+    console.error('   · GitHub Actions 里跑 → 仓库 Settings → Secrets and variables → Actions 配 FEISHU_APP_SECRET');
+    console.error('   · 本机手工跑     → 确认 C:\\Users\\xuhan\\yxt\\feishu-secret.txt 存在且非空');
+    process.exit(1);
+}
 const SUPABASE_URL = (process.env.SUPABASE_URL || 'https://zfxwnixlvdxawoylhgxj.supabase.co').replace(/\/$/, '').replace(/\s/g, '');
 const SUPABASE_KEY = (process.env.SUPABASE_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InpmeHduaXhsdmR4YXdveWxoZ3hqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODIyMDEyNzIsImV4cCI6MjA5Nzc3NzI3Mn0.aPfO4Ry_LzoOColCVx64JQPF-BWga-_J2fX9hg-E4G8').replace(/\s/g, '');
 const SITE_URL = 'https://jimu-111.github.io/youxuetang/';

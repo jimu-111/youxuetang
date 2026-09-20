@@ -21,7 +21,14 @@ const PAGES = 'https://yxt-feishu.pages.dev';
 const SECRET = 'yxt-feishu-2026';
 const SS_TOKEN = 'BzG8s8py3hDZIvtUJl7cRXJXnfe'; // 总表（含全部 7 个品类 tab）
 const APP_ID = 'cli_aab1fa4e87bbdbd3';
-const APP_SECRET = '1uLKmOkzQpoac6Ixw3Qhsb6KR1gCrcTn';
+// 2026-09-20：应用密钥不再写在本文件里 —— 本文件在**公开仓库**根目录，写上就等于公开。
+// 取值顺序：① 环境变量 FEISHU_APP_SECRET（GitHub Actions 由仓库 Secrets 注入）
+//           ② 本地密钥文件（在你自己电脑上手工跑时用；不进仓库）
+// 两个都没有就留空 —— 留空不等于死：本脚本换 token 走的是代理，代理会用 Cloudflare
+// 环境变量 FEISHU_APP_SECRET 里的真值把 app_secret 补上。
+const APP_SECRET = process.env.FEISHU_APP_SECRET || (function () {
+  try { return require('fs').readFileSync('C:/Users/xuhan/yxt/feishu-secret.txt', 'utf8').trim(); } catch (e) { return ''; }
+})();
 const SUPABASE_URL = (process.env.SUPABASE_URL || 'https://zfxwnixlvdxawoylhgxj.supabase.co').replace(/\/$/, '').replace(/\s/g, '');
 const SUPABASE_KEY = (process.env.SUPABASE_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InpmeHduaXhsdmR4YXdveWxoZ3hqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODIyMDEyNzIsImV4cCI6MjA5Nzc3NzI3Mn0.aPfO4Ry_LzoOColCVx64JQPF-BWga-_J2fX9hg-E4G8').replace(/\s/g, '');
 const DRY_RUN = process.env.DRY_RUN === 'true' || process.env.DRY_RUN === '1';

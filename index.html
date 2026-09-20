@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <!-- 版本行：每次部署新代码必须 bump 此 content（YYYYMMDD.N），旧设备靠它自检静默升级 -->
-    <meta name="yxt-ver" content="20260916.3">
+    <meta name="yxt-ver" content="20260920.1">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
     <title>优学堂</title>
     <script src="https://cdn.sheetjs.com/xlsx-0.20.2/package/dist/xlsx.full.min.js" defer></script>
@@ -15533,7 +15533,12 @@ URL.revokeObjectURL(url);
     const DEPLOYED_URL = 'https://jimu-111.github.io/youxuetang/';
     const FEISHU_CONFIG = {
         appId: 'cli_aab1fa4e87bbdbd3',
-        appSecret: '1uLKmOkzQpoac6Ixw3Qhsb6KR1gCrcTn',
+        // 2026-09-20：这里原来是明文密钥，任何人都能在公开网页源码里看到 → 已清空。
+        // 真值改由代理层注入（Cloudflare 环境变量 FEISHU_APP_SECRET）：
+        //   拿到本对象后，那 4 个需要密钥的接口在转发前由代理把 app_secret 换成真值。
+        // ⚠️ 这个字段必须保留（哪怕空串）—— 代理是靠「body 里有 app_secret 字段」才动手的，
+        //    删掉字段 = 代理不注入 = 换 token 直接失败。
+        appSecret: '',
         spreadsheetToken: 'EdI0sn3qkh7H6wtkhcpcxrTnnDf',
         sheets: [
             { id: '4054dd', name: '初审失误登记', source: '初审', colDate: 0, colSite: 1, colQcCode: 3, colCategory: 6, colReviewer: 8, colNote: 9, colProduct: 5 },
