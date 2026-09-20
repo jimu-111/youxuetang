@@ -12,13 +12,13 @@ const FEISHU_APP_ID = 'cli_aab1fa4e87bbdbd3';
 const FEISHU_APP_SECRET = process.env.FEISHU_APP_SECRET || (function () {
     try { return require('fs').readFileSync('C:/Users/xuhan/yxt/feishu-secret.txt', 'utf8').trim(); } catch (e) { return ''; }
 })();
-// 这个脚本跟别的不一样：它**不经过代理**，是直连飞书的 —— 所以密钥为空时没人能替它补，
-// 必须当场喊停。之前有段时间是靠写死的密钥在跑，静默失败的代价太大（周一推送整个不发）。
+// ⚠️ 没配**不等于跑不了**：下面 feishuPost() 会退到代理，由代理把密钥补上。
+//    （这里原先写的是 process.exit(1)。2026-09-20 当天就改掉了 —— 本脚本是周一推送的主力，
+//      让它被「一个忘了配的 Secret」拦死太脆。宁可走代理慢半秒，也不要周一早上整个不发。）
 if (!FEISHU_APP_SECRET) {
-    console.error('❌ 没拿到飞书应用密钥（FEISHU_APP_SECRET）：');
-    console.error('   · GitHub Actions 里跑 → 仓库 Settings → Secrets and variables → Actions 配 FEISHU_APP_SECRET');
-    console.error('   · 本机手工跑     → 确认 C:\\Users\\xuhan\\yxt\\feishu-secret.txt 存在且非空');
-    process.exit(1);
+    console.log('⚠️ 没拿到飞书应用密钥（FEISHU_APP_SECRET），本次改走代理、由代理补密钥。');
+    console.log('   · GitHub Actions 里跑 → 仓库 Settings → Secrets and variables → Actions 配 FEISHU_APP_SECRET');
+    console.log('   · 本机手工跑     → 确认 C:\\Users\\xuhan\\yxt\\feishu-secret.txt 存在且非空');
 }
 const SUPABASE_URL = (process.env.SUPABASE_URL || 'https://zfxwnixlvdxawoylhgxj.supabase.co').replace(/\/$/, '').replace(/\s/g, '');
 const SUPABASE_KEY = (process.env.SUPABASE_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InpmeHduaXhsdmR4YXdveWxoZ3hqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODIyMDEyNzIsImV4cCI6MjA5Nzc3NzI3Mn0.aPfO4Ry_LzoOColCVx64JQPF-BWga-_J2fX9hg-E4G8').replace(/\s/g, '');
@@ -109,12 +109,36 @@ globalThis.fetch = function(input, init) {
 };
 
 // ===== API =====
-async function getAppToken() {
-    const r = await fetch('https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ app_id: FEISHU_APP_ID, app_secret: FEISHU_APP_SECRET })
+// 飞书 POST 统一入口（2026-09-20 加）。
+// 为什么需要它：本脚本是**唯一不经过代理**的（网页走 feishuApiFetch、其他脚本走 viaProxy），
+//   所以密钥一旦取不到，直连必然被飞书拒（HTTP 200 + code 10003）——而周一推送就整个不发。
+//   这里补一条退路：有本地密钥就直连；没有就走 Pages 代理，
+//   由代理用 Cloudflare 环境变量里的真值把 app_secret 补上（跟网页、其他脚本同一套机制）。
+async function feishuPost(path, body) {
+    const url = 'https://open.feishu.cn/open-apis' + path;
+    if (FEISHU_APP_SECRET) {
+        const r = await fetch(url, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body)
+        });
+        return await r.json();
+    }
+    const r = await fetch(KV_PAGES, {
+        method: 'POST',
+        headers: {
+            'x-target-url': url,
+            'x-target-method': 'POST',
+            'x-target-content-type': 'application/json'
+        },
+        body: JSON.stringify(body)
     });
-    const d = await r.json();
+    return await r.json();
+}
+
+async function getAppToken() {
+    const d = await feishuPost('/auth/v3/tenant_access_token/internal', {
+        app_id: FEISHU_APP_ID, app_secret: FEISHU_APP_SECRET
+    });
     if (!d.tenant_access_token) throw new Error('AppToken: ' + JSON.stringify(d));
     return d.tenant_access_token;
 }
@@ -301,12 +325,8 @@ async function main() {
         } else if (stored.refresh_token) {
             // token 过期，尝试 refresh
             try {
-                var refResp = await fetch('https://open.feishu.cn/open-apis/authen/v1/refresh_access_token', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ app_id: FEISHU_APP_ID, app_secret: FEISHU_APP_SECRET, grant_type: 'refresh_token', refresh_token: stored.refresh_token })
-                });
-                var refData = await refResp.json();
+                // 2026-09-20：改走 feishuPost —— 没配密钥时由代理补（原来直连，空密钥必被拒）
+                var refData = await feishuPost('/authen/v1/refresh_access_token', { app_id: FEISHU_APP_ID, app_secret: FEISHU_APP_SECRET, grant_type: 'refresh_token', refresh_token: stored.refresh_token });
                 if (refData.code === 0 && refData.data && refData.data.access_token) {
                     userToken = refData.data.access_token;
                     // 保存新 token 回 Supabase
