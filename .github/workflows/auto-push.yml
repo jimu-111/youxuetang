@@ -38,3 +38,8 @@ jobs:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
           FORCE_RUN: ${{ github.event.inputs.force || 'false' }}
+          # 2026-09-20：飞书应用密钥不再写在 feishu-auto-push.js 里（那个文件在公开仓库根目录，
+          #   写上就等于公开）。改由仓库 Secrets 注入，Secret 名就叫 FEISHU_APP_SECRET。
+          #   ⚠️ 这个脚本是直连飞书的、不经过代理，所以这个 Secret 没配的话脚本会当场报错退出
+          #   （周一推送整个不发）—— 配好之后别再删。
+          FEISHU_APP_SECRET: ${{ secrets.FEISHU_APP_SECRET }}

@@ -47,6 +47,11 @@ jobs:
           DRY_RUN: ${{ github.event.inputs.dry_run || 'false' }}
           FORCE: ${{ github.event.inputs.force || 'false' }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          # 2026-09-20：飞书应用密钥不再写在 qb-source-sync.js / qb-weekly-sync.js 里
+          #   （那两个文件在公开仓库根目录，写上就等于公开）。改由仓库 Secrets 注入。
+          #   没配也不会立刻挂：这两个脚本换 token 会退到代理那条路，由代理补密钥 ——
+          #   但配上是正路，别依赖兜底。
+          FEISHU_APP_SECRET: ${{ secrets.FEISHU_APP_SECRET }}
 
       # 对上一步的"失败"告警：continue-on-error 会让 job 层面仍是成功，所以必须看 step 的 outcome
       # 2026-09-13 修正文案：题库同步现在是 if: srcsync.outcome == 'success'，对账异常时它**会被跳过**，
@@ -57,6 +62,7 @@ jobs:
         run: node qb-source-sync.js --alert-only "⚠️ **源1→源2 对账未跑完**（脚本异常退出，详见运行日志）。本次运行的**题库同步已被跳过** —— 优学堂仍是**上周的题库**，数据不会错乱，只是这周不更新。修好后手动触发一次即可补上。"
         env:
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          FEISHU_APP_SECRET: ${{ secrets.FEISHU_APP_SECRET }}
 
       - name: 上传同步报告与备份
         if: always()
@@ -86,6 +92,7 @@ jobs:
           # 2026-09-13 补：原来只透传给对账脚本，手动触发选 force 对题库无效
           FORCE: ${{ github.event.inputs.force || 'false' }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          FEISHU_APP_SECRET: ${{ secrets.FEISHU_APP_SECRET }}
 
       # 2026-09-13 新增：题库同步失败告警。
       #   用 steps.qbsync.outcome == 'failure' 而不是 failure()：对账失败时题库步骤是被 **skip**
@@ -99,3 +106,4 @@ jobs:
           node qb-weekly-sync.js --alert-only "⚠️ **题库同步未完成**（脚本异常退出，详见运行日志）。**云端题库没有被修改** —— 优学堂用的仍是上周的题库，不是数据错乱，只是这周没更新。常见原因：某品类读值失败 / sheet 被改名或删除 / 题数骤降超 10% / 云端题库读不到。运行日志里会写明是哪一道闸门拦下的。"
         env:
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          FEISHU_APP_SECRET: ${{ secrets.FEISHU_APP_SECRET }}
