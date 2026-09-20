@@ -190,6 +190,10 @@ async function getAppAccessToken() {
   if (APP_SECRET) {
     try {
       r = await httpsRequest('https://open.feishu.cn/open-apis/auth/v3/app_access_token/internal', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body });
+      // 2026-09-20：直连拿到「非成功」也算失败，得退到代理 —— 最典型的是密钥末尾多粘了
+      //   换行/空格（GitHub Secret 输入框看不出末尾），飞书回 200 + code 10003。
+      //   不这样判的话 d 是个「有值的错误对象」，下面 if (!r) 判不出来，直接抛错。
+      if (!r.json || r.json.code !== 0) { console.log('  ⚠️ 直连取 app_access_token 未成功（code=' + (r.json && r.json.code) + '），改走代理'); r = null; }
     } catch (e) { r = null; }
   }
   if (!r) r = await viaProxy('/auth/v3/app_access_token/internal', '', { method: 'POST', body });
@@ -279,6 +283,8 @@ async function getAppToken() {
     try {
       const r = await httpsRequest('https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body });
       d = r.json;
+      // 2026-09-20：同上 —— 直连拿到错误码也要退到代理，否则「密钥配错了」会一路哑到底
+      if (!d || d.code !== 0) { console.log('  ⚠️ 直连取应用 token 未成功（code=' + (d && d.code) + '），改走代理'); d = null; }
     } catch (e) { d = null; }
   }
   if (!d) {

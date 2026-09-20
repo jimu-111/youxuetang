@@ -117,11 +117,20 @@ globalThis.fetch = function(input, init) {
 async function feishuPost(path, body) {
     const url = 'https://open.feishu.cn/open-apis' + path;
     if (FEISHU_APP_SECRET) {
-        const r = await fetch(url, {
-            method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(body)
-        });
-        return await r.json();
+        try {
+            const r = await fetch(url, {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body)
+            });
+            const d = await r.json();
+            if (d && d.code === 0) return d;
+            // 直连被拒（最典型：密钥末尾多粘了个换行/空格，飞书回 10003）→ 不能就这么认了，
+            // 下面还有代理那条路。2026-09-20 补：原来这里是「直连失败直接用失败结果」，
+            // 等于把「密钥配错了」变成一个周一早上才发现的哑炮。
+            console.log('  ⚠️ 直连飞书被拒（code=' + (d && d.code) + ' ' + ((d && d.msg) || '') + '），改走代理重试');
+        } catch (e) {
+            console.log('  ⚠️ 直连飞书网络错误（' + e.message + '），改走代理重试');
+        }
     }
     const r = await fetch(KV_PAGES, {
         method: 'POST',
