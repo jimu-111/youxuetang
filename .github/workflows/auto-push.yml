@@ -32,6 +32,14 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
+      # 2026-09-22：培训资料要「收件人打开就有图、零点击」，就得把每张照片都嵌进报告，
+      #   而飞书原图平均 2.08MB/张 —— 所以要在服务器上先压到 900px（显示框只有 400px，够了）。
+      #   靠根目录 package.json 里声明的 sharp。
+      # ⚠️ 装不上**不能让推送哑掉**：脚本里 require('sharp') 是 try/catch 的，
+      #   拿不到就退回「只用 KV 里现成的压缩图」，剩下的留占位图（点一下能看），卡片照发。
+      #   所以这里用 `|| echo` 把失败吞掉（失败也是 exit 0）。
+      - name: 装图片压缩库（失败不影响推送）
+        run: npm install --no-audit --no-fund || echo "⚠️ sharp 没装上 —— 本次照片退回占位图模式，推送照发"
       - name: 分析上周数据并推送
         run: node feishu-auto-push.js
         env:
@@ -40,6 +48,8 @@ jobs:
           FORCE_RUN: ${{ github.event.inputs.force || 'false' }}
           # 2026-09-20：飞书应用密钥不再写在 feishu-auto-push.js 里（那个文件在公开仓库根目录，
           #   写上就等于公开）。改由仓库 Secrets 注入，Secret 名就叫 FEISHU_APP_SECRET。
-          #   ⚠️ 这个脚本是直连飞书的、不经过代理，所以这个 Secret 没配的话脚本会当场报错退出
-          #   （周一推送整个不发）—— 配好之后别再删。
+          #   ⚠️ 更正（2026-09-21）：原注释写「没配 Secret 脚本会当场报错退出」——**已经不成立**。
+          #   当天给 feishu-auto-push.js 加了 feishuPost()：有密钥就直连、直连被拒(如密钥末尾多粘了
+          #   换行，飞书回 200+code 10003)或没密钥时**自动退回 Pages 代理**，由代理用 Cloudflare 环境变量
+          #   里的真值补上。所以这个 Secret 现在是「有更好、没有也能跑」，不再是单点。
           FEISHU_APP_SECRET: ${{ secrets.FEISHU_APP_SECRET }}
