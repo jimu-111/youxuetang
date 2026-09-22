@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <!-- 版本行：每次部署新代码必须 bump 此 content（YYYYMMDD.N），旧设备靠它自检静默升级 -->
-    <meta name="yxt-ver" content="20260922.3">
+    <meta name="yxt-ver" content="20260922.5">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
     <title>优学堂</title>
     <script src="https://cdn.sheetjs.com/xlsx-0.20.2/package/dist/xlsx.full.min.js" defer></script>
@@ -3089,6 +3089,14 @@
     //   从回收站恢复某人 → 墓碑自动撤销。
     // 兼容：还在跑旧代码的设备不认识 yxts_*，照旧读写数组，不会崩；它那边删掉的人会被影子记录
     //   补回来 —— 这正是我们要的。
+    // ⚠️ 字段归属（2026-09-22 下午补）：上面这层只管「这个人在不在」，**不管字段值归谁**。
+    //   当天因此被咬了两次：脚本在云端改了张浩文的 graduatedDate / 许文欣的 formalWeek（主名单 +
+    //   影子两处都改），一台没刷新的设备保存别的内容 → 整表 LWW → 主名单被它内存里那份旧数组
+    //   整份覆盖回去，而影子记录因为「本机内存 == 本机影子」没被重写、云端那份还是对的 →
+    //   **两个来源打架，主名单赢**。根治在推送路径：_syncFlush 发 POST 之前做一次字段级三方合并
+    //   （base=本机快照 / mine=要推的原文 / theirs=云端影子），见文件下方
+    //   `/*__TRAINEE_MERGE_BEGIN__*/`（约 22520 行附近）。
+    //   ⇒ 运维约定：**任何改云端的脚本，主名单和 yxts_<id> 必须一起写**，只改主名单会被下一次推送按影子回退。
     // ⚠️ 前缀为什么不用 `student_`：Supabase 里躺着 2026-09-07 的演示数据 `student_1`~`student_6`
     //   （李思源/陈远航/王若曦/张敏仪/赵一航/林小夕，id 1~6）和旧快照 `student_401`。
     //   用那个前缀的话，自愈会把这 6 个假人当真人补进名单。换现在这个前缀，零历史包袱。
@@ -16105,6 +16113,22 @@ URL.revokeObjectURL(url);
         if (appTok && appTok !== userTok) out.push(appTok);
         return out;
     }
+    // 线路响应校验（2026-09-22）：请求体里带 app_secret 的接口（换应用 token / 授权码换 token /
+    // 徐行 token 续期 / 扫码授权回调）走本机 panze-server 和 Supabase 函数时，那两条线路是**纯转发**，
+    // 不会注入 app_secret（只有 Pages/Worker 会注入），飞书回「凭证类错误」——但 HTTP 状态码仍是 200，
+    // fetchViaProxy 见到 200 就判定这条线路成功、**永远不会往下试 Pages 那条好线路**，
+    // 于是扫码授权直接弹「❌ 授权失败：missing app id or app secret」，本机天天开着 panze 就天天撞。
+    // 这里把「凭证类错误」判成这条线路不可信 → 熔断 → 自动换下一条。
+    // 为什么只对带 app_secret 的请求生效：别的接口也可能回 10003（真的参数错），不能一概而论。
+    async function _feishuCredRespValid(resp) {
+        try {
+            var j = await resp.clone().json();
+            if (!j || typeof j !== 'object') return true;
+            if (j.code === 20025 || j.code === 10003) return false;
+            if (typeof j.msg === 'string' && /missing app id or app secret/i.test(j.msg)) return false;
+        } catch(e) {}
+        return true;
+    }
     async function _feishuApiFetchOnce(url, options, timeoutMs) {
         options = options || {};
         var proxyHeaders = {
@@ -16118,7 +16142,10 @@ URL.revokeObjectURL(url);
         if (options.headers && options.headers['Content-Type']) {
             proxyHeaders['x-target-content-type'] = options.headers['Content-Type'];
         }
-        var resp = await fetchViaProxy(proxyHeaders, options, timeoutMs);
+        // 只有「请求体里带 app_secret」的接口才做这个校验（见 _feishuCredRespValid 注释）
+        var _bodyStr = (options && typeof options.body === 'string') ? options.body : '';
+        var _needSecret = _bodyStr.indexOf('app_secret') >= 0;
+        var resp = await fetchViaProxy(proxyHeaders, options, timeoutMs, _needSecret ? _feishuCredRespValid : undefined);
         var data = await resp.json();
         // 代理自身错误（{error:...} 且无飞书 code）才抛；飞书业务错误（带 code，可能同时带 error 排查信息）
         // 原样返回，交给调用方判断——否则会被当成「代理错误」抛出，双身份兜底也无法触发（2026-09-11）
@@ -22499,6 +22526,178 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
         } catch(e) {}
     }
 
+    // ==================== 学员推送合并（2026-09-22 事故 A/B 的根治）====================
+    // 事故：脚本在云端把「张浩文.graduatedDate」改成 09-13（主名单 + yxts_401 两处都改），
+    //   一台**没刷新**的设备改完「李四」一保存 → 整表覆盖，主名单被它内存里那份旧数组写回 09-22；
+    //   而 yxts_401 因为「本机内存 == 本机影子」没被重写（见 _traineeShadowSave），云端仍是 09-13。
+    //   许文欣 formalWeek 3→2 是同一形态（当天被咬了两次）。
+    // 根因：推送路径上没有任何「这个字段归谁」的概念。_syncFlush 一次 POST 整张表，
+    //   云端 updated_at 就是墙钟 —— 谁最后存谁赢，一次覆盖全表；只是改了「李四」，
+    //   却把「张浩文」一起写成了本机内存里的旧值。
+    // 做法：推送前对每个人做一次**字段级三方合并** ——
+    //   base   = _trainee_cloud_snapshot（本机上次拉到的云端主名单原文）里同 id 那条
+    //   mine   = 本次要推出去的那条（队列里的原文，不是内存 students：内存可能已被更晚一轮编辑改过）
+    //   theirs = 云端 yxts_<id> 现在那条（一人一条的影子就是 per-person 的云端权威）
+    //   ① mine==base   → 本机没动过这个字段 → 用 theirs（事故 A/B 靠这一条修好）
+    //   ② theirs==base → 云端没动过        → 用 mine（保住用户当下的编辑）
+    //   ③ 都动过（真冲突）→ 用 mine 并记日志（与今天行为一致，不会更差）
+    // ⚠️ 必须下沉到字段，整人替换不行：事故当天张浩文是 stage4/week7 的老学员，本来就每周都在更新
+    //   efficiency/mistake，只要那台设备这周改过他**任何一个字段**，整人判据就判成「本机改过这个人」
+    //   → 整条不合并 → 09-22 又被推上去，一行都没修好。同理 formalWeek 和 weeklyEff 住在同一个
+    //   stageProgress 对象里，不递归下沉一层连事故 B 都修不好。
+    // ⚠️ 影子记录必须跟着一起合并：那台设备改的若正是张浩文的 efficiency，它这一批里**同时带着**
+    //   yxts_401（内容还是旧 graduDate）。只修主名单不修影子 → 云端 per-person 权威反被写坏，
+    //   下一个设备一合并就把旧值搬回来。所以合并结果要同时写回主名单那条和 yxts_<id> 那条。
+    // 只改**要推出去的 body**：本机数组 / 影子 / 内存 students 一律不动
+    //   （副作用：本机界面仍显示旧值，直到下次拉取 —— 有意的，避免你正在编辑时界面被换掉）。
+    // 任何一步失败（没快照 / GET 失败 / 超时 / 解析失败）→ 原样推送 = 今天的行为，绝不因合并失败少写一次。
+    // ⚠️ 运维约定：任何改云端的脚本，主名单和 yxts_<id> **必须一起写**。合并把影子当 per-person 权威，
+    //   只改主名单不改影子会被下一次推送按影子回退掉。
+    /*__TRAINEE_MERGE_BEGIN__*/
+    var TRAINEE_MERGE_KEY = 'trainee_full_admin_backup';
+    var TRAINEE_MERGE_LIMIT = 120;      // 名单人数上限，超过就不合并（in.() URL 长度 / KV 读次数失控）
+    var TRAINEE_MERGE_TIMEOUT = 8000;   // 取云端影子超时；超时按「取不到」处理，原样推送
+    // 稳定序列化（按键排序）。脚本或别的设备写进云端的键序可能与本机不同，直接用 JSON.stringify 比
+    //   会把「内容其实一样」判成变了 —— 而那一步错的方向是「判成本机改过 → 不合并 → 不保护」。
+    function _traineeStable(v) {
+        if (v === null || typeof v !== 'object') return JSON.stringify(v);
+        if (Array.isArray(v)) {
+            var a = [];
+            for (var i = 0; i < v.length; i++) a.push(_traineeStable(v[i]));
+            return '[' + a.join(',') + ']';
+        }
+        return '{' + Object.keys(v).sort().map(function(k) {
+            return JSON.stringify(k) + ':' + _traineeStable(v[k]);
+        }).join(',') + '}';
+    }
+    function _traineeSame(a, b) {
+        if (a === b) return true;
+        if (a === null || b === null || a === undefined || b === undefined) return false;
+        if (typeof a !== 'object' || typeof b !== 'object') return false;
+        try { if (JSON.stringify(a) === JSON.stringify(b)) return true; } catch(e) {}   // 快路径
+        try { return _traineeStable(a) === _traineeStable(b); } catch(e) { return false; }
+    }
+    // 三方合并一个人。返回 {person, changed, conflicts}。out 的键序以 mine 为准（保持序列化稳定）
+    function _traineeMerge3(mine, base, theirs) {
+        var out = {}, changed = false, conflicts = 0;
+        Object.keys(mine).forEach(function(k){ out[k] = mine[k]; });
+        Object.keys(theirs).forEach(function(k){            // 云端新加的字段（脚本加的）也要带上去
+            if (!Object.prototype.hasOwnProperty.call(out, k)) { out[k] = theirs[k]; changed = true; }
+        });
+        out.id = mine.id;                                   // id 永远以本机为准
+        Object.keys(out).forEach(function(k){
+            if (k === 'id') return;
+            if (!Object.prototype.hasOwnProperty.call(theirs, k)) return;    // 云端没这个字段 → 保持本机
+            var m = mine[k], t = theirs[k];
+            if (!Object.prototype.hasOwnProperty.call(base, k)) {            // 基线里没有 → 判不了谁新 → 保持本机
+                if (!_traineeSame(m, t)) conflicts++;
+                return;
+            }
+            var b = base[k];
+            if (_traineeSame(m, b)) {                       // ① 本机没动过 → 用云端
+                if (!_traineeSame(m, t)) { out[k] = t; changed = true; }
+                return;
+            }
+            if (_traineeSame(t, b)) return;                 // ② 云端没动过 → 用本机（out[k] 已是 m）
+            if (m && t && typeof m === 'object' && typeof t === 'object' &&
+                !Array.isArray(m) && !Array.isArray(t)) {   // ③ 递归下沉一层（stageProgress / weeklyEff…）
+                var sub = _traineeMerge3(m, (b && typeof b === 'object' && !Array.isArray(b)) ? b : {}, t);
+                out[k] = sub.person;
+                if (sub.changed) changed = true;
+                conflicts += sub.conflicts;
+                return;
+            }
+            conflicts++;                                    // ③ 原子值真冲突（含附件数组）→ 本机赢
+        });
+        return { person: out, changed: changed, conflicts: conflicts };
+    }
+    function _traineeWithTimeout(p, ms) {
+        return new Promise(function(resolve, reject){
+            var done = false;
+            var timer = setTimeout(function(){ if (done) return; done = true; reject(new Error('合并取数超时')); }, ms);
+            p.then(function(v){ if (done) return; done = true; clearTimeout(timer); resolve(v); },
+                   function(e){ if (done) return; done = true; clearTimeout(timer); reject(e); });
+        });
+    }
+    // 主流程：拿到本次要推送的 batch，返回「可以推送的 batch」。任何异常都原样返回 batch。
+    function _traineeMergeBatch(batch) {
+        try {
+            var _ai = -1, _sh = [], i;
+            for (i = 0; i < batch.length; i++) {
+                if (batch[i].key === TRAINEE_MERGE_KEY) _ai = i;
+                else if (batch[i].key.indexOf(TRAINEE_SHADOW_PREFIX) === 0 &&
+                         /^\d+$/.test(batch[i].key.slice(TRAINEE_SHADOW_PREFIX.length))) _sh.push(i);
+            }
+            if (_ai < 0 && !_sh.length) return Promise.resolve(batch);       // 这批没有学员数据 → 零网络
+            var baseArr = null;
+            try { baseArr = JSON.parse(_realLS.getItem(TRAINEE_CLOUD_SNAP_KEY) || 'null'); } catch(e) {}
+            if (!Array.isArray(baseArr) || !baseArr.length) return Promise.resolve(batch);   // 没基线 → 无从比较
+            var base = {};
+            baseArr.forEach(function(s){ if (s && s.id != null) base[s.id] = s; });
+
+            var mineArr = null;
+            if (_ai >= 0) { try { mineArr = JSON.parse(batch[_ai].value); } catch(e) {} }
+            if (mineArr && !Array.isArray(mineArr)) return Promise.resolve(batch);
+            if (mineArr && mineArr.length > TRAINEE_MERGE_LIMIT) return Promise.resolve(batch);
+            var mine = {};                                                   // id -> 本机这条
+            if (mineArr) mineArr.forEach(function(s){ if (s && s.id != null) mine[s.id] = s; });
+            _sh.forEach(function(idx){
+                var sid = batch[idx].key.slice(TRAINEE_SHADOW_PREFIX.length);
+                if (mine[Number(sid)] !== undefined) return;                 // 主名单里有 → 以它为准（两者本该一样）
+                try { var o = JSON.parse(batch[idx].value); if (o && o.id != null) mine[o.id] = o; } catch(e) {}
+            });
+            var ids = Object.keys(mine).filter(function(id){ return base[id] !== undefined; });
+            if (!ids.length || ids.length > TRAINEE_MERGE_LIMIT) return Promise.resolve(batch);   // 全是新人 → 保持本机
+
+            // key=in.(...) 形状很重要：Supabase 侧是一次带索引查询；402 期间 window.fetch 包装会兜底到 KV，
+            //   而 KV 侧正好走「精确 key 快速通道」→ 402 期间合并照样成立
+            var url = SUPABASE_URL + '/rest/v1/app_data?select=key,value&key=in.(' +
+                      ids.map(function(id){ return TRAINEE_SHADOW_PREFIX + id; }).join(',') + ')';
+            var p = fetch(url, { headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY } })
+                .then(function(r){ if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); });
+            return _traineeWithTimeout(p, TRAINEE_MERGE_TIMEOUT).then(function(rows){
+                var cloud = {};
+                (Array.isArray(rows) ? rows : []).forEach(function(row){
+                    if (!row || typeof row.key !== 'string' || row.key.indexOf(TRAINEE_SHADOW_PREFIX) !== 0) return;
+                    var sid = row.key.slice(TRAINEE_SHADOW_PREFIX.length);
+                    if (!/^\d+$/.test(sid)) return;                          // 形状不对 → 不认（同 _traineeShadowRestore 的规则）
+                    var o = null; try { o = JSON.parse(row.value); } catch(e) {}
+                    if (!o || o.id == null || String(o.id) !== sid) return;  // 键与内容对不上 → 不认
+                    cloud[sid] = o;
+                });
+                var merged = {}, n = 0, conf = 0;
+                ids.forEach(function(id){
+                    var t = cloud[String(id)];
+                    if (!t) return;                                          // 云端没有这条影子 → 保持本机
+                    var r = _traineeMerge3(mine[id], base[id], t);
+                    conf += r.conflicts;
+                    if (r.changed) { merged[id] = JSON.stringify(r.person); n++; }
+                });
+                if (!n) return batch;                                        // 没有任何字段需要采纳 → 原样推
+                var outArr = mineArr ? mineArr.map(function(s){
+                    return (s && s.id != null && merged[String(s.id)]) ? JSON.parse(merged[String(s.id)]) : s;
+                }) : null;
+                var out = batch.map(function(it, idx){
+                    if (idx === _ai) return { key: it.key, value: JSON.stringify(outArr), updated_at: it.updated_at };
+                    if (_sh.indexOf(idx) >= 0) {                             // 影子必须与主名单那条**逐字节一致**
+                        var sid2 = it.key.slice(TRAINEE_SHADOW_PREFIX.length);
+                        if (merged[sid2]) return { key: it.key, value: merged[sid2], updated_at: it.updated_at };
+                    }
+                    return it;
+                });
+                console.log('[学员合并] 推送前按字段采纳云端更新：改 ' + n + ' 人，冲突 ' + conf + ' 处按本机为准');
+                return out;
+            }).catch(function(e){
+                console.warn('⚠️ [学员合并] 取云端影子失败，本次按整表推送（' + (e && e.message) + '）');
+                return batch;
+            });
+        } catch(e) {
+            console.warn('⚠️ [学员合并] 合并出错，本次按整表推送（' + (e && e.message) + '）');
+            return Promise.resolve(batch);
+        }
+    }
+    /*__TRAINEE_MERGE_END__*/
+
     var _syncRetryTimer = null;
     var _syncBusy = false;         // 手动同步进行中：期间不许 _updateSyncBadge 覆写徽章（2026-09-15）
     var _syncRetryDelay = 60000;   // 重试退避起点 1 分钟（2026-09-07：30 秒太勤会推高 Cloudflare 请求数）
@@ -22506,18 +22705,30 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
         var keys = Object.keys(_syncQueue);
         if (keys.length === 0) return Promise.resolve(true);
         var batch = keys.map(function(k) { return { key: k, value: String(_syncQueue[k]), updated_at: new Date().toISOString() }; });
-        _syncQueue = {};
-        try { _realLS.setItem('_syncPendingQueue', '{}'); } catch(e) {}
+        // 2026-09-22：学员名单「先合并 → 后清队列 → 再 POST」。原来这里是同步 `_syncQueue = {}`，
+        //   加了异步合并后会多出「已清空、还没发」的窗口：页面恰好在这期间被版本自检刷新
+        //   （每 10 分钟一次，5-15 秒后 reload）→ 这一批就永远不在队列里了。
+        //   而且合并期间发生的新保存会写进 _syncQueue，**整对象清空会把它一起清掉**（新的丢写点：
+        //   编辑后 2 秒内再编辑一次，第二次可能永远不上云）→ 必须改成「按值清」。
+        return _traineeMergeBatch(batch).catch(function(){ return batch; }).then(function(out) {
+        keys.forEach(function(k, idx) {
+            if (_syncQueue[k] === undefined) return;
+            if (String(_syncQueue[k]) !== batch[idx].value) return;   // 合并期间被新保存覆盖过 → 留着，下次推
+            delete _syncQueue[k];
+        });
+        try { _realLS.setItem('_syncPendingQueue', JSON.stringify(_syncQueue)); } catch(e) {}
         return fetch(SUPABASE_URL + '/rest/v1/app_data', {
             method: 'POST',
             headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY, 'Content-Type': 'application/json', 'Prefer': 'resolution=merge-duplicates' },
-            body: JSON.stringify(batch)
+            body: JSON.stringify(out)
         }).then(function(r) {
             if (!r.ok) throw new Error('HTTP ' + r.status);
             _syncRetryDelay = 60000;   // 成功重置退避
             return true;
         }).catch(function(err) {
             // 推送失败：放回队列并持久化（402/离线时不丢本地改动，刷新页面也能恢复），指数退避重试
+            // ⚠️ 回填的是 batch 的**原始值**（不含合并结果）—— 回填合并结果的话，下次重试时
+            //   「上一轮采纳的云端值」会被当成「本机改过的字段」，云端这期间又变了就会被反过来顶掉。
             batch.forEach(function(it) { if (_syncQueue[it.key] === undefined) _syncQueue[it.key] = it.value; });
             try { _realLS.setItem('_syncPendingQueue', JSON.stringify(_syncQueue)); } catch(e) {}
             if (_syncRetryTimer) clearTimeout(_syncRetryTimer);
@@ -22527,6 +22738,7 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
             console.warn('⚠️ 云端推送失败，已暂存待重试（' + Math.round(retryIn / 60000) + ' 分钟后重试）: ' + (err && err.message));
             return false;
         }).then(function(ok){ _updateSyncBadge(); return ok; });
+        });
     }
 
     // 2026-09-13 删除 _syncPushAll()：全文件零调用方，且它把「每个非 _ 前缀 key」整批 POST 上云
@@ -23777,6 +23989,20 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
         overlay.focus();
     }
 
+    // 把地址栏里的 ?code= 摘掉（2026-09-22 加）。飞书授权码是**一次性**且约 5 分钟过期，
+    // 换 token 失败时如果不清掉它，每次刷新都会拿同一个 code 再走一遍、再弹一次同样的错
+    // ——这就是「刷新就显示 ❌授权失败」的来源。成功/取消两个分支本来就有清，
+    // 唯独失败分支漏了。只摘 code 这一个参数，learnPlan 等其它参数原样保留。
+    function _clearOauthCodeFromUrl() {
+        try {
+            var _u = new URL(window.location.href);
+            if (!_u.searchParams.has('code')) return;
+            _u.searchParams.delete('code');
+            var _qs = _u.searchParams.toString();
+            window.history.replaceState({}, '', _u.pathname + (_qs ? '?' + _qs : '') + _u.hash);
+        } catch(e) {}
+    }
+
     // 启动：处理飞书OAuth回调 + 云端拉数据 + 初始化
     var _initOauthDone = false;
     var _justAuthorized = false; // 本次页面加载是否刚完成飞书授权
@@ -23807,9 +24033,11 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
                         showToast('❌ 已取消授权：请改用「徐行」的飞书账号', 'error');
                     }
                 } else {
+                    _clearOauthCodeFromUrl();
                     showToast('❌ 授权失败：' + (tokenData.msg || '未知错误'), 'error');
                 }
             } catch(e) {
+                _clearOauthCodeFromUrl();
                 showToast('❌ 网络请求失败：' + e.message, 'error');
             }
         }
