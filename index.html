@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <!-- 版本行：每次部署新代码必须 bump 此 content（YYYYMMDD.N），旧设备靠它自检静默升级 -->
-    <meta name="yxt-ver" content="20260922.1">
+    <meta name="yxt-ver" content="20260922.3">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
     <title>优学堂</title>
     <script src="https://cdn.sheetjs.com/xlsx-0.20.2/package/dist/xlsx.full.min.js" defer></script>
@@ -1603,16 +1603,14 @@
                         }
                     }
                     saveToLocal();
-                    // 立即同步到云端
-                    try {
-                        var _d = localStorage.getItem('trainee_full_admin_backup');
-                        if(_d) fetch('https://zfxwnixlvdxawoylhgxj.supabase.co/rest/v1/app_data', {
-                            method:'POST',
-                            headers:{ 'apikey':'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InpmeHduaXhsdmR4YXdveWxoZ3hqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODIyMDEyNzIsImV4cCI6MjA5Nzc3NzI3Mn0.aPfO4Ry_LzoOColCVx64JQPF-BWga-_J2fX9hg-E4G8','Authorization':'Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InpmeHduaXhsdmR4YXdveWxoZ3hqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODIyMDEyNzIsImV4cCI6MjA5Nzc3NzI3Mn0.aPfO4Ry_LzoOColCVx64JQPF-BWga-_J2fX9hg-E4G8','Content-Type':'application/json','Prefer':'resolution=merge-duplicates' },
-                            body:JSON.stringify([{ key:'trainee_full_admin_backup', value:_d, updated_at:new Date().toISOString() }])
-                        }).then(function(){ _updateSyncBadge(); }).catch(function(){ _updateSyncBadge(); });
-                    } catch(e){}
-                    renderFrontend();
+                    // 2026-09-22 拆除「立即同步到云端」那段直连 POST：
+                    //   ① 它推的就是 saveToLocal() 刚写进本地的那份数组 —— 而不以 _ 开头的 key
+                    //      经 localStorage 代理**本来就会自动入队上云**（_syncSetItem），是重复推送；
+                    //   ② 它不走队列，失败不重试、不进 KV 兜底，严格劣于队列通道；
+                    //   ③ 要命的是它**绕过丢人闸门**：闸门拦下那次保存时，本地留着的还是旧名单，
+                    //      这段代码会拿那份旧名单配一个**新的 updated_at** 推上云 —— 别的设备
+                    //      一看时间戳更新就跟着用，闸门等于白拦。
+                    //   要推数据请走 saveToLocal() → _syncQueue → _syncFlush。【不要重建这段】                    renderFrontend();
                     modalElement.remove();
                 });
             };
@@ -3025,10 +3023,166 @@
     }
 
     const DATA_VERSION = 3;
+    // ==================== 丢人闸门（2026-09-22 新增）====================
+    // 背景：2026-09-22 新人名单第 3 次丢人（许文欣 ID405 / 郭翠辉 ID406 被整份覆盖掉，已恢复）。
+    //   根因是**存的是整张表**——一台名单不全的设备一保存，就是一次「合法的」整份删除；
+    //   时间戳只管「谁新」管不了「谁全」，所以这条丢人它拦不住。
+    //   历史：09-15 那次「添加学员 许文欣（ID 405）」本身就是上一次丢人后的人工补录
+    //   （能算出 405 这个号 ⇒ 那台设备名单里最大只到 404 ⇒ 她在那台机器上已经没了）。
+    // 做法：每次从云端拉到 trainee_full_admin_backup 就留一份原文当「云端快照」（_ 前缀不上云）。
+    //   保存前比人数：本机比**快照**少人、且少掉的这些人**回收站里也没有**（= 没人删过他们）
+    //   → 判定「本机名单不全」，弹窗拦下，默认劝用户别存。
+    // 为什么比回收站：删除学员会 addToRecycleBin（该键本身也随云同步），
+    //   所以「真删过的人」在回收站里找得到，找不到的就是丢的。
+    // 为什么比「快照」而不是比「当前云端」：快照 = 本机上次拉到的云端状态。
+    //   别的设备新增了人、本机还没拉到时，本机名单和快照一致 → 不触发（不会误报）；
+    //   只有「拉下来明明有 6 个，本机却只剩 4 个」才拦。
+    // 安全侧：任何一步拿不准（没快照/解析失败/回收站查不到）都放行，最坏只是多弹一次确认框，绝不硬锁。
+    var TRAINEE_CLOUD_SNAP_KEY = '_trainee_cloud_snapshot';
+    // 判据本身，抽出来给两处用：
+    //   ① _traineeLossGate()（用户保存时）—— 不成立就弹确认框
+    //   ② loadData() 里的自愈回写 —— 那条路在**开页面**时跑，绝不能弹框，只做静默检查
+    // 返回 { lost: [{id,name}...], offLine: bool }
+    function _traineeLostFromCloud(){
+        var none = { lost: [], offLine: false };
+        var snap = null;
+        try { snap = _realLS.getItem(TRAINEE_CLOUD_SNAP_KEY); } catch(e) {}
+        if (!snap) return none;                       // 还没拿到云端快照（新设备/清过缓存）→ 无从比较
+        var cloud = null;
+        try { cloud = JSON.parse(snap); } catch(e) { return none; }
+        if (!Array.isArray(cloud) || cloud.length === 0) return none;
+        var have = {};
+        students.forEach(function(s){ if (s && s.id != null) have[s.id] = true; });
+        var gone = cloud.filter(function(s){ return s && s.id != null && !have[s.id]; });
+        if (gone.length === 0) return none;           // 没少人
+        var binned = {};
+        try {
+            if (typeof getRecycleBin === 'function') {
+                (getRecycleBin() || []).forEach(function(s){ if (s && s.id != null) binned[s.id] = true; });
+            }
+        } catch(e) {}
+        var lost = gone.filter(function(s){ return !binned[s.id]; });
+        if (lost.length === 0) return none;           // 少掉的人都在回收站里 → 那是真删
+        var ps = null;
+        try { ps = JSON.parse(_realLS.getItem('_yxtPullState') || 'null'); } catch(e) {}
+        return { lost: lost, offLine: !!(ps && ps.ok === false) };
+    }
+    function _traineeLossGate(){
+        var g = _traineeLostFromCloud();
+        if (!g.lost.length) return true;
+        var names = g.lost.map(function(s){ return s.name + '（ID ' + s.id + '）'; }).join('、');
+        return confirm('⚠️ 本机名单比云端少 ' + g.lost.length + ' 人：\n\n' + names +
+            '\n\n这些人云端还有、回收站里也没有 —— 说明本机数据不全，不是有人删了他们。' +
+            (g.offLine ? '\n\n🔴 而且本机已经没成功连上云端了，你现在看到的是本地缓存。' : '') +
+            '\n\n点「确定」= 照样保存（云端这 ' + g.lost.length + ' 人会被删掉）\n点「取消」= 先不保存（建议）');
+    }
+    // ==================== 一人一条：学员影子记录（2026-09-22）====================
+    // 为什么加这一层：`trainee_full_admin_backup` 存的是**整张表**，所以一台名单不全的设备
+    //   一保存就是一次「合法的」整份删除（时间戳只管谁新、管不了谁全）。上面那道丢人闸门只能
+    //   拦下**它认得出来**的那种；连本机快照都已经是残的，它就拦不住了 —— 这一层补的就是那个洞。
+    // 做法：每人另存一条 `yxts_<id>`。**这是「这个人在不在」的权威来源** ——
+    //   一台设备只能写自己名单里有的人的那几条 key，所以名单不全的设备**在数据层就碰不到**
+    //   它没有的那个人那条记录，云端那份永远还在，谁也删不掉（除非立墓碑）。
+    // 数组（trainee_full_admin_backup）就此降级成「视图/缓存」：读还是读它，但 loadData()
+    //   落地后会拿影子记录把数组里缺的人补回来（自愈），并回写数组让所有设备一起好。
+    // 删除：往 `studentDeletedIds` 立墓碑（独立 key，同样不会被名单不全的设备覆盖）。
+    //   从回收站恢复某人 → 墓碑自动撤销。
+    // 兼容：还在跑旧代码的设备不认识 yxts_*，照旧读写数组，不会崩；它那边删掉的人会被影子记录
+    //   补回来 —— 这正是我们要的。
+    // ⚠️ 前缀为什么不用 `student_`：Supabase 里躺着 2026-09-07 的演示数据 `student_1`~`student_6`
+    //   （李思源/陈远航/王若曦/张敏仪/赵一航/林小夕，id 1~6）和旧快照 `student_401`。
+    //   用那个前缀的话，自愈会把这 6 个假人当真人补进名单。换现在这个前缀，零历史包袱。
+    var TRAINEE_SHADOW_PREFIX = 'yxts_';
+    var TRAINEE_DELETED_KEY = 'studentDeletedIds';
+    var TRAINEE_SHADOW_IDS_KEY = '_trainee_shadow_ids';   // _ 前缀：只记「本机上次写到哪」，不上云
+
+    function _traineeGetDeleted() {
+        try {
+            var o = JSON.parse(_realLS.getItem(TRAINEE_DELETED_KEY) || '{}');
+            return (o && typeof o === 'object' && !Array.isArray(o)) ? o : {};
+        } catch(e) { return {}; }
+    }
+    // 影子记录的还原：必须和 loadData() 那份恢复列表用同一套规则，尤其是 stageStartDate ——
+    //   new Student() 会把它设成**今天**，漏了这一行就等于每次开页面把阶段开始日期重置
+    function _traineeFromShadow(o) {
+        var stu = new Student(o.id, o.name, o.avatar, o.joinDate, o.site);
+        Object.assign(stu.stageProgress, o.stageProgress);
+        stu.stage = o.stage;
+        stu.graduatedToArchive = o.graduatedToArchive;
+        stu.returnReason = o.returnReason || null;
+        stu.graduatedDate = o.graduatedDate || null;
+        stu.stageStartDate = o.stageStartDate || o.joinDate;
+        return stu;
+    }
+    // 保存时同步影子记录。只在「这条真的变了」时才写 —— 一次保存通常只动一个人，
+    //   所以多出来的写入通常只有 1 条（_syncFlush 把整批 key 合成一次 POST，不增加请求数）
+    function _traineeShadowSave(arr) {
+        var del = _traineeGetDeleted();
+        var have = {}, nowIds = [];
+        arr.forEach(function(s){
+            if (s == null || s.id == null) return;
+            have[s.id] = true;
+            nowIds.push(s.id);
+            var k = TRAINEE_SHADOW_PREFIX + s.id, v = JSON.stringify(s);
+            if (_realLS.getItem(k) !== v) localStorage.setItem(k, v);
+            if (del[String(s.id)]) delete del[String(s.id)];   // 人回到名单里了（多半是从回收站恢复）→ 撤墓碑
+        });
+        // 从名单里消失的人：回收站里有 = 真删 → 立墓碑；回收站里没有 = 不该发生（闸门会先拦下）
+        var prev = [];
+        try { prev = JSON.parse(_realLS.getItem(TRAINEE_SHADOW_IDS_KEY) || '[]'); } catch(e) {}
+        var binned = {};
+        try {
+            if (typeof getRecycleBin === 'function') {
+                (getRecycleBin() || []).forEach(function(s){ if (s && s.id != null) binned[s.id] = true; });
+            }
+        } catch(e) {}
+        prev.forEach(function(id){
+            if (have[id] || !binned[id]) return;
+            if (!del[String(id)]) del[String(id)] = new Date().toISOString();
+        });
+        var idsJson = JSON.stringify(nowIds);
+        if (_realLS.getItem(TRAINEE_SHADOW_IDS_KEY) !== idsJson) {
+            try { _realLS.setItem(TRAINEE_SHADOW_IDS_KEY, idsJson); } catch(e) {}   // 变了才写（本机键，不上云）
+        }
+        var dj = JSON.stringify(del);
+        if (_realLS.getItem(TRAINEE_DELETED_KEY) !== dj) localStorage.setItem(TRAINEE_DELETED_KEY, dj);   // 走代理 → 自动上云
+    }
+    // 自愈：拿本机的影子记录，把名单里缺的人补回来。返回补了几个。
+    // 只补「本机有、名单里没有、且没立过墓碑」的 —— 已经在名单里的不动
+    //   （数组对**现有**的人仍然是权威，不做时间戳比较：规则越简单越不会出意外）
+    function _traineeShadowRestore() {
+        var del = _traineeGetDeleted(), have = {}, restored = [];
+        students.forEach(function(s){ if (s && s.id != null) have[s.id] = true; });
+        try {
+            for (var i = 0; i < _realLS.length; i++) {
+                var k = _realLS.key(i);
+                if (!k || k.indexOf(TRAINEE_SHADOW_PREFIX) !== 0) continue;
+                var sid = k.slice(TRAINEE_SHADOW_PREFIX.length);
+                if (!/^\d+$/.test(sid)) continue;          // 只认 yxts_<纯数字>，别的一律不碰
+                var id = parseInt(sid, 10);
+                if (have[id] || del[String(id)]) continue; // 已在名单里 / 已被删 → 跳过
+                var raw = _realLS.getItem(k);
+                if (!raw) continue;
+                var o = JSON.parse(raw);
+                if (!o || o.id == null) continue;          // 形状不对（历史残留等）→ 不碰
+                have[id] = true;
+                restored.push(o);
+            }
+        } catch(e) { return 0; }
+        if (!restored.length) return 0;
+        restored.forEach(function(o){ students.push(_traineeFromShadow(o)); });
+        students.sort(function(a, b){ return a.id - b.id; });
+        // 顺带把编号推到最大 id 之后 —— 这正是「重新添加还能拿到 405」那个 ID 复用的坑
+        nextId = Math.max(Math.max.apply(null, students.map(function(s){ return s.id; })), 400) + 1;
+        return restored.length;
+    }
     function saveToLocal(){
-        localStorage.setItem("trainee_full_admin_backup",JSON.stringify(students.map(s=>({...s,stageProgress:s.stageProgress,returnReason:s.returnReason,graduatedDate:s.graduatedDate}))));
+        if (!_traineeLossGate()) return;   // 2026-09-22：闸门拦下 → 本次不写（本地和云端都不动）
+        var _arr = students.map(s=>({...s,stageProgress:s.stageProgress,returnReason:s.returnReason,graduatedDate:s.graduatedDate}));
+        localStorage.setItem("trainee_full_admin_backup",JSON.stringify(_arr));
         localStorage.setItem("trainee_data_version",DATA_VERSION);
         localStorage.setItem("trainee_data_sync_time", new Date().toISOString());
+        _traineeShadowSave(_arr);          // 2026-09-22：一人一条
     }
     function loadData(){
         const saved=_realLS.getItem("trainee_full_admin_backup");
@@ -3036,7 +3190,12 @@
         if(saved && savedVersion==DATA_VERSION){
             const parsed=JSON.parse(saved);
             if(parsed.length>0){
-                students=parsed.map(s=>{let stu=new Student(s.id,s.name,s.avatar,s.joinDate,s.site); Object.assign(stu.stageProgress,s.stageProgress); stu.stage=s.stage; stu.graduatedToArchive=s.graduatedToArchive; stu.returnReason=s.returnReason||null; stu.graduatedDate=s.graduatedDate||null; return stu;});
+                // 2026-09-22 修复：这里原来漏恢复了 stageStartDate —— new Student() 会把它设成**今天**，
+                //   而后面的恢复列表里只补了 stage/stageProgress/…，唯独漏了它。
+                //   后果：每次开页面，所有人的「阶段开始日期」都被抹成当天，「阶段剩余天数」永远显示满额。
+                //   （云端 4 人实测 stageStartDate 全是 2026-09-22；真值应为 2026-09-01。）
+                //   取不到就退回入职日 —— 任何情况下都绝不再用「今天」。
+                students=parsed.map(s=>{let stu=new Student(s.id,s.name,s.avatar,s.joinDate,s.site); Object.assign(stu.stageProgress,s.stageProgress); stu.stage=s.stage; stu.graduatedToArchive=s.graduatedToArchive; stu.returnReason=s.returnReason||null; stu.graduatedDate=s.graduatedDate||null; stu.stageStartDate=s.stageStartDate||s.joinDate; return stu;});
                 nextId=Math.max(...students.map(s=>s.id),400)+1;
             }else{ initDefault(); }
         }else{
@@ -3062,6 +3221,18 @@
     window.addToRecycleBin = addToRecycleBin;
     window.restoreFromRecycle = restoreFromRecycle;
     window.cleanExpiredRecycle = cleanExpiredRecycle;
+    // 2026-09-22：拿本机影子记录自愈 —— 把数组里缺的人补回来（见文件上方「一人一条」那段）。
+    //   位置放在这里（回收站那批函数都定义并导出之后）是有意的：_traineeShadowSave 要用 getRecycleBin。
+    //   补到了就回写一次数组，顺手把云端那份也修正过来，其他设备跟着一起好。
+    // ⚠️ 这里**不能**图省事直接调 saveToLocal()：那会把 _traineeLossGate 的**确认框**带出来，
+    //   而这条路是**开页面**走的 —— 开页面弹一个「名单少人了」的框会把人吓一跳。
+    //   所以用同一套判据做静默检查：确实是快照的超集才写；不是就只更新内存，
+    //   等用户下次自己保存时再走闸门问。
+    if (_traineeShadowRestore() > 0) {
+        if (_traineeLostFromCloud().lost.length === 0) {
+            try { saveToLocal(); } catch(e) {}
+        }
+    }
     }
     
     function initDefault(){
@@ -11532,6 +11703,7 @@ URL.revokeObjectURL(url);
                         stu.graduatedToArchive = s.graduatedToArchive;
                         stu.returnReason = s.returnReason || null;
                         stu.graduatedDate = s.graduatedDate || null;
+                        stu.stageStartDate = s.stageStartDate || s.joinDate;   // 2026-09-22 补：原先漏了这一行，每次开页面被构造函数重置成当天（同 loadData）
                         return stu;
                     });
                 }
@@ -22241,14 +22413,37 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
         if (_syncBusy) return;
         var t = localStorage.getItem('trainee_data_sync_time');
         var sidebarBadge = document.getElementById('sidebarSyncBadge');
+        // 2026-09-22：徽章带出「云端名单几人」+「是不是离线」。
+        //   这两个正是这次丢人事故里最该被看见、却一直没人看得见的东西：
+        //   名单 6 变 4（徽章上从「6人」跳成「4人」一眼可见），以及 402 那十天云端一直拉不到。
+        var nPpl = null;
+        try {
+            var _snapRaw = _realLS.getItem('_trainee_cloud_snapshot');
+            if (_snapRaw) { var _snapArr = JSON.parse(_snapRaw); if (Array.isArray(_snapArr)) nPpl = _snapArr.length; }
+        } catch(e) {}
+        var ps = null;
+        try { ps = JSON.parse(_realLS.getItem('_yxtPullState') || 'null'); } catch(e) {}
+        var pplStr = (nPpl == null) ? '' : (' · ' + nPpl + '人');
+        var pplTip = (nPpl == null) ? '' : ('\n云端名单: ' + nPpl + ' 人');
+        // 上次拉取失败 → 明确说「离线」：现在显示的是本地缓存，可能不是最新的，别静默当没事
+        if (ps && ps.ok === false) {
+            if (sidebarBadge) {
+                sidebarBadge.textContent = '☁️ 离线' + pplStr;
+                sidebarBadge.style.color = '#c0392b';
+                sidebarBadge.style.background = 'rgba(192,57,43,0.12)';
+                sidebarBadge.title = '⚠️ 上次拉取云端失败: ' + (ps.at ? new Date(ps.at).toLocaleString() : '未知') +
+                    '\n现在显示的是**本地缓存**，可能不是最新的' + pplTip + '\n点击手动重试同步';
+            }
+            return;
+        }
         if (t) {
             var d = new Date(t), now = new Date();
             var diffMin = Math.floor((now - d) / 60000);
             var diffStr = diffMin < 1 ? '刚刚' : (diffMin < 60 ? diffMin + '分钟前' : (diffMin < 1440 ? Math.floor(diffMin / 60) + '小时前' : Math.floor(diffMin / 1440) + '天前'));
-            var text = '☁️ 已同步 · ' + diffStr;
-            if (sidebarBadge) { sidebarBadge.textContent = text; sidebarBadge.style.color = '#27ae60'; sidebarBadge.style.background = 'rgba(39,174,96,0.12)'; sidebarBadge.title = '上次同步: ' + d.toLocaleString() + '\n点击手动同步'; }
+            var text = (nPpl == null) ? ('☁️ 已同步 · ' + diffStr) : ('☁️ ' + nPpl + '人 · ' + diffStr);
+            if (sidebarBadge) { sidebarBadge.textContent = text; sidebarBadge.style.color = '#27ae60'; sidebarBadge.style.background = 'rgba(39,174,96,0.12)'; sidebarBadge.title = '上次同步: ' + d.toLocaleString() + pplTip + '\n点击手动同步'; }
         } else {
-            if (sidebarBadge) { sidebarBadge.textContent = '☁️ 未同步'; sidebarBadge.style.color = '#f39c12'; sidebarBadge.style.background = 'rgba(243,156,18,0.1)'; sidebarBadge.title = '点击手动同步'; }
+            if (sidebarBadge) { sidebarBadge.textContent = '☁️ 未同步'; sidebarBadge.style.color = '#f39c12'; sidebarBadge.style.background = 'rgba(243,156,18,0.1)'; sidebarBadge.title = '点击手动同步' + pplTip; }
         }
     }
     _updateSyncBadge();
@@ -22445,6 +22640,10 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
         // 2026-09-15：考试删除墓碑。guest/exam 都必须为 true —— 否则游客和学员直链拿不到墓碑，
         //   他们那边的合并会把管理员已删掉的考试又合回来（并集语义）。体积极小（几个 id）。
         examDeletedIds:            { guest: true,  exam: true  },
+        // 2026-09-22：学员删除墓碑（一人一条那套的配套）。跟考试墓碑不同，这个**不给游客**——
+        //   它只管学员名单，游客那边没有名单可删，给了也只是白拉一份学员 id 清单。
+        //   ⚠️ yxts_<id> 影子记录走 like 通配排除（见 _syncPullAll 的游客 URL），不逐个登记。
+        studentDeletedIds:         { guest: false, exam: false },
         reportedQuestions:         { guest: true,  exam: true  },
         reportedTraining:          { guest: true,  exam: true  },
         feishu_token:              { guest: true,  exam: true  },
@@ -22470,7 +22669,7 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
                 var k = localStorage.key(i);
                 if (!k || k.charAt(0) === '_') continue;
                 if (YXT_KEY_REGISTRY[k]) continue;
-                if (/^(feishu_panze|auto_push_)/.test(k)) continue;   // 这两类走 like 通配排除，不需逐个登记
+                if (/^(feishu_panze|auto_push_|yxts_)/.test(k)) continue;   // 这几类走 like 通配排除，不需逐个登记（yxts_ = 一人一条的学员影子记录，id 是动态的）
                 unregistered.push(k);
             }
         } catch(e) {}
@@ -22526,6 +22725,9 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
         }
         // 学员数据：云端权威覆盖本地（2026-09-07 统一语义：拉取即云端覆盖，时间戳以云端 updated_at 为准）
         if (row.key === 'trainee_full_admin_backup') {
+            // 2026-09-22：先留一份云端原文当「云端快照」，供 saveToLocal 的丢人闸门比对（_ 前缀不上云）。
+            //   必须放在一致性判断之前 —— 首次拉取时本地本来就等于云端，放后面会被下一行早退掉、快照永远写不进。
+            try { _realLS.setItem('_trainee_cloud_snapshot', row.value); } catch(e) {}
             if (_realLS.getItem(row.key) === row.value) return true;   // 内容一致 → 不写、不触发重画
             _yxtApplyWrites++;
             _realLS.setItem(row.key, row.value);
@@ -22551,6 +22753,41 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
                     }
                 }
             } catch(e) {}
+            return true;
+        }
+        // 学员删除墓碑（2026-09-22）：与考试墓碑同一套写法 —— 云端墓碑并入本机墓碑表（并集，本机已有的不动）。
+        //   必须排在 trainee_full_admin_backup 和 yxts_* 之前被应用：否则同批里名单先落地，
+        //   loadData() 的自愈会把「已经删掉的人」当成「丢了的人」补回来（复活）。
+        //   调用方（_syncPullAll / _yxtPanelCheck）另有一道显式的「先挑墓碑单独应用」，双保险。
+        if (row.key === TRAINEE_DELETED_KEY) {
+            try {
+                var _cloudTD = JSON.parse(row.value);
+                if (_cloudTD && typeof _cloudTD === 'object' && !Array.isArray(_cloudTD)) {
+                    var _localTD = _traineeGetDeleted(), _tdMerged = false;
+                    Object.keys(_cloudTD).forEach(function(id) {
+                        if (!_localTD[id]) { _localTD[id] = _cloudTD[id]; _tdMerged = true; }
+                    });
+                    if (_tdMerged) {
+                        // 用 _realLS 直接写：内容来自云端，不必再回推（回推会让两端无限对推）
+                        try { _realLS.setItem(TRAINEE_DELETED_KEY, JSON.stringify(_localTD)); } catch(e) {}
+                        _yxtApplyWrites++;
+                        _yxtTraineeApplied = true;   // 让调用方重跑 loadData()，自愈时才知道要跳过谁
+                        return true;
+                    }
+                }
+            } catch(e) {}
+            return true;
+        }
+        // 学员影子记录 `yxts_<id>`（2026-09-22）：一人一条，拉下来就落地。
+        //   它决定了「这个人在不在」——落地后置 _yxtTraineeApplied，让调用方重跑
+        //   loadData() → _traineeShadowRestore() 把数组里缺的人补齐（自愈）。
+        //   用 _realLS 直接写（不走代理）：内容来自云端，回推只会让两端无限对推。
+        if (row.key && row.key.indexOf(TRAINEE_SHADOW_PREFIX) === 0) {
+            if (!/^yxts_\d+$/.test(row.key)) return true;   // 形状不对 → 不碰
+            if (_realLS.getItem(row.key) === row.value) return true;
+            _yxtApplyWrites++;
+            _realLS.setItem(row.key, row.value);
+            _yxtTraineeApplied = true;
             return true;
         }
         // 考试历史：按考试逐条合并取进度更新的一方（学员端/管理端状态推进，不能裸覆盖丢状态）——唯一保留合并语义的 key（2026-09-07）
@@ -22779,7 +23016,7 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
         //   摘掉不等于拉不到：三个考试 key 仍登记在 examSystem；autoPushQueue 由整表同步覆盖（_syncPullAll
         //   管理员模式是 key=neq.generatedReports，除它之外全拉），且它的读点是 initAutoPush（页面加载时跑，
         //   早于任何进面板）和 showFeishuContactPicker（考试推送流程），都不经过落地页。
-        dashboard:       ['trainee_full_admin_backup', 'trainee_data_version'],    // 落地页唯一读的 key。与 frontend 面板重复登记是有意的：
+        dashboard:       ['trainee_full_admin_backup', 'trainee_data_version', 'studentDeletedIds'],    // 落地页唯一读的 key。与 frontend 面板重复登记是有意的：
                                                            //   两边各自节流、各自重画，不共享（_yxtPanelLastAt 是按面板存的）
                                                            // trainee_data_version（2026-09-16）：20 字节，必须跟学员数据一起拉。
                                                            //   loadData() 的判据是 savedVersion == DATA_VERSION，版本键缺失时它会
@@ -22787,7 +23024,10 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
                                                            //   再 initDefault()。带上它，落地后 loadData() 才一定读得进去。
         learningMapView: ['learningPlanData', 'reportedTraining',
                           'lm_cache'],                     // 学习地图的云端共享缓存（cloudCacheGet/cloudCacheSet）
-        frontend:        ['trainee_full_admin_backup', 'trainee_data_version'],    // 新人管理：loadData()/renderDashboard 读它
+        frontend:        ['trainee_full_admin_backup', 'trainee_data_version', 'studentDeletedIds'],    // 新人管理：loadData()/renderDashboard 读它
+                                                         // studentDeletedIds（2026-09-22）：**必须**跟名单一起拉。
+                                                         //   漏了它 → 别的设备刚删的人，本机拉到「少了人的名单」后
+                                                         //   自愈会把那个人当「丢了的人」补回来（复活），还会回写云端。
                                                            // trainee_data_version 同上：loadData() 的版本校验要用
         feedback:        ['app_feedback_entries']          // 问题/建议反馈：renderFeedback → getFeedbackEntries
     };
@@ -22851,7 +23091,9 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
                     // 用「真写入次数」判断要不要重画：_yxtApplyCloudRow 返回 true 有两种含义
                     //   （真写了 / 内容本来就一致），拿返回值数会把「没变」也算成变了 → 每次切模块白重画一遍。
                     var _w0 = _yxtApplyWrites;
-                    rows.forEach(function(row) { if (row && row.key === EXAM_DELETED_KEY) _yxtApplyCloudRow(row); });
+                    // 学员墓碑同理（2026-09-22）：必须在 trainee_full_admin_backup 和 yxts_* 之前落地，
+                    //   否则同批里名单先到 → loadData() 自愈会把已删的人当「丢了的人」补回来
+                    rows.forEach(function(row) { if (row && (row.key === EXAM_DELETED_KEY || row.key === TRAINEE_DELETED_KEY)) _yxtApplyCloudRow(row); });
                     rows.forEach(function(row) { _yxtApplyCloudRow(row); });
                     var changed = _yxtApplyWrites - _w0;
                     if (!changed) return 0;   // 取值都回来了、但没有一行跟本地不一样 → 不必重画
@@ -22894,7 +23136,8 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
         try { _lastSyncAt = _realLS.getItem(_cursorKey); } catch(e) {}
         var _pullUrl = SUPABASE_URL + '/rest/v1/app_data?select=*&order=updated_at.desc';
         if (mode === 'guest') {
-            _pullUrl += '&key=not.in.(' + _GUEST_EXCLUDE_LIST + ')&key=not.like.feishu_panze*&key=not.like.auto_push_*';
+            // yxts_*（2026-09-22）：一人一条的学员影子记录，游客没有名单可看，白拉
+            _pullUrl += '&key=not.in.(' + _GUEST_EXCLUDE_LIST + ')&key=not.like.feishu_panze*&key=not.like.auto_push_*&key=not.like.yxts_*';
         } else if (mode === 'exam') {
             _pullUrl += '&key=in.(' + _EXAM_KEYS_LIST + ')';
         } else {
@@ -22907,7 +23150,8 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
         }).then(function(r) { return r.json(); }).then(function(rows) {
             if (Array.isArray(rows)) {
                 // ★ 墓碑必须先于考试数据落地：否则同批里 examHistoryData 先合并会把刚删掉的考试搬回来
-                rows.forEach(function(row) { if (row && row.key === EXAM_DELETED_KEY) _yxtApplyCloudRow(row); });
+                // 学员墓碑同理（2026-09-22）：先落地，否则 loadData() 自愈会把已删的人补回来
+                rows.forEach(function(row) { if (row && (row.key === EXAM_DELETED_KEY || row.key === TRAINEE_DELETED_KEY)) _yxtApplyCloudRow(row); });
                 rows.forEach(function(row) {
                     // 2026-09-15：游标只按「真被处理过」的行推进，且必须在落地之后判断。
                     //   此前不管有没有落地都取最大值 —— 而 trainee_data_sync_time 这类心跳键从不落地
@@ -22936,10 +23180,18 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
                 }
             }
             return rows ? rows.length : 0;
-        }).then(function(n){ _updateSyncBadge(); return n || 0; })
+        }).then(function(n){
+            // 2026-09-22：记下拉取状态。徽章据此显示「离线」——
+            //   402 那十天云端一直拉不到、页面却毫无提示，坏了十天没人知道。
+            try { _realLS.setItem('_yxtPullState', JSON.stringify({ at: new Date().toISOString(), ok: true })); } catch(e) {}
+            _updateSyncBadge(); return n || 0;
+        })
         // 失败时 resolve null（成功仍是数字）—— 让调用方能区分「拉了 0 条」和「根本没拉到」。
         // 此前一律 resolve 0，导致同步按钮拉取失败也会显示成功、还把「上次同步」写成刚刚。
-        .catch(function(){ _updateSyncBadge(); return null; });
+        .catch(function(){
+            try { _realLS.setItem('_yxtPullState', JSON.stringify({ at: new Date().toISOString(), ok: false })); } catch(e) {}
+            _updateSyncBadge(); return null;
+        });
     }
 
     // 管理员登录补拉（2026-09-07 流量优化）：游客期间只同步了白名单数据，
@@ -24270,17 +24522,9 @@ updateAdminUI();
             if (_eb.stage !== stage) _chg.push('阶段' + (_eb.stage+1) + '→阶段' + (stage+1));
             if (uploadedAvatar && uploadedAvatar !== _eb.avatar) _chg.push('更换头像');
             logAdminAction('学员管理', '编辑学员', name + '（ID ' + sid + '）' + (_chg.length ? '：' + _chg.join('；') : '（无字段变化）'));
-            // 直连推送云端
-            (function(){
-                var url = 'https://zfxwnixlvdxawoylhgxj.supabase.co';
-                var key = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InpmeHduaXhsdmR4YXdveWxoZ3hqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODIyMDEyNzIsImV4cCI6MjA5Nzc3NzI3Mn0.aPfO4Ry_LzoOColCVx64JQPF-BWga-_J2fX9hg-E4G8';
-                var data = localStorage.getItem('trainee_full_admin_backup');
-                if(data) fetch(url + '/rest/v1/app_data', {
-                    method:'POST',
-                    headers:{ 'apikey':key,'Authorization':'Bearer '+key,'Content-Type':'application/json','Prefer':'resolution=merge-duplicates' },
-                    body:JSON.stringify([{ key:'trainee_full_admin_backup', value:data, updated_at:new Date().toISOString() }])
-                }).then(function(){ _updateSyncBadge(); }).catch(function(){ _updateSyncBadge(); });
-            })();
+            // 2026-09-22 拆除「直连推送云端」那段（同文件上方「立即同步到云端」那处，理由见那里的注释）：
+            //   saveToLocal() 已经把数组交给同步队列了，这里再直连推一次不仅重复，
+            //   还会在闸门拦下保存时用新时间戳把本地旧名单推上云。【不要重建这段】
             editOverlay.remove();
             if (parentOverlay) parentOverlay.remove();
             showFrontendAdminModal();
