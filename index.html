@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <!-- 版本行：每次部署新代码必须 bump 此 content（YYYYMMDD.N），旧设备靠它自检静默升级 -->
-    <meta name="yxt-ver" content="20260920.1">
+    <meta name="yxt-ver" content="20260922.1">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
     <title>优学堂</title>
     <script src="https://cdn.sheetjs.com/xlsx-0.20.2/package/dist/xlsx.full.min.js" defer></script>
@@ -11353,9 +11353,13 @@ selected.forEach(c => {
         <div class="correct">${escapeHtml(c.correctDir)}</div>`;
     if (c.dirPhotos && c.dirPhotos.length > 0) {
         docHtml += '<div class="label">📷 方向示例照片</div>' + c.dirPhotos.map(function(p) { return photoTag(p, 300, 300); }).join('');
+    }
+    // 2026-09-22 修复：这里原先少一个「}」——「方向示例补充照片」的判断被嵌在「方向示例照片」的
+    //   if 里面，所以「有补充照片、没有方向示例照片」的案例，那几张补充照片根本不渲染（实测每份
+    //   报告丢约 7 张）。同一个错误在 buildTrainingDoc（本文件约 19035 行）和脚本
+    //   feishu-auto-push.js 里各有一份，三处一起改，否则「脚本那份 = 页面那份」就不成立了。
     if (c.dirExamplePhotos && c.dirExamplePhotos.length > 0) {
         docHtml += '<div class="label">📸 方向示例补充照片</div>' + c.dirExamplePhotos.map(function(p) { return photoTag(p, 300, 300); }).join('');
-    }
     }
     docHtml += `</div>`;
 });
@@ -19032,9 +19036,13 @@ URL.revokeObjectURL(url);
             docHtml += "<div class=\"label\">✅ 应操作方向</div><div class=\"correct\">" + escapeHtml(c.correctDir || "") + "</div>";
             if (c.dirPhotos && c.dirPhotos.length > 0) {
                 docHtml += "<div class=\"label\">📷 方向示例照片</div>" + c.dirPhotos.map(function(p) { return photoTag(p, 400, 400); }).join("");
+            }
+            // 2026-09-22 修复：原先少一个「}」，把「方向示例补充照片」的判断嵌进了「方向示例照片」的
+            //   if 里 —— 「有补充照片、没有方向示例照片」的案例会整段不渲染（实测每份报告丢约 7 张）。
+            //   renderGenerateMaterials（约 11356 行）和脚本 feishu-auto-push.js 里是同一份代码的复制，
+            //   三处必须一起改，否则「脚本那份 = 页面那份」的逐字对拍会红。
             if (c.dirExamplePhotos && c.dirExamplePhotos.length > 0) {
                 docHtml += "<div class=\"label\">📸 方向示例补充照片</div>" + c.dirExamplePhotos.map(function(p) { return photoTag(p, 400, 400); }).join("");
-            }
             }
             docHtml += "</div>";
         });

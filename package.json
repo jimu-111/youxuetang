@@ -1,0 +1,9 @@
+{
+  "name": "youxuetang-push",
+  "version": "1.0.0",
+  "private": true,
+  "description": "优学堂周一自动推送 —— 依赖声明。sharp = 把飞书原图压到 900px 再内嵌进培训资料（照片显示框只有 400px，900px 已超采样两倍多）。装不上也能跑，脚本会自动退回「只用 KV 里现成的压缩图」。",
+  "dependencies": {
+    "sharp": "^0.35.4"
+  }
+}

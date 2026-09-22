@@ -26,6 +26,13 @@ const SITE_URL = 'https://jimu-111.github.io/youxuetang/';
 const KV_PAGES = 'https://yxt-feishu.pages.dev';
 const KV_SECRET = 'yxt-feishu-2026';
 
+// 三个推送阈值。
+// 2026-09-21：原来这行写在 main() 里面，而下面几个 *Card() 的文案是**另写一遍数字**的，
+//   结果两边对不上 —— learnCard 写「≥11次」而 learnMin 是 16，trainCard 写「≥16次」而 trainMin 是 11，
+//   正好写反了（真发出去的卡片是内联拼的，没写数字，所以员工没被误导；但这三个函数是个雷）。
+//   现在：阈值只在这里定义一处，卡片文案一律读 TH.*，改阈值不可能再改漏。
+const TH = { examMin: 6, learnMin: 16, trainMin: 11 };
+
 // ===== 工具 =====
 function fmt(d) { return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); }
 function parseDate(v) {
@@ -48,6 +55,257 @@ function lastWeek() {
     const mon = new Date(now); mon.setDate(now.getDate() - dw - 6); mon.setHours(0,0,0,0);
     const sun = new Date(mon); sun.setDate(mon.getDate() + 6); sun.setHours(23,59,59,999);
     return { start: mon, end: sun, key: fmt(mon) };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 个人培训资料生成（2026-09-21 重写）
+//
+// 目标：脚本自动推的那份报告，和页面上「失误分析看板 → 个人培训资料」**手动生成**
+//       的那份逐字一致。页面那边是 buildTrainingDoc()（index.html 约 18921 行）。
+//
+// 下面这套「选案例 + 排版」是照抄页面的，别再单独改；要改先看页面有没有同步改。
+// 本次对齐掉的差异（原来脚本这边是这样的）：
+//   ① 名额分配：先到先得 → 按失误类别占比用「最大余数法」分 30 个名额
+//   ② 补缺口：随机抓 → 各类别轮流补
+//   ③ 类别匹配：双向模糊包含 → 精确相等（主品类过滤补上「去标点再比」那一步）
+//   ④ 照片：一律下飞书原图内嵌（几十 MB、必然爆）→ 改「KV 压缩图优先，KV 没有就下原图自己压到
+//      900px」，做到**每张都嵌进报告**（收件人打开就有图、零点击）
+//   ⑤ 排版：内联样式 → 照抄页面的 CSS 类
+//   ⑥ 数量：20 → 30
+// 另外这份报告的存档从「只写 Supabase」改成了「**KV 优先**、KV 失败才退 Supabase」——
+// KV 那层才是「收件人一定点得开」的保障（站点案例链一直正常就是因为它显式写了 KV），
+// 而 Supabase 那条共享记录放不下 30 份个人报告（详见 saveReportAsync 上方注释）。
+// ═══════════════════════════════════════════════════════════════════════════
+
+// KV 单键体积上限：与页面 index.html 18816 行同值。超了 KV 写不进去，报告改用占位图版。
+const KV_REPORT_HARD_BYTES = 2.5 * 1024 * 1024;
+
+// 内嵌照片的体积预算（2026-09-21 实测后加的）。
+// 实测 KV 里的压缩图平均 75KB/张、最大 263KB；30 个案例最坏 90 张 → 6.6MB，
+// 按实际平均 45 张也要 3.3MB —— 全都超过上面那条 2.5MB 硬线。
+// 如果按「要么全嵌、要么全占位」，结果是**每次都会退回占位图版、一张照片都不嵌**，
+// 白烧几十次 KV 读。所以改成装到预算为止：先装的先嵌（照片按 问题→方向→补充 的顺序取），
+// 装不下的留占位图（点一下照样能看），报告体积因此有硬上限、永远写得进 KV。
+const KV_PHOTO_BUDGET_BYTES = 2.2 * 1024 * 1024;
+
+// 图片压缩库（2026-09-22 加）：照片要「收件人打开就有图、不用点」，就得每张都嵌进报告；
+// 而飞书原图平均 2.08MB/张（最大 6MB），30 个案例几十张 = 几十 MB，必须先在服务器上压小。
+// 为什么压到 900px 就够：报告里照片的显示框只有 400px（页面 buildTrainingDoc 是 photoTag(p,400,400)），
+//   900px 已经超采样两倍多 —— 在手机屏幕上看就是原画质；再大只是让收件人多下流量。
+//   （页面自己压的那份也是 900px JPEG 80%，见 index.html _generateThumbnail(img,900,0.8)。）
+// ⚠️ 装不上**必须能继续跑**：本脚本是周一推送的主力，不能被一个图片库拦死。
+//   拿不到 sharp 就退回「只用 KV 里现成的压缩图」，剩下的留占位图（点一下能看），推送照发。
+const sharp = (function () {
+    try { return require('sharp'); } catch (e) {
+        console.log('⚠️ 没装图片压缩库 sharp（' + String(e.message).split('\n')[0] + '）');
+        console.log('   → 本次照片只用 KV 里现成的压缩图；KV 里没有的会留成占位图（点一下能看）。');
+        console.log('   → GitHub Actions 上由工作流自动装；本机想装：在本目录跑 npm install');
+        return null;
+    }
+})();
+
+function escapeHtml(str) { if (!str) return ''; return String(str).replace(/[&<>"']/g, function(m) { if (m === '&') return '&amp;'; if (m === '<') return '&lt;'; if (m === '>') return '&gt;'; if (m === '"') return '&quot;'; return '&#39;'; }); }
+
+// 生成日期取**北京时间的今天**。脚本跑在 GitHub Actions（UTC），凌晨跑时 UTC 日期会比
+// 北京晚一天 —— 报告名里的日期按北京算，才和员工看到的「今天」一致。
+function beijingDateStr() {
+    const bj = new Date(Date.now() + 8 * 3600 * 1000);
+    return bj.getUTCFullYear() + '-' + String(bj.getUTCMonth() + 1).padStart(2, '0') + '-' + String(bj.getUTCDate()).padStart(2, '0');
+}
+
+// 照片标签 —— 输出的 HTML 与页面 photoTag()（index.html 约 9931 行）逐字相同。
+// 页面是「本地缓存里有就内嵌、没有就占位」；脚本没有本地缓存，对应物是 Pages KV 里的
+// 压缩图（键 qbimg_<token>，主电脑压缩后同步上去的）—— 取得到就内嵌，取不到就占位。
+function trainPhotoTag(p, maxW, maxH, resolved, placeholderOnly) {
+    maxW = maxW || 150; maxH = maxH || 150;
+    if (typeof p === 'object' && p && p.t) {
+        const token = p.t;
+        if (!placeholderOnly && resolved && resolved[token]) {
+            return '<img src="' + resolved[token] + '" style="max-width:' + maxW + 'px;max-height:' + maxH + 'px;border-radius:8px;border:1px solid #e2e8f0;object-fit:cover;cursor:pointer;margin:2px;" onclick="event.stopPropagation();showImageViewer(this.src)">';
+        }
+        return '<div class="photo-loadable" data-ftoken="' + escapeHtml(token) + '" style="width:' + Math.min(maxW, 100) + 'px;height:' + Math.min(maxH, 80) + 'px;background:#f1f5f9;border-radius:8px;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;border:1px dashed #cbd5e1;margin:2px;flex-shrink:0;" onclick="event.stopPropagation();loadPhotoToken(this,\'' + token + '\')"><span style="font-size:1.2rem;">📷</span></div>';
+    }
+    if (typeof p === 'string' && (p.indexOf('ci_') === 0 || p.indexOf('ki_') === 0)) {
+        return '<div style="width:' + Math.min(maxW, 100) + 'px;height:' + Math.min(maxH, 80) + 'px;background:#fff5f5;border-radius:8px;display:inline-flex;align-items:center;justify-content:center;border:1px dashed #e53e3e;margin:2px;flex-shrink:0;font-size:0.65rem;color:#c0392b;text-align:center;padding:4px;" title="图片数据丢失，请重新上传">📷<br>已丢失</div>';
+    }
+    return '<img src="' + p + '" style="max-width:' + maxW + 'px;max-height:' + maxH + 'px;border-radius:8px;border:1px solid #e2e8f0;object-fit:cover;cursor:pointer;margin:2px;" onclick="event.stopPropagation();showImageViewer(this.src)">';
+}
+
+/**
+ * 个人培训资料 —— 页面 buildTrainingDoc() 的 Node 版（index.html 约 18921 行）。
+ * 页面上的「个人」入口传的是 caseTypes:null / noteKeywordMap:false / floorOnePerCat:false，
+ * 所以这里也不做 caseType 过滤、不掺备注关键词、不做每类保底 —— 只跑个人链真正会跑的那部分。
+ *
+ * @param {Object} opts
+ *   opts.errors          {Array}   本周全部失误行（与页面 getFilteredErrors() 同形状）
+ *   opts.reviewerNames   {Array}   要生成谁（个人链只有一个人）
+ *   opts.scopeText       {string}  报告抬头「培训范围」
+ *   opts.docTitle        {string}  报告标题
+ *   opts.footerText      {string}  页脚
+ *   opts.cases           {Array}   案例库（manualCases）
+ *   opts.maxCases        {number}  默认 30
+ *   opts.resolvedPhotos  {Object}  { 飞书token: dataURI }，调用方先从 KV 取好压缩图
+ *   opts.placeholderOnly {boolean} true = 照片一律用占位图（报告体积从 MB 级降到百 KB 级）
+ * @returns {{ok:boolean, reason?:string, docHtml?:string, matched?:Array, comboText?:string}}
+ */
+function buildTrainingDocLocal(opts) {
+    opts = opts || {};
+    const errors = opts.errors || [];
+    const reviewerNames = opts.reviewerNames || [];
+    const allCases = opts.cases || [];
+    const MAX_CASES = opts.maxCases || 30;
+    const resolved = opts.resolvedPhotos || {};
+    const placeholderOnly = !!opts.placeholderOnly;
+
+    const comboCats = {};   // 品类+类别组合统计（抬头展示用）
+    const cats = {};        // 汇总到类别（案例匹配用）
+    reviewerNames.forEach(function(name){
+        errors.filter(function(e){return e.reviewer===name;}).forEach(function(e){
+            const key = (e.product||'未知') + '-' + e.category;
+            comboCats[key] = (comboCats[key]||0) + 1;
+            cats[e.category] = (cats[e.category]||0) + 1;
+        });
+    });
+    if (Object.keys(cats).length === 0) return { ok: false, reason: '当前维度下无可匹配的培训人员' };
+    const comboSorted = Object.entries(comboCats).sort(function(a,b){ return b[1] - a[1]; });
+    const comboText = comboSorted.map(function(e){ return e[0] + '(' + e[1] + ')'; }).join(' / ');
+
+    // 主品类判断：≥90% 则排除其他品类案例
+    let totalErrors = 0;
+    const productCounts = {};
+    reviewerNames.forEach(function(name){
+        errors.filter(function(e){return e.reviewer===name;}).forEach(function(e){
+            const p = e.product||'未知'; productCounts[p] = (productCounts[p]||0)+1; totalErrors++;
+        });
+    });
+    let dominantProduct = null;
+    Object.entries(productCounts).forEach(function(e) {
+        if (totalErrors > 0 && e[1] / totalErrors >= 0.9) dominantProduct = e[0];
+    });
+
+    // 案例匹配：类别**精确相等**（不是模糊包含）；主品类过滤含「去标点再比」那一步
+    let matched = allCases.filter(function(c){
+        if (!c.errorCategory || !cats[c.errorCategory]) return false;
+        if (dominantProduct && c.productCategory && c.productCategory !== '全品类' && c.productCategory !== dominantProduct && !c.productCategory.includes(dominantProduct) && !dominantProduct.includes(c.productCategory) && !c.productCategory.replace(/[&、\-・\s]/g,'').includes(dominantProduct.replace(/[&、\-・\s]/g,''))) return false;
+        return true;
+    });
+    if (matched.length === 0) return { ok: false, reason: '案例库中无匹配的案例' };
+
+    // 按失误比例分配案例数（最大余数法）：失误多的类别配额多，再轮转补齐缺口
+    const sortedCats = Object.keys(cats).sort(function(a,b){ return (cats[b]||0)-(cats[a]||0); });
+    const casesByCat = {};
+    matched.forEach(function(c){ (casesByCat[c.errorCategory] = casesByCat[c.errorCategory]||[]).push(c); });
+    let totalFails = 0;
+    sortedCats.forEach(function(cat){ totalFails += cats[cat]||0; });
+    const quota = {}, used = {};
+    let remain = MAX_CASES;
+    sortedCats.forEach(function(cat){
+        const q = totalFails > 0 ? Math.floor((cats[cat]||0)/totalFails*MAX_CASES) : 0;
+        quota[cat] = q; remain -= q; used[cat] = 0;
+    });
+    // 余数名额按小数部分从大到小分配，保证总数凑满
+    const fracList = sortedCats.map(function(cat){
+        return { cat: cat, f: totalFails > 0 ? ((cats[cat]||0)/totalFails*MAX_CASES) - quota[cat] : 0 };
+    }).sort(function(a,b){ return b.f - a.f; });
+    for (let fi = 0; fi < remain && fi < fracList.length; fi++) quota[fracList[fi].cat]++;
+
+    // 按配额取案例（类别内保持案例库原顺序），不足配额的类别由其他类别轮转补齐
+    const result = [];
+    sortedCats.forEach(function(cat){
+        const pool = casesByCat[cat] || [];
+        const take = Math.min(quota[cat], pool.length);
+        result.push.apply(result, pool.slice(0, take));
+        used[cat] = take;
+    });
+    let ci = 0, noAdd = 0;
+    while (result.length < MAX_CASES) {
+        const cat = sortedCats[ci % sortedCats.length];
+        const pool = casesByCat[cat] || [];
+        if (used[cat] < pool.length) { result.push(pool[used[cat]]); used[cat]++; noAdd = 0; }
+        else noAdd++;
+        if (noAdd >= sortedCats.length) break;   // 所有类别案例都已取尽
+        ci++;
+    }
+    matched = result;
+
+    let docHtml = "<!DOCTYPE html><html><head><meta charset=\"UTF-8\"><title>培训资料</title>" +
+    "<style>body{font-family:Microsoft YaHei,SimHei,sans-serif;padding:40px;max-width:900px;margin:0 auto;color:#333;}" +
+    "h1{color:#1f3a6b;border-bottom:3px solid #2a5298;padding-bottom:12px;}" +
+    ".case-card{border:1px solid #eef2f6;border-radius:16px;padding:20px;margin:20px 0;background:#fafcfd;}" +
+    ".qc-code{font-size:1.1rem;font-weight:700;color:#1f3a6b;margin-bottom:8px;}" +
+    ".label{font-weight:600;color:#5e6f8d;font-size:0.85rem;margin-top:14px;margin-bottom:6px;}" +
+    ".desc{line-height:1.7;color:#4a5568;}img{max-width:100%;border-radius:10px;margin:6px;border:1px solid #e2e8f0;cursor:pointer;}" +
+    ".correct{background:#eef2ff;padding:12px 16px;border-radius:12px;color:#2a5298;line-height:1.7;}" +
+    ".footer{color:#94a3b8;text-align:center;margin-top:40px;font-size:0.85rem;}" +
+    "</style></head><body><h1>" + (opts.docTitle || "📄 精准培训资料") + "</h1>" +
+    "<p style=\"color:#94a3b8;\">培训范围：" + escapeHtml(opts.scopeText || "") + " | 涉及人员：" + reviewerNames.join("、") + " | 生成日期：" + new Date().toLocaleDateString("zh-CN") + " | 共 " + matched.length + " 个案例</p>" +
+    "<p style=\"color:#5e6f8d;font-size:0.85rem;\">品类+失误类别：" + comboText + "</p>";
+
+    matched.forEach(function(c) {
+        docHtml += "<div class=\"case-card\"><div class=\"qc-code\">🔖 质检码：" + escapeHtml(c.qcCode) + " | 🏷️ " + escapeHtml(c.errorCategory || "") + "</div>" +
+        "<div class=\"label\">📝 问题描述</div><div class=\"desc\">" + escapeHtml(c.issueDesc || "") + "</div>";
+        if (c.issuePhotos && c.issuePhotos.length > 0) {
+            docHtml += "<div class=\"label\">📷 问题照片</div>" + c.issuePhotos.map(function(p) { return trainPhotoTag(p, 400, 400, resolved, placeholderOnly); }).join("");
+        }
+        docHtml += "<div class=\"label\">✅ 应操作方向</div><div class=\"correct\">" + escapeHtml(c.correctDir || "") + "</div>";
+        if (c.dirPhotos && c.dirPhotos.length > 0) {
+            docHtml += "<div class=\"label\">📷 方向示例照片</div>" + c.dirPhotos.map(function(p) { return trainPhotoTag(p, 400, 400, resolved, placeholderOnly); }).join("");
+        }
+        // 2026-09-22 修复：原先少一个「}」，把「方向示例补充照片」的判断嵌进了「方向示例照片」的 if 里，
+        //   「有补充照片、没有方向示例照片」的案例那几张根本不渲染（实测每份报告丢约 7 张照片）。
+        //   页面 buildTrainingDoc + renderGenerateMaterials + 本文件，三处同一份代码，一起改。
+        if (c.dirExamplePhotos && c.dirExamplePhotos.length > 0) {
+            docHtml += "<div class=\"label\">📸 方向示例补充照片</div>" + c.dirExamplePhotos.map(function(p) { return trainPhotoTag(p, 400, 400, resolved, placeholderOnly); }).join("");
+        }
+        docHtml += "</div>";
+    });
+    docHtml += "<div class=\"footer\">" + escapeHtml(opts.footerText || "优学堂 · 精准培训资料") + "</div></body></html>";
+    return { ok: true, docHtml: docHtml, matched: matched, comboText: comboText };
+}
+
+// 报告存档：**KV 优先**（键 report_<utf8hex>），KV 写失败才退回 Supabase generatedReports。
+//
+// 为什么不再无条件写 Supabase（2026-09-21 实测后改）：
+//   generatedReports 是**一整条记录**，每次写都要「读全量 + 写全量」。个人报告实测 0.78MB/份，
+//   30 个人就是往这条记录里塞 ~23MB、来回搬 ~360MB —— 正是把 Supabase 出站流量打爆的那类写法
+//   （402 那次）。而且收件人打开链接时，页面 openSharedReport 会先把**整条**记录拉下来
+//   （index.html 17627 行），为看一份 0.78MB 的报告要下 23MB，手机很痛。
+//   KV 是一人一键、按 key 单取，写多少读多少，没有放大（实测 2.2MB 单键写得进读得回）。
+//   站点案例链不受影响：它每周只有 1 份报告，且由页面的同步通道去推，不经过这里。
+// 所以：正常只写 KV；KV 万一失败才用 Supabase 那条当保命绳 —— 报告打得开比省流量重要。
+async function saveReportAsync(reportName, html) {
+    const bytes = Buffer.byteLength(String(html), 'utf8');
+
+    // ① KV（主通道）：键 = report_ + utf8 十六进制（与页面 _kvReportKey 同算法）
+    const key = 'report_' + Buffer.from(String(reportName), 'utf8').toString('hex');
+    if (bytes > KV_REPORT_HARD_BYTES) {
+        console.log('  ⚠️ KV 跳过：' + (bytes/1048576).toFixed(2) + ' MB 超过单键上限');
+    } else {
+        try {
+            const r = await fetch(KV_PAGES + '/data', {
+                method: 'POST',
+                headers: { 'x-yxt-secret': KV_SECRET, 'Content-Type': 'application/json' },
+                body: JSON.stringify({ items: [{ key: key, v: html, t: new Date().toISOString() }] })
+            });
+            const j = await r.json().catch(function(){ return null; });
+            if (j && j.ok && !j.failed) { console.log('  💾 KV 已缓存：' + Math.round(bytes/1024) + ' KB → ' + key.slice(0, 20) + '…'); return { ok: true, via: 'kv' }; }
+            console.log('  ⚠️ KV 缓存失败：' + JSON.stringify(j).slice(0, 200));
+        } catch (e) { console.log('  ⚠️ KV 缓存异常：' + e.message); }
+    }
+
+    // ② Supabase 兜底（只在上面没成功时走；会撑大那条共享记录，所以不作默认）
+    try {
+        const reports = (await supabaseGet('generatedReports')) || {};
+        reports[reportName] = html;
+        const wr = await fetch(SUPABASE_URL + '/rest/v1/app_data', {
+            method: 'POST',
+            headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY, 'Content-Type': 'application/json', 'Prefer': 'resolution=merge-duplicates' },
+            body: JSON.stringify([{ key: 'generatedReports', value: JSON.stringify(reports), updated_at: new Date().toISOString() }])
+        });
+        if (!wr.ok) console.log('  ⚠️ Supabase 兜底也失败 HTTP ' + wr.status);
+        else console.log('  💾 Supabase 兜底已存档：' + reportName + '（共 ' + Object.keys(reports).length + ' 份）');
+        return { ok: wr.ok, via: 'supabase' };
+    } catch (e) { console.log('  ⚠️ Supabase 兜底异常：' + e.message); return { ok: false, reason: '网络错误', error: e.message }; }
 }
 
 // ===== KV 兜底暂存（2026-09-04）=====
@@ -200,7 +458,11 @@ async function writePushRecords(pushRecords) {
         if (existingTraining === null) {
             console.log('  ⚠️ 读不到 trainingPushRecords，本次培训记录不写，避免覆盖历史');
         } else {
-            var newTraining = existingTraining.concat(trainRecords.map(function(r, i){ return { key: 'train_'+r.reviewerName+'_'+(base+i), type: 'train', title: r.reviewerName+' 精准培训', reviewerName: r.reviewerName, users: [{name: r.email}], site: '', time: r.pushedAt }; }));
+            // 2026-09-21：原来这里只搬了 reviewerName/email/pushedAt，把 scope / caseCount / reportName **丢了** ——
+            //   而页面「培训推送记录」正是靠这三个字段显示「XXX 的培训资料」「N案例」「👁️查看/📥下载」。
+            //   丢了之后页面读不到就当 0 和空渲染 → 显示成「培训资料（1人） | 0案例 | 📌 无报告」，
+            //   报告明明在云端躺着却点不开。现在原样带过去（各自兜底，老记录里没这几个字段也不会报错）。
+            var newTraining = existingTraining.concat(trainRecords.map(function(r, i){ return { key: 'train_'+r.reviewerName+'_'+(base+i), type: 'train', title: r.reviewerName+' 精准培训', reviewerName: r.reviewerName, users: [{name: r.email}], site: r.site || '', time: r.pushedAt, scope: r.scope || '个人培训资料', caseCount: (typeof r.caseCount === 'number' ? r.caseCount : 0), reportName: r.reportName || '' }; }));
             rows.push({ key: 'trainingPushRecords', value: JSON.stringify(newTraining), updated_at: new Date().toISOString() });
             summary.push('培训 ' + newTraining.length + ' 条(+' + trainRecords.length + ')');
         }
@@ -257,13 +519,13 @@ async function sendCard(email, card, token) {
 }
 
 function examCard(name, count) {
-    return { config: { wide_screen_mode: true }, header: { title: { tag: 'plain_text', content: '📝 ' + name + ' 精准考试' }, template: 'orange' }, elements: [{ tag: 'div', text: { tag: 'lark_md', content: '**' + name + '** 上周失误 **' + count + ' 次**，已达出卷阈值（≥6次）\n点击下方按钮自动出卷并开始考试' } }, { tag: 'action', actions: [{ tag: 'button', text: { tag: 'plain_text', content: '📝 开始考试' }, type: 'primary', url: SITE_URL + '?autoExam=' + encodeURIComponent(name) }] }] };
+    return { config: { wide_screen_mode: true }, header: { title: { tag: 'plain_text', content: '📝 ' + name + ' 精准考试' }, template: 'orange' }, elements: [{ tag: 'div', text: { tag: 'lark_md', content: '**' + name + '** 上周失误 **' + count + ' 次**，已达出卷阈值（≥' + TH.examMin + '次）\n点击下方按钮自动出卷并开始考试' } }, { tag: 'action', actions: [{ tag: 'button', text: { tag: 'plain_text', content: '📝 开始考试' }, type: 'primary', url: SITE_URL + '?autoExam=' + encodeURIComponent(name) }] }] };
 }
 function learnCard(name, count) {
-    return { config: { wide_screen_mode: true }, header: { title: { tag: 'plain_text', content: '🗺️ ' + name + ' 学习地图' }, template: 'blue' }, elements: [{ tag: 'div', text: { tag: 'lark_md', content: '**' + name + '** 上周失误 **' + count + ' 次**，已达学习阈值（≥11次）\n点击下方按钮查看学习地图' } }, { tag: 'action', actions: [{ tag: 'button', text: { tag: 'plain_text', content: '🗺️ 学习地图' }, type: 'primary', url: SITE_URL + '?autoLearn=' + encodeURIComponent(name) }] }] };
+    return { config: { wide_screen_mode: true }, header: { title: { tag: 'plain_text', content: '🗺️ ' + name + ' 学习地图' }, template: 'blue' }, elements: [{ tag: 'div', text: { tag: 'lark_md', content: '**' + name + '** 上周失误 **' + count + ' 次**，已达学习阈值（≥' + TH.learnMin + '次）\n点击下方按钮查看学习地图' } }, { tag: 'action', actions: [{ tag: 'button', text: { tag: 'plain_text', content: '🗺️ 学习地图' }, type: 'primary', url: SITE_URL + '?autoLearn=' + encodeURIComponent(name) }] }] };
 }
 function trainCard(name, count) {
-    return { config: { wide_screen_mode: true }, header: { title: { tag: 'plain_text', content: '📖 ' + name + ' 精准培训' }, template: 'purple' }, elements: [{ tag: 'div', text: { tag: 'lark_md', content: '**' + name + '** 上周失误 **' + count + ' 次**，已达培训阈值（≥16次）\n点击下方按钮查看培训资料' } }, { tag: 'action', actions: [{ tag: 'button', text: { tag: 'plain_text', content: '📖 查看培训' }, type: 'primary', url: SITE_URL + '?autoTrain=' + encodeURIComponent(name) }] }] };
+    return { config: { wide_screen_mode: true }, header: { title: { tag: 'plain_text', content: '📖 ' + name + ' 精准培训' }, template: 'purple' }, elements: [{ tag: 'div', text: { tag: 'lark_md', content: '**' + name + '** 上周失误 **' + count + ' 次**，已达培训阈值（≥' + TH.trainMin + '次）\n点击下方按钮查看培训资料' } }, { tag: 'action', actions: [{ tag: 'button', text: { tag: 'plain_text', content: '📖 查看培训' }, type: 'primary', url: SITE_URL + '?autoTrain=' + encodeURIComponent(name) }] }] };
 }
 
 // ===== 主流程 =====
@@ -294,7 +556,11 @@ async function main() {
                 catch(e) { console.log('  ❌ ' + entry.name + ': ' + e.message); fail++; }
             } else if (entry.type === 'train') {
                 var tcard = { config: { wide_screen_mode: true }, header: { title: { tag: 'plain_text', content: '📖 ' + entry.name + ' 精准培训' }, template: 'purple' }, elements: [{ tag: 'div', text: { tag: 'lark_md', content: '**' + entry.name + '** 上周失误 **' + entry.count + ' 次**，已达培训阈值\n匹配案例：' + entry.caseCount + ' 条' } }, { tag: 'action', actions: [{ tag: 'button', text: { tag: 'plain_text', content: '📖 查看培训' }, type: 'primary', url: SITE_URL + '?report=' + encodeURIComponent(entry.reportName) }] }] };
-                try { await sendCard(entry.email, tcard, appToken); console.log('  📖 培训 → ' + entry.name + ' (' + entry.caseCount + '条)'); sent++; pushRecords.push({ type: 'train', reviewerName: entry.name, reportName: entry.reportName, email: entry.email, pushedAt: new Date().toISOString() }); }
+                // 2026-09-21：caseCount / scope 必须带上 —— 页面「培训推送记录」靠它们显示「N案例」和
+                //   「XXX 的培训资料」。之前没带 → 自动推的记录在页面上显示成「0案例 | 培训资料 | 📌 无报告」，
+                //   连「查看/下载」按钮都不出来（报告明明生成了却点不开）。scope 由推的人决定：本脚本按人匹配
+                //   案例，故为「个人培训资料」；以后若加站点级推送，在那边写 scope 即可，这里会原样带过去。
+                try { await sendCard(entry.email, tcard, appToken); console.log('  📖 培训 → ' + entry.name + ' (' + entry.caseCount + '条)'); sent++; pushRecords.push({ type: 'train', reviewerName: entry.name, reportName: entry.reportName, email: entry.email, pushedAt: new Date().toISOString(), caseCount: entry.caseCount || 0, scope: entry.scope || '个人培训资料' }); }
                 catch(e) { console.log('  ❌ ' + entry.name + ': ' + e.message); fail++; }
             }
         }
@@ -454,7 +720,7 @@ async function main() {
         return c.replace(/[\d]+$/, '').replace(/[（(].*[)）]/g, '').trim() || c;
     }
 
-    const TH = { examMin: 6, learnMin: 16, trainMin: 11 };
+    // 阈值 examMin/learnMin/trainMin 见文件顶部 TH（2026-09-21 提到模块级，卡片文案也读它）
     // 类别别名映射（去标点后仍不同的）
     const catAlias = {'组合差价未勾选':'组合项未同步判责','拍照/取证不规范':'拍照取证不规范','低级/投诉失误':'明显失误','低级失误':'明显失误','责任分类错':'判错责任方','责任明细选错':'判错责任方','责任类选错':'判错责任方'};
     // 2-6字滑动提取
@@ -767,91 +1033,187 @@ async function main() {
             } else { console.log('  ⏭ '+name+' 未匹配到课程'); }
         }
         if (count >= TH.trainMin) {
-            // 从 Supabase 案例库匹配培训报告
-            var personCats = rCat[name] || {};
-            var personProds = rProd[name] || {};
-            var catNames = Object.keys(personCats);
-            // 判断主品类
-            var prodEntries = Object.entries(personProds);
-            var totalM = prodEntries.reduce(function(a,b){return a+b[1];},0);
-            var dominantProd = null;
-            prodEntries.forEach(function(e) { if (e[1]/totalM >= 0.9) dominantProd = e[0]; });
-            // 按失误类别匹配案例
-            var matched = allCasesData.filter(function(c) {
-                return catNames.some(function(cn) { return (c.errorCategory||'').includes(cn) || cn.includes(c.errorCategory||''); });
-            });
-            // 主品类过滤
-            if (dominantProd) {
-                matched = matched.filter(function(c) {
-                    var cp = c.productCategory||'';
-                    return cp === '全品类' || cp.includes(dominantProd) || dominantProd.includes(cp);
-                });
+            // ── 照片：目标是「收件人打开就有图、零点击」，所以**每张都要嵌进报告** ──────────
+            // 两条来源，先便宜的：
+            //   ① Pages KV 里现成的压缩图（键 qbimg_<飞书token>，主电脑压好的 900px JPEG 80%）
+            //      —— 直接嵌，不下载，免费。实测命中率约 6 成。
+            //   ② KV 里没有 → 下飞书原图（实测平均 2.08MB/张）→ sharp 压到 900px 再嵌，
+            //      顺手写回 KV，下周同一张就直接命中 ①（一次写入换长期免费）。
+            // 为什么不再「全有或全无」，也不再「装不下就留占位」：收件人点一下才能看图 = 没达到目的。
+            // 取图路径与页面 _qbImgGetFromKV（index.html 约 9798 行）逐字对应：
+            // 页面传的 key 不带前缀，worker 内部自己补 sync_。
+            async function getKvImage(token) {
+                if (!token) return null;
+                try {
+                    const r = await fetch(KV_PAGES + '/data?key=' + encodeURIComponent('qbimg_' + token), { headers: { 'x-yxt-secret': KV_SECRET } });
+                    if (!r.ok) return null;
+                    const j = await r.json();
+                    if (!j || !j.value) return null;
+                    let o = null;
+                    try { o = JSON.parse(j.value); } catch(e) { return null; }
+                    if (o && typeof o.v === 'string' && o.v.indexOf('data:image') === 0) return o.v;
+                    return null;
+                } catch(e) { return null; }
             }
-            // 不够20条按品类补齐
-            if (matched.length < 20) {
-                var fillProds = dominantProd ? [dominantProd] : Object.keys(personProds);
-                var fillCases = allCasesData.filter(function(c) {
-                    if (matched.find(function(m){return m.qcCode===c.qcCode;})) return false;
-                    var cp = c.productCategory||'';
-                    return cp === '全品类' || fillProds.some(function(p){ return cp.includes(p) || p.includes(cp); });
-                });
-                fillCases.sort(function(){return Math.random()-0.5;});
-                matched = matched.concat(fillCases.slice(0, 20 - matched.length));
+
+            // 下飞书原图：走 Pages 代理的 x-target-url 通道，与页面 fetchFeishuImage（index.html 9648 行）
+            // 同一条路、同一个接口。代理对 image/* 是**原样透传字节**的（cf-pages-proxy/_worker.js 787 行），
+            // 所以这里直接拿 arrayBuffer，千万别 text()（UTF-8 解码会把二进制搞坏）。
+            async function downloadFeishuImage(fileToken, authToken) {
+                if (!fileToken) return null;
+                try {
+                    const headers = {
+                        'x-target-url': 'https://open.feishu.cn/open-apis/drive/v1/medias/' + fileToken + '/download',
+                        'x-target-method': 'GET'
+                    };
+                    if (authToken) headers['x-target-auth'] = 'Bearer ' + authToken;
+                    const r = await fetch(KV_PAGES, { headers: headers });
+                    if (!r.ok) return null;
+                    const ct = String(r.headers.get('content-type') || '').toLowerCase();
+                    const buf = Buffer.from(await r.arrayBuffer());
+                    if (!buf || buf.length < 100) return null;
+                    if (buf[0] === 0x7b) return null;   // 首字节 0x7b = 飞书返回的 JSON 错误体（多半是 token 过期）
+                    if (ct.indexOf('image/') !== 0 && ct.indexOf('octet-stream') < 0) return null;
+                    return buf;
+                } catch (e) { return null; }
             }
-            if (matched.length > 0) {
-                matched = matched.slice(0, 20);
-                var reportName = name + ' 培训资料(' + wk.key + ')';
-                var catsList = Object.entries(personCats).sort(function(a,b){return b[1]-a[1];}).map(function(e){return e[0]+'('+e[1]+'次)';}).join('、');
-                var html = '<html><head><meta charset="UTF-8"><title>' + reportName + '</title></head><body style="font-family:Microsoft YaHei;padding:40px;max-width:900px;margin:0 auto;">' +
-                    '<h1 style="color:#1f3a6b;">📖 ' + name + ' 精准培训资料</h1>' +
-                    '<p style="color:#5e6f8d;">周期：' + fmt(wk.start) + ' ~ ' + fmt(wk.end) + ' | 失误总计：' + count + ' 次</p>' +
-                    '<p style="background:#f1f5f9;padding:10px 16px;border-radius:12px;">主要失误类别：' + catsList + '</p>';
-                // 图片下载函数
-                async function getImgBase64(ft) {
-                    if (!ft || typeof ft !== 'object' || !ft.t) return null;
+
+            // 压到这张照片的预算以内。阶梯：先按最高画质试，超了就往下退一档。
+            // 为什么退分辨率而不是退张数：900px 已经远超 400px 的显示框，退到 640px 在手机上也看不出
+            // 差别 —— 宁可每张都稍微降一点，也要保证**一张不落**（少一张就得让收件人点一下）。
+            const PHOTO_LADDER = [
+                { px: 900, q: 78 }, { px: 820, q: 70 }, { px: 720, q: 62 }, { px: 640, q: 54 }
+            ];
+            async function shrinkToDataUri(buf, capBytes) {
+                if (!sharp) return null;
+                let last = null;
+                for (let li = 0; li < PHOTO_LADDER.length; li++) {
+                    const rung = PHOTO_LADDER[li];
                     try {
-                        var resp = await fetch('https://open.feishu.cn/open-apis/drive/v1/medias/' + ft.t + '/download', {
-                            headers: { 'Authorization': 'Bearer ' + userToken }
-                        });
-                        if (!resp.ok) return null;
-                        var buf = await resp.arrayBuffer();
-                        if (!buf || buf.byteLength === 0) return null;
-                        var base64 = Buffer.from(buf).toString('base64');
-                        var ext = resp.headers.get('content-type') || 'image/png';
-                        return 'data:' + ext + ';base64,' + base64;
-                    } catch(e) { return null; }
-                }
-                for (var ci = 0; ci < matched.length; ci++) {
-                    var c = matched[ci];
-                    html += '<div style="border:1px solid #eef2f6;border-radius:16px;padding:20px;margin:20px 0;background:#fafcfd;">' +
-                        '<div style="font-weight:700;color:#1f3a6b;">🔖 ' + (c.qcCode||'') + ' | 🏷️ ' + (c.errorCategory||'') + '</div>' +
-                        '<div style="margin-top:10px;"><strong>📝 问题描述：</strong>' + (c.issueDesc||'') + '</div>';
-                    // 下载并嵌入图片
-                    var allPhotos = (c.issuePhotos||[]).concat(c.dirPhotos||[]).concat(c.dirExamplePhotos||[]);
-                    for (var pi = 0; pi < allPhotos.length; pi++) {
-                        var b64 = await getImgBase64(allPhotos[pi]);
-                        if (b64) html += '<img src="' + b64 + '" style="max-width:300px;border-radius:8px;margin:6px;border:1px solid #e2e8f0;">';
+                        const out = await sharp(buf)
+                            .rotate()   // 按 EXIF 摆正：手机竖拍的照片不转这一下会躺着
+                            .resize({ width: rung.px, height: rung.px, fit: 'inside', withoutEnlargement: true })
+                            .jpeg({ quality: rung.q, mozjpeg: true })
+                            .toBuffer();
+                        last = 'data:image/jpeg;base64,' + out.toString('base64');
+                        if (last.length <= capBytes) return last;
+                    } catch (e) {
+                        return null;    // sharp 不认的格式（如 iPhone 的 HEIC）→ 放弃这张，外层会留占位图
                     }
-                    html += '<div style="margin-top:8px;"><strong>✅ 应操作方向：</strong>' + (c.correctDir||'') + '</div></div>';
                 }
-                html += '<div style="text-align:center;color:#94a3b8;margin-top:30px;">优学堂 · 自动生成</div></body></html>';
-                // 保存到 Supabase
-                var reports = (await supabaseGet('generatedReports')) || {};
-                reports[reportName] = html;
-                await fetch(SUPABASE_URL + '/rest/v1/app_data', {
-                    method: 'POST', headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY, 'Content-Type': 'application/json', 'Prefer': 'resolution=merge-duplicates' },
-                    body: JSON.stringify([{ key: 'generatedReports', value: JSON.stringify(reports), updated_at: new Date().toISOString() }])
-                }).catch(function(){});
+                return last;            // 退到最低档还是超预算：照样返回，让总预算去定夺
+            }
+
+            // 把新压好的图写回 KV（键与页面 _qbImgKey 同款、值格式 {"v":dataURI,"t":iso}）。
+            // 只写 KV 里本来没有的 —— 绝不覆盖主电脑压好的那份。失败无所谓（下次再下原图就是）。
+            async function kvBackfillImages(items) {
+                if (!items.length) return 0;
+                try {
+                    const r = await fetch(KV_PAGES + '/data', {
+                        method: 'POST',
+                        headers: { 'x-yxt-secret': KV_SECRET, 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ items: items })
+                    });
+                    const j = await r.json().catch(function () { return null; });
+                    return (j && j.written) || 0;
+                } catch (e) { return 0; }
+            }
+
+            // 个人培训资料：与页面「失误分析看板 → 个人培训资料」手动生成的那份完全一致。
+            // 算法与排版见文件顶部 buildTrainingDocLocal（照抄页面 buildTrainingDoc）。
+            const trainBase = {
+                errors: rows,
+                reviewerNames: [name],
+                scopeText: wk.key + '（' + fmt(wk.start) + ' ~ ' + fmt(wk.end) + '）',
+                docTitle: '📄 精准培训资料',
+                footerText: '优学堂 · 精准培训资料',
+                cases: allCasesData,
+                maxCases: 30
+            };
+
+            // 第一遍：占位图模式 —— 一张照片都不取，先把「选中哪 30 个案例」定下来
+            const pre = buildTrainingDocLocal(Object.assign({}, trainBase, { placeholderOnly: true }));
+            if (!pre.ok) {
+                console.log('  ⏭ ' + name + ' ' + pre.reason + '，跳过');
+            } else {
+                // 只取「选中案例」的照片（没选上的一张都不取）；KV 里没有的留空，生成时自动变占位图
+                const resolved = {};
+                const photoTokens = [];
+                pre.matched.forEach(function(c) {
+                    ['issuePhotos', 'dirPhotos', 'dirExamplePhotos'].forEach(function(k) {
+                        (c[k] || []).forEach(function(p) {
+                            if (p && typeof p === 'object' && p.t && photoTokens.indexOf(p.t) < 0) photoTokens.push(p.t);
+                        });
+                    });
+                });
+                // 每张照片的预算 = 总预算平均分给所有照片，夹在 50KB~250KB。
+                //   · 张数多（比如 45 张）→ 每张 50KB 下限，宁可降画质也要一张不落；
+                //   · 张数少 → 上限 250KB，不必浪费预算。
+                // 按 24 张算：2.2MB/24 ≈ 94KB/张 —— 实测压完平均约 65KB，都装得下。
+                const perPhotoCap = Math.max(50 * 1024, Math.min(250 * 1024,
+                    Math.floor(KV_PHOTO_BUDGET_BYTES / Math.max(1, photoTokens.length))));
+
+                let photoBytes = 0, fromKv = 0, fromFeishu = 0;
+                const backfill = [];
+                for (let ti = 0; ti < photoTokens.length; ti++) {
+                    const tk = photoTokens[ti];
+                    if (photoBytes >= KV_PHOTO_BUDGET_BYTES) continue;      // 总预算用光 → 剩下的留占位图（兜底，正常到不了）
+
+                    let b64 = await getKvImage(tk);                          // ① KV 现成的
+                    if (b64) {
+                        // 个别 KV 图偏大（实测最大 263KB，超过 94KB 的均摊预算）→ 重压一遍，别挤占别人的份额
+                        if (b64.length > perPhotoCap && sharp) {
+                            const raw = Buffer.from(String(b64).split(',')[1] || '', 'base64');
+                            if (raw.length) b64 = (await shrinkToDataUri(raw, perPhotoCap)) || b64;
+                        }
+                        if (b64) fromKv++;
+                    } else {
+                        // ② KV 里没有 → 下飞书原图 → 压到预算以内
+                        const raw = await downloadFeishuImage(tk, appToken);
+                        if (raw) {
+                            b64 = await shrinkToDataUri(raw, perPhotoCap);
+                            if (b64) {
+                                fromFeishu++;
+                                backfill.push({ key: 'qbimg_' + tk, v: b64, t: new Date().toISOString() });
+                            }
+                        }
+                        // 错开一点：飞书对短时间大量下载会限流，压着 150ms 一张稳一点
+                        await new Promise(function (res) { setTimeout(res, 150); });
+                    }
+                    if (!b64) continue;                                     // 两条路都没拿到 → 留占位图（点一下能看）
+                    if (photoBytes + b64.length > KV_PHOTO_BUDGET_BYTES) continue;
+                    resolved[tk] = b64;
+                    photoBytes += b64.length;
+                }
+                // 写回 KV：一次批量写完，别一张一个请求（KV 免费写额度 1000/天，也要省着用）
+                const backfilled = await kvBackfillImages(backfill);
+                if (backfilled) console.log('     ↑ 已写回 KV ' + backfilled + ' 张压缩图（下周不用再下原图）');
+
+                // 第二遍：内嵌 base64 生成
+                let rpt = buildTrainingDocLocal(Object.assign({}, trainBase, { resolvedPhotos: resolved }));
+                let rptBytes = Buffer.byteLength(rpt.docHtml, 'utf8');
+                // 超过 KV 单键上限 → 退回占位图版（与页面 runSiteCaseTrainingPush 的两遍生成同款）
+                if (rptBytes > KV_REPORT_HARD_BYTES) {
+                    const phBytes = Buffer.byteLength(pre.docHtml, 'utf8');
+                    console.log('  ⚠️ ' + name + ' 内嵌照片版 ' + (rptBytes / 1048576).toFixed(2) + ' MB 超过 KV 上限，改用占位图版（' + Math.round(phBytes / 1024) + ' KB）');
+                    rpt = pre; rptBytes = phBytes;
+                }
+                console.log('  📖 ' + name + '：案例 ' + rpt.matched.length + ' 条 · 照片内嵌 ' + Object.keys(resolved).length + ' 张（KV 现成 ' + fromKv + ' + 新压 ' + fromFeishu + '）/ 占位 ' + (photoTokens.length - Object.keys(resolved).length) + ' 张 · ' + (rptBytes / 1048576).toFixed(2) + ' MB');
+
+                // 报告名 = 姓名 + 生成日期（北京时间的今天）。
+                // 原来用 wk.key（上周一），报告名会随「哪天生成」漂 7 天，跟页面手动生成的那份对不上。
+                const reportName = name + ' 培训资料(' + beijingDateStr() + ')';
+                const shareUrl = SITE_URL + '?report=' + encodeURIComponent(reportName);
+                await saveReportAsync(reportName, rpt.docHtml);
+
                 if (PHASE === 'analyze') {
-                    pushQueue.push({ type: 'train', name: name, email: email, count: count, code: planCode, caseCount: matched.length, reportName: reportName });
-                    console.log('  📖 加入队列 → ' + name + ' (' + matched.length + '条)');
+                    pushQueue.push({ type: 'train', name: name, email: email, count: count, code: planCode, caseCount: rpt.matched.length, reportName: reportName });
+                    console.log('  📖 加入队列 → ' + name + ' (' + rpt.matched.length + '条)');
                 } else {
-                    var tcard = { config: { wide_screen_mode: true }, header: { title: { tag: 'plain_text', content: '📖 ' + name + ' 精准培训' }, template: 'purple' }, elements: [{ tag: 'div', text: { tag: 'lark_md', content: '**' + name + '** 上周失误 **' + count + ' 次**，已达培训阈值\n匹配案例：' + matched.length + ' 条' } }, { tag: 'action', actions: [{ tag: 'button', text: { tag: 'plain_text', content: '📖 查看培训' }, type: 'primary', url: SITE_URL + '?report=' + encodeURIComponent(reportName) }] }] };
-                    try { await sendCard(email, tcard, appToken); console.log('  📖 培训 → ' + name+' (' + matched.length + '条)'); sent++; pushRecords.push({ type: 'train', reviewerName: name, reportName: reportName, email: email, pushedAt: new Date().toISOString() }); }
+                    const tcard = { config: { wide_screen_mode: true }, header: { title: { tag: 'plain_text', content: '📖 ' + name + ' 精准培训' }, template: 'purple' }, elements: [{ tag: 'div', text: { tag: 'lark_md', content: '**' + name + '** 上周失误 **' + count + ' 次**，已达培训阈值\n匹配案例：' + rpt.matched.length + ' 条' } }, { tag: 'action', actions: [{ tag: 'button', text: { tag: 'plain_text', content: '📖 查看培训' }, type: 'primary', url: shareUrl }] }] };
+                    try { await sendCard(email, tcard, appToken); console.log('  📖 培训 → ' + name + ' (' + rpt.matched.length + '条)'); sent++; pushRecords.push({ type: 'train', reviewerName: name, reportName: reportName, email: email, pushedAt: new Date().toISOString(), caseCount: rpt.matched.length, scope: '个人培训资料' }); }
                     catch(e) { console.log('  ❌ ' + name + ': ' + e.message); fail++; }
                 }
-            } else {
-                console.log('  ⏭ ' + name + ' 案例库无匹配，跳过');
             }
         }
     }
