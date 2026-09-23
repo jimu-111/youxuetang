@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <!-- 版本行：每次部署新代码必须 bump 此 content（YYYYMMDD.N），旧设备靠它自检静默升级 -->
-    <meta name="yxt-ver" content="20260922.5">
+    <meta name="yxt-ver" content="20260923.1">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
     <title>优学堂</title>
     <script src="https://cdn.sheetjs.com/xlsx-0.20.2/package/dist/xlsx.full.min.js" defer></script>
@@ -2302,7 +2302,18 @@
             try {
                 // 写净化：非日期格式的行不落缓存
                 data = (data || []).filter(function(it){ return it && /^\d{4}-\d{2}-\d{2}$/.test(it.date || ''); });
-                localStorage.setItem(PANZE_CACHE_KEY, JSON.stringify({ fetchedAt: Date.now(), data: data }));
+                var val = JSON.stringify({ fetchedAt: Date.now(), data: data });
+                // 2026-09-23 流量修复：指纹只覆盖 data（**不含 fetchedAt**）。
+                //   注意此处**不能**改成 _realLS 一律不上云 —— 云端那份是管理员全量缓存，
+                //   游客/其他设备要靠它（见 4874 行附近「避免游客部分缓存 LWW 覆盖云端管理员全量缓存」），
+                //   所以只做「内容没变就不重复推」，内容变了照推。
+                var sig = _cacheSigOf(data);
+                if (_cachePushedBefore('_cacheSig_panze', sig)) {
+                    _cacheLocalWrite(PANZE_CACHE_KEY, val);
+                } else {
+                    localStorage.setItem(PANZE_CACHE_KEY, val);
+                    _cacheMarkPushed('_cacheSig_panze', sig);
+                }
             } catch(e) {}
         }
         // 2026-09-13 联动修复：云端判责量行的解析原本有两份（这里 和 顶层管理员启动块），
@@ -19325,15 +19336,63 @@ URL.revokeObjectURL(url);
         };
     }
 
+    // ==================== 缓存「内容指纹」——出站流量修复（2026-09-23）====================
+    // 背景（实测：2026-09-20 起的计费周期 3 天烧 0.68GB / 5GB，外推 ≈227MB/天，约 10-12 撞线）：
+    //   saveErrorDashboardCache 与 savePanzeCache 的载荷里都塞了 Date.now()（time / fetchedAt），
+    //   → 「表格数据一个字没变」也永远序列化出不同的字符串 → **每次刷新都往云推一份**。
+    //   而 _syncPullAll 是 `updated_at=gt.游标` 的**整行**增量（不是字段级）→ 一台推一次，
+    //   其余每台设备下次开页面都要把那一份**完整重下一遍**（1.3MB / 406KB）。
+    //   成本 = 体积 × 设备数 × 每天写次数。
+    // 做法：推云之前先比「**去掉时间戳之后**的内容指纹」，一样就只写本机、不进同步队列。
+    //   内容真变了照旧推 —— 跨设备共享缓存这个功能完全不动。
+    // ⚠️ 指纹键必须 `_` 开头 —— 那是「不上云」的唯一标记（主闸门见 _syncSetItem）。
+    // ⚠️ 本机写入走 _realLS（原生 localStorage），**绕过同步代理**；但大值仍要过 _lsGuard，
+    //    否则可能撞 QuotaExceeded 导致缓存根本没落盘（_syncSetItem 里那道护栏不能省）。
+    function _cacheSig(s) {
+        var h = 5381, i = s.length;
+        while (i) h = ((h * 33) ^ s.charCodeAt(--i)) >>> 0;   // djb2 变体，只要够散就行
+        return s.length + ':' + h.toString(36);
+    }
+    function _cacheSigOf(payload) {
+        try { return _cacheSig(JSON.stringify(payload)); } catch(e) { return null; }   // null = 算不出来
+    }
+    function _cachePushedBefore(fpKey, sig) {
+        if (!sig) return false;                                  // 算不出来 → 当没推过，照常推（安全侧）
+        var last = null;
+        try { last = _realLS.getItem(fpKey); } catch(e) {}
+        return last === sig;
+    }
+    function _cacheMarkPushed(fpKey, sig) {
+        if (!sig) return;
+        try { _realLS.setItem(fpKey, sig); } catch(e) {}
+    }
+    // 只写本机、不入同步队列（等价于 _syncSetItem，但跳过入队那一段）
+    function _cacheLocalWrite(key, val) {
+        if (val.length > 200000) _lsGuard();                      // 同 _syncSetItem 的容量护栏
+        _realLS.setItem(key, val);
+    }
+
     // 本地缓存：避免每次打开看板都白等
     var ERROR_CACHE_KEY = 'errorDashboardCache';
+    var ERROR_CACHE_SIG_KEY = '_cacheSig_errDash';
     function saveErrorDashboardCache() {
         try {
-            localStorage.setItem(ERROR_CACHE_KEY, JSON.stringify({
+            var val = JSON.stringify({
                 data: errorDashboardData,
                 status: errorDashboardSheetStatus,
                 time: Date.now()
-            }));
+            });
+            // 2026-09-23 流量修复：指纹只覆盖 data + status（**不含 time**）。
+            //   与上次推上去的一样 → 只写本机，不进同步队列（原来每次都推 1.3MB）
+            var sig = _cacheSigOf({ d: errorDashboardData, s: errorDashboardSheetStatus });
+            if (_cachePushedBefore(ERROR_CACHE_SIG_KEY, sig)) {
+                _cacheLocalWrite(ERROR_CACHE_KEY, val);
+                console.log('[流量] 失误看板缓存内容未变，只写本机不上云（省 ' +
+                    (val.length / 1048576).toFixed(2) + 'MB）');
+            } else {
+                localStorage.setItem(ERROR_CACHE_KEY, val);   // 走同步代理 → 入队推送（内容真变了）
+                _cacheMarkPushed(ERROR_CACHE_SIG_KEY, sig);
+            }
         } catch(e) {}
     }
     function loadErrorDashboardCache() {
