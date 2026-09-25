@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <!-- 版本行：每次部署新代码必须 bump 此 content（YYYYMMDD.N），旧设备靠它自检静默升级 -->
-    <meta name="yxt-ver" content="20260923.1">
+    <meta name="yxt-ver" content="20260925.1">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
     <title>优学堂</title>
     <script src="https://cdn.sheetjs.com/xlsx-0.20.2/package/dist/xlsx.full.min.js" defer></script>
@@ -23261,6 +23261,111 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
     var _yxtPanelLastAt = {};           // panel → 上次检查时刻（内存，刷新页面即重置）
     var _yxtPanelFailed = {};           // panel → 上次是否失败
 
+    // ==================== 进面板「两步走」——出站流量修复（2026-09-25）====================
+    // 背景（2026-09-25 用探针在真实页面量出来的）：进四个大模块走一圈 = 2.55MB ——
+    //   考试系统 946KB（examHistoryData 936KB）、学习地图 896KB（learningPlanData 861KB）、
+    //   知识库 428KB（knowledgeBaseList 426KB）、数据分析 284KB（panzeSyncCacheV1 264KB）。
+    //   而这四份云端**好几天没变过**（学习地图 43 小时、知识库一周多）⇒ 每次进模块都整份重下，
+    //   下回来的是同一样东西。按当时实测 183MB/天 外推，约 10 月中旬撞 5GB 免费额度。
+    // 原行为（2026-09-15 定的「每次实拉一遍最稳」）为躲两个坑：① 整表同步**共用一个游标**，
+    //   trainee_data_sync_time 这类心跳键会把游标顶到未来 → 永久漏数据；② KV 兜底侧剪枝拿的是
+    //   「最多 2 小时前的 key 清单」，快照期间变过的 key 被判成没变。
+    // 现改为两步走：
+    //   ① 先发一个小请求 select=key,updated_at&key=in.(...)（几百字节）问这几个 key 的更新时间；
+    //   ② 哪个跟本机记的不一样，才把**那一个**拉回来（key=eq.<key> 拼成的 in.）。
+    // 为什么不会重蹈 09-15 的坑：
+    //   ① 这里**每个 key 各记各的时间戳**（_yxtPanelTs，本机键、不上云），没有共享游标，没有东西能顶飞它；
+    //   ② 探测失败/不可信 → 一律回落到「整份拉」（安全侧），绝不因判错而静默不拉；
+    //   ③ 时间戳用**相等判断**（!==）而不是比大小 —— 万一两条通道的时间戳格式不同（KV 是 ...Z、
+    //      Supabase 是 6 位微秒 +00:00），结果是「判成变了」→ 照常拉，方向安全；
+    //   ④ 保险丝 _YXT_PANEL_FULL_GAP：同一个面板超过这么久没整份拉过 → 强制整份拉一次，
+    //      把「时间戳判断万一失灵」的代价限制成「最多延迟这么久」，而不是永久漏；
+    //   ⑤ 还有一张独立的网：每次**开页面**的 _syncPullAll 走的是游标增量，与本机制完全无关，
+    //      万一这里漏了，下次开页面也会补上。
+    // 已核实（2026-09-25）：全文件所有往 app_data 的写入点都带 updated_at（15 处，含 _syncFlush
+    //   的 batch 与 cloudCacheSet 的 body），所以「时间戳不变 = 内容没变」成立。
+    // 运维提示：以后新增往 app_data 写数据的脚本/代码，**必须带 updated_at**，否则这里的判断会漏。
+    var _YXT_PANEL_FULL_GAP = 24 * 3600 * 1000;   // 保险丝：24 小时强制整份拉一次
+    var YXT_PANEL_TS_KEY   = '_yxtPanelTs';       // 本机键（_ 开头 = 不上云）：key → 上次看到的 updated_at
+    var YXT_PANEL_FULL_KEY = '_yxtPanelFullAt';   // 本机键：panel → 上次「整份拉」的时刻
+
+    function _yxtPanelTsGet() {
+        try { return JSON.parse(_realLS.getItem(YXT_PANEL_TS_KEY) || '{}') || {}; } catch(e) { return {}; }
+    }
+    function _yxtPanelFullGet() {
+        try { return JSON.parse(_realLS.getItem(YXT_PANEL_FULL_KEY) || '{}') || {}; } catch(e) { return {}; }
+    }
+    function _yxtPanelFullPut(panel) {
+        var m = _yxtPanelFullGet(); m[panel] = Date.now();
+        try { _realLS.setItem(YXT_PANEL_FULL_KEY, JSON.stringify(m)); } catch(e) {}
+    }
+
+    // 真正去拉并落地（原 _yxtPanelCheck 里那一段，原样搬过来，语义不变）。
+    // 拉完顺手把**这批 key 的云端时间戳**记下来（用拿回来的行的 updated_at，最准；
+    //   云端没这行的记 'absent' —— 以后它再出现时时间戳必然不等，会被重新拉）。
+    function _yxtPanelFetch(panel, keys, onApplied) {
+        var url = SUPABASE_URL + '/rest/v1/app_data?select=*&key=in.(' + keys.join(',') + ')';
+        return fetch(url, { headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY } })
+            .then(function(r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+            .then(function(rows) {
+                _yxtPanelFailed[panel] = false;
+                if (!Array.isArray(rows)) rows = [];
+                // 记时间戳（必须在落地之前算好，落地逻辑不碰 updated_at）
+                var ts = _yxtPanelTsGet(), got = {};
+                rows.forEach(function(row) { if (row && row.key) { got[row.key] = true; ts[row.key] = row.updated_at || '?'; } });
+                keys.forEach(function(k) { if (!got[k]) ts[k] = 'absent'; });
+                try { _realLS.setItem(YXT_PANEL_TS_KEY, JSON.stringify(ts)); } catch(e) {}
+                if (rows.length === 0) return 0;   // 云端没这几个 key
+                // ★ 墓碑先于考试数据落地（否则同批里 examHistoryData 会把删掉的考试搬回来）
+                // 用「真写入次数」判断要不要重画：_yxtApplyCloudRow 返回 true 有两种含义
+                //   （真写了 / 内容本来就一致），拿返回值数会把「没变」也算成变了 → 每次切模块白重画一遍。
+                var _w0 = _yxtApplyWrites;
+                // 学员墓碑同理（2026-09-22）：必须在 trainee_full_admin_backup 和 yxts_* 之前落地，
+                //   否则同批里名单先到 → loadData() 自愈会把已删的人当「丢了的人」补回来
+                rows.forEach(function(row) { if (row && (row.key === EXAM_DELETED_KEY || row.key === TRAINEE_DELETED_KEY)) _yxtApplyCloudRow(row); });
+                rows.forEach(function(row) { _yxtApplyCloudRow(row); });
+                var changed = _yxtApplyWrites - _w0;
+                if (!changed) return 0;   // 取值都回来了、但没有一行跟本地不一样 → 不必重画
+                // ★ 2026-09-16：学员数据必须先灌回内存再重画（loadData() 把 trainee_full_admin_backup
+                //   解析进全局数组 students，渲染读的是 students）。顺序必须在两个 forEach 都跑完之后。
+                if (_yxtTraineeApplied) { _yxtTraineeApplied = false; try { loadData(); } catch(e) {} }
+                // 故意不推进 _lastCloudSyncAt：那个游标是「整表同步到哪」的标记，这里只拉了部分 key，
+                //   推进它会让本次没拉的 key 永远落在游标后面 → 静默漏数据
+                if (typeof onApplied === 'function') { try { onApplied(); } catch(e) {} }
+                return changed;
+            })
+            .catch(function() { _yxtPanelFailed[panel] = true; return 0; });
+    }
+
+    // 两步走第一步：只问时间戳（几百字节）。
+    // 返回 Promise<要拉的 key 数组>；返回 null = 探测不可信（网络错/形状不对）→ 调用方回落到整份拉。
+    function _yxtPanelProbe(keys) {
+        var url = SUPABASE_URL + '/rest/v1/app_data?select=key,updated_at&key=in.(' + keys.join(',') + ')';
+        return fetch(url, { headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY } })
+            .then(function(r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+            .then(function(rows) {
+                if (!Array.isArray(rows)) return null;
+                var cloud = {};
+                rows.forEach(function(row) { if (row && row.key) cloud[row.key] = row.updated_at || '?'; });
+                var local = _yxtPanelTsGet(), need = [];
+                for (var i = 0; i < keys.length; i++) {
+                    // 云端没有这行 → 'absent'（与记过的 'absent' 相等才跳过）
+                    if (local[keys[i]] !== (cloud[keys[i]] !== undefined ? cloud[keys[i]] : 'absent')) need.push(keys[i]);
+                }
+                return need;
+            })
+            .catch(function() { return null; });
+    }
+
+    // 整份拉（= 2026-09-25 之前的行为）。**成功才重置保险丝** —— 失败时保持原状，
+    //   这样下次进面板还会再试整份拉，而不是被「刚拉过」骗过去。
+    function _yxtPanelFullFetch(panel, keys, onApplied) {
+        return _yxtPanelFetch(panel, keys, onApplied).then(function(n) {
+            if (!_yxtPanelFailed[panel]) _yxtPanelFullPut(panel);
+            return n;
+        });
+    }
+
     // 面板 → 该面板实际读取的云端 key。新增模块时在这里登记一行即可。
     // 多登记只是多一次「本来就没更新」的空请求；少登记则该面板享受不到自动更新（维持现状）。
     // 故意不放进来的：generatedReports（太大，只做兜底）、samplingCardCache（全文件只写不读）、
@@ -23345,44 +23450,19 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
             if (_yxtPanelLastAt[panel] && (Date.now() - _yxtPanelLastAt[panel]) < gap) return;
             _yxtPanelLastAt[panel] = Date.now();
 
-            // 2026-09-15：这里**不再**带 updated_at=gt.游标。面板要的是「这几个 key 现在云端是什么」，
-            //   不是「比某时刻新的」。带游标的两个坑：① 游标一旦被心跳键顶飞（见 _syncPullAll），
-            //   云端真变了也查不回来；② KV 兜底侧的增量剪枝是拿「最多 2 小时前的 key 清单」做的，
-            //   清单里的时间戳是快照，期间变过的 key 被判成没变直接跳过 GET。
-            //   这几个 key 本来就少（最多 6 个，全是小键），每次实拉一遍最稳 ——
-            //   而且 KV 兜底侧对 key=in.(...) 走的是「精确 key 快速通道」，直接 GET 这 6 个、省掉一次 list。
-            var url = SUPABASE_URL + '/rest/v1/app_data?select=*&key=in.(' + keys.join(',') + ')';
-
-            fetch(url, { headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY } })
-                .then(function(r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
-                .then(function(rows) {
-                    _yxtPanelFailed[panel] = false;
-                    if (!Array.isArray(rows) || rows.length === 0) return 0;   // 云端没这几个 key
-                    // ★ 墓碑先于考试数据落地（否则同批里 examHistoryData 会把删掉的考试搬回来）
-                    // 用「真写入次数」判断要不要重画：_yxtApplyCloudRow 返回 true 有两种含义
-                    //   （真写了 / 内容本来就一致），拿返回值数会把「没变」也算成变了 → 每次切模块白重画一遍。
-                    var _w0 = _yxtApplyWrites;
-                    // 学员墓碑同理（2026-09-22）：必须在 trainee_full_admin_backup 和 yxts_* 之前落地，
-                    //   否则同批里名单先到 → loadData() 自愈会把已删的人当「丢了的人」补回来
-                    rows.forEach(function(row) { if (row && (row.key === EXAM_DELETED_KEY || row.key === TRAINEE_DELETED_KEY)) _yxtApplyCloudRow(row); });
-                    rows.forEach(function(row) { _yxtApplyCloudRow(row); });
-                    var changed = _yxtApplyWrites - _w0;
-                    if (!changed) return 0;   // 取值都回来了、但没有一行跟本地不一样 → 不必重画
-                    // ★ 2026-09-16：学员数据必须先灌回内存再重画。
-                    //   loadData() 把 trainee_full_admin_backup 解析进全局数组 students，
-                    //   而 renderFrontend()/renderDashboard() 渲染读的是 students。
-                    //   少了这一步，上面刚写进 localStorage 的新值根本画不出来 ——
-                    //   表现为「切模块永远是旧的，只有点 ☁️（结尾整页 reload）才看得到新的」。
-                    //   启动路径（23479）和登录补拉（22800）早就在落地后调 loadData() 了，这里原来漏了。
-                    //   顺序要求：必须在两个 forEach 落地循环**都跑完之后**调 —— 否则同批里的
-                    //   trainee_data_version 还没写下去，loadData 的版本校验会把刚拉的数据当旧版清掉。
-                    if (_yxtTraineeApplied) { _yxtTraineeApplied = false; try { loadData(); } catch(e) {} }
-                    // 故意不推进 _lastCloudSyncAt：那个游标是「整表同步到哪」的标记，这里只拉了部分 key，
-                    //   推进它会让本次没拉的 key 永远落在游标后面 → 静默漏数据
-                    if (typeof onApplied === 'function') { try { onApplied(); } catch(e) {} }
-                    return changed;
-                })
-                .catch(function() { _yxtPanelFailed[panel] = true; return 0; });
+            // 2026-09-15 那版是「每次实拉一遍最稳」（躲游标被顶飞 / KV 剪枝两个坑）；
+            //   2026-09-25 改成两步走（缘由见上面 _YXT_PANEL_FULL_GAP 那一大段）。
+            //   两个坑由「每个 key 各记各的时间戳 + 失败一律回落整份拉 + 24 小时保险丝」解决。
+            // 保险丝：这个面板太久没整份拉过 → 这次整份拉一次（顺便把时间戳表整体刷一遍）
+            if (Date.now() - (_yxtPanelFullGet()[panel] || 0) > _YXT_PANEL_FULL_GAP) {
+                return _yxtPanelFullFetch(panel, keys, onApplied);
+            }
+            // 两步走第一步：只问时间戳（几百字节）
+            return _yxtPanelProbe(keys).then(function(need) {
+                if (!need) return _yxtPanelFullFetch(panel, keys, onApplied);   // 探测不可信 → 整份拉（安全侧）
+                if (!need.length) return 0;                                     // 都没变 → 一个字节数据都不用下
+                return _yxtPanelFetch(panel, need, onApplied);                  // 只拉真变了的那几个
+            });
         } catch(e) {}
     }
 
