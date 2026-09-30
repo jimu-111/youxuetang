@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <!-- 版本行：每次部署新代码必须 bump 此 content（YYYYMMDD.N），旧设备靠它自检静默升级 -->
-    <meta name="yxt-ver" content="20260928.2">
+    <meta name="yxt-ver" content="20260930.1">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
     <title>优学堂</title>
     <script src="https://cdn.sheetjs.com/xlsx-0.20.2/package/dist/xlsx.full.min.js" defer></script>
@@ -18842,12 +18842,17 @@ URL.revokeObjectURL(url);
             errorDashboardLastRefresh = cache.time ? new Date(cache.time) : new Date();
             return true;
         }
+        // 2026-09-30（流量修复的连带处理）：这个缓存改成只存本机、不再上云（见 saveErrorDashboardCache），
+        //   于是「从没打开过失误看板的新设备 / 清过缓存的设备」本机确实没有这份数据 ——
+        //   原先靠云端那份兜底，现在兜不上了。这里主动去飞书拉一次：
+        //   用户等几秒再点一次就能用，不必先绕去打开「失误分析看板」。
+        try { if (!errorDashboardRefreshing) refreshErrorDashboardData(true); } catch(e) {}
         return false;
     }
 
     function openSiteCasePushModal() {
         if (!isAdminMode()) { showToast('❌ 请先登录管理员', 'warning'); return; }
-        if (!_siteCaseEnsureData()) { showAlert('看板数据未加载。\n请先打开「失误分析看板」，等数据加载完成后再试。', '⚠️'); return; }
+        if (!_siteCaseEnsureData()) { showAlert('看板数据正在从飞书拉取。\n\n请等 3~5 秒后再点一次「📤 推送」。\n（若反复不行，请先打开「失误分析看板」确认飞书授权正常。）', '⏳'); return; }
         var dataTime = errorDashboardLastRefresh ? errorDashboardLastRefresh.toLocaleString('zh-CN') : '未知';
         var curSite = SITE_CASE_SITES[0];
         var ov = document.createElement('div');
@@ -19453,17 +19458,22 @@ URL.revokeObjectURL(url);
                 status: errorDashboardSheetStatus,
                 time: Date.now()
             });
-            // 2026-09-23 流量修复：指纹只覆盖 data + status（**不含 time**）。
-            //   与上次推上去的一样 → 只写本机，不进同步队列（原来每次都推 1.3MB）
-            var sig = _cacheSigOf({ d: errorDashboardData, s: errorDashboardSheetStatus });
-            if (_cachePushedBefore(ERROR_CACHE_SIG_KEY, sig)) {
-                _cacheLocalWrite(ERROR_CACHE_KEY, val);
-                console.log('[流量] 失误看板缓存内容未变，只写本机不上云（省 ' +
-                    (val.length / 1048576).toFixed(2) + 'MB）');
-            } else {
-                localStorage.setItem(ERROR_CACHE_KEY, val);   // 走同步代理 → 入队推送（内容真变了）
-                _cacheMarkPushed(ERROR_CACHE_SIG_KEY, sig);
-            }
+            // 2026-09-30 流量修复（第二阶段）：**这个缓存从此不再上云，只写本机。**
+            //   09-23 那版只做到「内容没变就不推」，但 09-30 实测（30 分钟采样，每 30 秒一次）：
+            //   失误看板的飞书数据**每 5~8 分钟就真变一次** → 一天仍要推约 190 次 × 1.08MB。
+            //   而它躺在 _syncPullAll 的整表增量里（管理员那条排除名单原先只有 generatedReports，
+            //   游客那条也没排它）→ **每台设备每次开页面都要把这 1.08MB 完整重下一遍**，
+            //   学员/收件人点开直链同样拉。实测 30 分钟写入 4.34MB = 205MB/天的「污染量」，
+            //   与线上近 9 天平均 170MB/天、周一推送日 431/473MB 完全对得上。
+            //   它只是一份「免得打开看板白等」的本地缓存，数据来源本来就是飞书
+            //   （看板停留时每 5 分钟自己拉一次，见 16805 之前的 refreshErrorDashboardData），
+            //   云端那份换来的只是「新设备首次打开快几秒」，代价却是全设备反复重下 1MB。
+            //   → 只写本机（_cacheLocalWrite 会过大值时先跑 _lsGuard 腾空间），永不进同步队列。
+            //   ⚠️ 配套两处必须一起改，否则云端那份旧缓存还会被拉下来盖掉本机：
+            //      ① _syncPullAll 管理员分支加进排除名单；② 登记进 YXT_KEY_REGISTRY（游客分支派生）。
+            //   ⚠️ ERROR_CACHE_SIG_KEY 这台机器上从此不再使用，但**不要删** _cacheSig/_cachePushedBefore
+            //      —— savePanzeCache（判责量缓存，162KB）仍在用那一套。
+            _cacheLocalWrite(ERROR_CACHE_KEY, val);
         } catch(e) {}
     }
     function loadErrorDashboardCache() {
@@ -23029,6 +23039,11 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
     var YXT_KEY_REGISTRY = {
         questionBankData:          { guest: false, exam: false },  // 题库（约 0.9MB，绝不能给游客/学员）
         generatedReports:          { guest: false, exam: false },  // 生成的报告 HTML
+        // 2026-09-30 流量修复：失误看板缓存（云端实测 1.08MB，4719 条失误明细的快照）。
+        //   已改成**只存本机、不上云**（见 saveErrorDashboardCache 那段），云端那份从此是死数据。
+        //   这里登记 guest:false 是第二道闸：游客分支的排除名单由本表派生，日后若有人把它加回同步，
+        //   学员/收件人点开直链也不会被白拖这 1MB。
+        errorDashboardCache:       { guest: false, exam: false },
         adminAuditLog:             { guest: false, exam: false },  // 管理操作日志
         trainingPushRecords:       { guest: false, exam: false },
         learnPlanPushRecords:      { guest: false, exam: false },
@@ -23636,7 +23651,10 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
         } else if (mode === 'exam') {
             _pullUrl += '&key=in.(' + _EXAM_KEYS_LIST + ')';
         } else {
-            _pullUrl += '&key=neq.generatedReports';
+            // 2026-09-30 流量修复：errorDashboardCache（1.08MB）也一并排除。
+            //   它已改成只存本机、不上云（见 saveErrorDashboardCache），云端那份是死数据；
+            //   不排它的话，每台设备每次开页面仍会把它拉下来盖掉本机的新缓存，白烧 1MB。
+            _pullUrl += '&key=not.in.(generatedReports,errorDashboardCache)';
         }
         if (!force && _lastSyncAt) _pullUrl += '&updated_at=gt.' + encodeURIComponent(_lastSyncAt);
         var _maxCloudUpdated = null;
