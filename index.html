@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <!-- 版本行：每次部署新代码必须 bump 此 content（YYYYMMDD.N），旧设备靠它自检静默升级 -->
-    <meta name="yxt-ver" content="20260930.1">
+    <meta name="yxt-ver" content="20261002.1">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
     <title>优学堂</title>
     <script src="https://cdn.sheetjs.com/xlsx-0.20.2/package/dist/xlsx.full.min.js" defer></script>
@@ -18850,6 +18850,205 @@ URL.revokeObjectURL(url);
         return false;
     }
 
+    // ==================== 案例库「按失误类别」推送通道（2026-10-02） ====================
+    // 与上面「按失误次数」那条独立并行：那条一字不动，这里全是新增。
+    // 规则（用户 2026-09-30 逐条定稿）：
+    //   ① 失误按「类别字段」归堆（不从备注再猜类别）→ 少于 3 条的类别整类砍掉、名额补给其他类别
+    //   ② 目标总数 20 条：按占比四舍五入分到各类，每类至少 1 条；总数锁死 20（超了从当前最大的扣、少了给最大的加）
+    //   ③ 挑案例：拿失误备注比案例的「问题点描述」(权重 0.7) +「正确方向」(权重 0.3)，相似度高的优先；
+    //      先在同一类别的案例里挑、不够才扩大到全案例池；相似度差 ±5% 以内时有配图的优先；一份报告里案例不重复
+    //   ④ 案例不够就降档 20 → 18 → 16（最低 16）；连 16 都凑不满，用「案例库出现频次最多且有图」的填充，填充 ≤15%
+    //   ⑤ 收件人由用户手选（各站点常用 2 人置顶），不走「失误 ≥6 次的人」逻辑
+    var SITE_CASE_CAT_TOTAL = 20;          // 目标条数（每站各 20）
+    var SITE_CASE_CAT_MIN_ERR = 3;         // 失误数少于它的类别整类砍掉
+    var SITE_CASE_CAT_MIN_KEEP = 16;       // 降档最低条数
+    var SITE_CASE_CAT_FILL_PCT = 0.15;     // 兜底填充上限（占总目标的比例）
+    var SITE_CASE_CAT_W_DESC = 0.7;        // 相似度权重：问题点描述（高于正确方向）
+    var SITE_CASE_CAT_W_DIR = 0.3;         // 相似度权重：正确方向
+    var SITE_CASE_CAT_TIE = 0.05;          // 相似度差在 ±5% 以内 → 有配图的优先
+    var SITE_CASE_CAT_MAX_NOTES = 40;      // 每类最多参与匹配的失误备注条数（性能保护）
+    var SITE_CASE_CAT_TEXT_MAX = 60;       // 参与相似度计算的文本截断长度（性能保护）
+    var SITE_CASE_TOP_RECIPIENTS = {       // 选人弹窗置顶（各站点常用收件人）
+        '成都': ['徐行', '周金山'], '青岛': ['孙伟', '苏超跃'], '深圳': ['孙俊', '邹文文']
+    };
+
+    // 案例是否有配图（问题照片 / 方向照片 / 方向示例补充照片，任一有即算）
+    function _sccHasPhoto(c) {
+        return !!((c.issuePhotos && c.issuePhotos.length) || (c.dirPhotos && c.dirPhotos.length) || (c.dirExamplePhotos && c.dirExamplePhotos.length));
+    }
+
+    // 案例是否属于某失误类别：案例的 errorCategory 可能是「A,B」这种多类别写法（库里现有 3 条），要拆开比。
+    // ⚠️ 分隔符只认逗号/顿号 —— 类别名本身含「/」（如「拍照/取证不规范」），把它当分隔符会拆坏。
+    function _sccCaseInCat(c, cat) {
+        var ec = String(c.errorCategory || '');
+        if (!ec) return false;
+        if (ec === cat) return true;
+        if (ec.indexOf(',') < 0 && ec.indexOf('，') < 0 && ec.indexOf('、') < 0) return false;
+        return ec.split(/[,，、]/).map(function(s) { return s.trim(); }).indexOf(cat) >= 0;
+    }
+
+    // 案例预加工：把参与比较的两个字段规范化+截断一次算好（同一案例会被多条备注反复比较）
+    function _sccPrepare(c, i) {
+        return {
+            i: i, c: c,
+            d: _normNoteText(c.issueDesc).slice(0, SITE_CASE_CAT_TEXT_MAX),
+            r: _normNoteText(c.correctDir).slice(0, SITE_CASE_CAT_TEXT_MAX),
+            ph: _sccHasPhoto(c) ? 1 : 0
+        };
+    }
+    function _sccScoreP(n, p) {
+        var d = p.d ? chineseTextSimilar(n, p.d) : 0;
+        var r = p.r ? chineseTextSimilar(n, p.r) : 0;
+        return d * SITE_CASE_CAT_W_DESC + r * SITE_CASE_CAT_W_DIR;
+    }
+    // 排序：分高的在前；分差在 ±5% 以内 → 有配图的优先
+    function _sccCmp(a, b) {
+        if (Math.abs(a.s - b.s) > SITE_CASE_CAT_TIE) return b.s - a.s;
+        if (a.ph !== b.ph) return b.ph - a.ph;
+        return b.s - a.s;
+    }
+
+    // 备注池：空的/「-」剔除、同文去重、出现多的排在前、条数与长度都设上限
+    function _sccNotesOf(errs) {
+        var cnt = {}, order = [];
+        (errs || []).forEach(function(e) {
+            var t = _normNoteText(e.note);
+            if (!t || t === '-') return;
+            if (!cnt[t]) { cnt[t] = 0; order.push(t); }
+            cnt[t]++;
+        });
+        order.sort(function(a, b) { return cnt[b] - cnt[a]; });
+        return order.slice(0, SITE_CASE_CAT_MAX_NOTES).map(function(t) { return String(t).slice(0, SITE_CASE_CAT_TEXT_MAX); });
+    }
+
+    // 配额分配：四舍五入 + 每类保底 1 条 + 总数锁死 target（多了从当前配额最大的扣、少了给失误最多的加）
+    function _sccAllocQuota(catCounts, target) {
+        var cats = Object.keys(catCounts);
+        if (!cats.length) return null;
+        if (cats.length > target) {                       // 防御：类别数比目标条数还多（正常不会发生）
+            cats.sort(function(a, b) { return catCounts[b] - catCounts[a]; });
+            var keep = {};
+            cats.slice(0, target).forEach(function(c) { keep[c] = catCounts[c]; });
+            catCounts = keep; cats = Object.keys(keep);
+        }
+        var total = 0;
+        cats.forEach(function(c) { total += catCounts[c]; });
+        var quota = {}, sum = 0;
+        cats.forEach(function(c) {
+            var q = total > 0 ? Math.max(1, Math.round(catCounts[c] / total * target + 1e-9)) : 1;
+            quota[c] = q; sum += q;
+        });
+        var guard = 0;
+        while (sum > target && guard++ < 500) {
+            var mx = null;
+            cats.forEach(function(c) { if (quota[c] > 1 && (!mx || quota[c] > quota[mx])) mx = c; });
+            if (!mx) break;
+            quota[mx]--; sum--;
+        }
+        while (sum < target && guard++ < 500) {
+            var big = null;
+            cats.forEach(function(c) { if (!big || catCounts[c] > catCounts[big]) big = c; });
+            quota[big]++; sum++;
+        }
+        return quota;
+    }
+
+    // 从候选池里按相似度取 need 个不重复案例（跳过 pickedIdx 里已选的）
+    function _sccTake(notes, candidates, need, pickedIdx) {
+        if (need <= 0 || !candidates.length) return [];
+        var rows = [];
+        if (!notes.length) {                      // 没有可用备注 → 比不了相似度，按案例库原顺序取（类别仍对得上）
+            candidates.forEach(function(p) {
+                if (!pickedIdx[p.i]) rows.push({ i: p.i, c: p.c, s: 0, ph: p.ph });
+            });
+        } else {
+            notes.forEach(function(n) {
+                candidates.forEach(function(p) {
+                    if (pickedIdx[p.i]) return;
+                    rows.push({ i: p.i, c: p.c, s: _sccScoreP(n, p), ph: p.ph });
+                });
+            });
+        }
+        rows.sort(_sccCmp);
+        var out = [], seen = {};
+        for (var k = 0; k < rows.length && out.length < need; k++) {
+            var r = rows[k];
+            if (seen[r.i]) continue;
+            seen[r.i] = 1;
+            out.push(r);
+        }
+        return out;
+    }
+
+    // 单次尝试：给定目标条数 target，按类别配额挑案例
+    function _sccPickAt(allErrors, allCases, target) {
+        var byCat = {}, catCounts = {}, dropped = {};
+        (allErrors || []).forEach(function(e) {
+            var cat = String(e.category || '').trim();
+            if (!cat || cat === '-') return;
+            (byCat[cat] = byCat[cat] || []).push(e);
+        });
+        Object.keys(byCat).forEach(function(c) {
+            if (byCat[c].length >= SITE_CASE_CAT_MIN_ERR) catCounts[c] = byCat[c].length;
+            else dropped[c] = byCat[c].length;
+        });
+        if (!Object.keys(catCounts).length) {
+            return { ok: false, reason: '该站点该周期内没有「失误 ≥ ' + SITE_CASE_CAT_MIN_ERR + ' 条」的类别，按类别通道无可推送内容' };
+        }
+        var quota = _sccAllocQuota(catCounts, target);
+        var pool = (allCases || []).map(function(c, i) { return _sccPrepare(c, i); });
+        var picked = [], pickedIdx = {}, shortCats = {};
+        Object.keys(quota).sort(function(a, b) { return quota[b] - quota[a]; }).forEach(function(cat) {
+            var notes = _sccNotesOf(byCat[cat]);
+            var same = pool.filter(function(p) { return _sccCaseInCat(p.c, cat); });
+            var got = _sccTake(notes, same, quota[cat], pickedIdx);
+            got.forEach(function(g) { pickedIdx[g.i] = 1; });
+            if (got.length < quota[cat]) {                        // 同类别案例不够 → 扩大到全案例池
+                var more = _sccTake(notes, pool, quota[cat] - got.length, pickedIdx);
+                more.forEach(function(g) { pickedIdx[g.i] = 1; });
+                got = got.concat(more);
+            }
+            if (got.length < quota[cat]) shortCats[cat] = quota[cat] - got.length;
+            got.forEach(function(g) { picked.push(g); });
+        });
+        return { ok: true, picked: picked, quota: quota, catCounts: catCounts, dropped: dropped, shortCats: shortCats, target: target };
+    }
+
+    // 兜底填充：案例库里同一质检码出现次数最多、且有配图的（不看类别）
+    function _sccFillCases(allCases, need, excludeIdx) {
+        if (need <= 0) return [];
+        var freq = {};
+        (allCases || []).forEach(function(c) { if (c.qcCode) freq[c.qcCode] = (freq[c.qcCode] || 0) + 1; });
+        var cand = [];
+        (allCases || []).forEach(function(c, i) {
+            if (excludeIdx[i] || !_sccHasPhoto(c)) return;
+            cand.push({ i: i, c: c, s: 0, ph: 1, fill: true, freq: freq[c.qcCode] || 1 });
+        });
+        cand.sort(function(a, b) { return b.freq - a.freq; });
+        return cand.slice(0, need);
+    }
+
+    // 主挑选：20 → 18 → 16 依次尝试；都凑不满则用「高频且有图」的案例填充（≤15%）
+    function _sccPickAll(allErrors, allCases) {
+        var levels = [SITE_CASE_CAT_TOTAL, SITE_CASE_CAT_TOTAL - 2, SITE_CASE_CAT_MIN_KEEP];
+        var last = null;
+        for (var i = 0; i < levels.length; i++) {
+            var r = _sccPickAt(allErrors, allCases, levels[i]);
+            if (!r.ok) return r;
+            last = r;
+            r.filled = 0;
+            if (r.picked.length >= levels[i]) return r;          // 这一档凑满了
+        }
+        var maxFill = Math.max(1, Math.round(SITE_CASE_CAT_TOTAL * SITE_CASE_CAT_FILL_PCT));
+        var need = Math.min(maxFill, Math.max(0, SITE_CASE_CAT_MIN_KEEP - last.picked.length));
+        var idxSet = {};
+        last.picked.forEach(function(p) { idxSet[p.i] = 1; });
+        var fill = _sccFillCases(allCases, need, idxSet);
+        last.picked = last.picked.concat(fill);
+        last.filled = fill.length;
+        return last;
+    }
+
     function openSiteCasePushModal() {
         if (!isAdminMode()) { showToast('❌ 请先登录管理员', 'warning'); return; }
         if (!_siteCaseEnsureData()) { showAlert('看板数据正在从飞书拉取。\n\n请等 3~5 秒后再点一次「📤 推送」。\n（若反复不行，请先打开「失误分析看板」确认飞书授权正常。）', '⏳'); return; }
@@ -18860,15 +19059,40 @@ URL.revokeObjectURL(url);
         ov.innerHTML = '<div class="modal-container" style="max-width:520px;">' +
             '<div class="modal-header">📤 站点培训案例推送<button class="modal-close-btn" id="scpClose">✕</button></div>' +
             '<div class="modal-body" style="padding:16px;">' +
-                '<div style="font-size:0.72rem;color:#94a3b8;margin-bottom:10px;">数据时间：' + escapeHtml(dataTime) +
-                  '（非最新请先刷新看板）｜ 阈值：失误 ≥ ' + SITE_CASE_TRAIN_MIN + ' 次｜ 案例类型：仅「培训案例」</div>' +
-                '<div id="scpSites" style="display:flex;gap:8px;margin-bottom:14px;"></div>' +
-                '<div style="font-weight:600;color:#1f3a6b;font-size:0.85rem;margin-bottom:8px;">选择周（最近 4 周）</div>' +
-                '<div id="scpWeeks"></div>' +
+                '<div id="scpChanTabs" style="display:flex;gap:8px;margin-bottom:14px;"></div>' +
+                '<div id="scpCh1">' +
+                    '<div style="font-size:0.72rem;color:#94a3b8;margin-bottom:10px;">数据时间：' + escapeHtml(dataTime) +
+                      '（非最新请先刷新看板）｜ 阈值：失误 ≥ ' + SITE_CASE_TRAIN_MIN + ' 次｜ 案例类型：仅「培训案例」</div>' +
+                    '<div id="scpSites" style="display:flex;gap:8px;margin-bottom:14px;"></div>' +
+                    '<div style="font-weight:600;color:#1f3a6b;font-size:0.85rem;margin-bottom:8px;">选择周（最近 4 周）</div>' +
+                    '<div id="scpWeeks"></div>' +
+                '</div>' +
+                '<div id="scpCh2" style="display:none;"></div>' +
             '</div></div>';
         document.body.appendChild(ov);
         ov.querySelector('#scpClose').onclick = function() { ov.remove(); };
         ov.onclick = function(e) { if (e.target === ov) ov.remove(); };
+
+        // ---- 两个通道切换：① 按失误次数（原有那套，逻辑一字未动）② 按失误类别（2026-10-02 新增）----
+        var _scpCh = 1, _sccPainted = false;
+        function _scpPaintChans() {
+            ov.querySelector('#scpCh1').style.display = _scpCh === 1 ? '' : 'none';
+            ov.querySelector('#scpCh2').style.display = _scpCh === 2 ? '' : 'none';
+            ov.querySelectorAll('#scpChanTabs button').forEach(function(b) {
+                var on = String(_scpCh) === b.dataset.ch;
+                b.style.background = on ? '#1f3a6b' : '#f8fafc';
+                b.style.color = on ? '#fff' : '#1f3a6b';
+                b.style.borderColor = on ? '#1f3a6b' : '#e2e8f0';
+            });
+            if (_scpCh === 2 && !_sccPainted) { _sccPainted = true; _sccRenderChannel(ov.querySelector('#scpCh2')); }
+        }
+        ov.querySelector('#scpChanTabs').innerHTML =
+            '<button data-ch="1" style="flex:1;padding:9px;border-radius:12px;cursor:pointer;font-weight:600;font-size:0.82rem;border:1px solid #e2e8f0;">① 按失误次数</button>' +
+            '<button data-ch="2" style="flex:1;padding:9px;border-radius:12px;cursor:pointer;font-weight:600;font-size:0.82rem;border:1px solid #e2e8f0;">② 按失误类别</button>';
+        ov.querySelectorAll('#scpChanTabs button').forEach(function(b) {
+            b.onclick = function() { _scpCh = parseInt(b.dataset.ch, 10); _scpPaintChans(); };
+        });
+        _scpPaintChans();
 
         function renderSites() {
             ov.querySelector('#scpSites').innerHTML = SITE_CASE_SITES.map(function(s) {
@@ -19059,7 +19283,7 @@ URL.revokeObjectURL(url);
     function _showSiteCasePushResult(info, host) {
         var kvText = _scpKvText(info.kv);
         var inner = '<div style="border-top:1px dashed #e2e8f0;margin-top:12px;padding-top:10px;font-size:0.82rem;line-height:1.7;">' +
-                '<div>' + escapeHtml(info.weekLabel) + '｜匹配案例 <b>' + info.caseCount + '</b> 个｜待培训 <b>' + info.people.length + '</b> 人</div>' +
+                '<div>' + escapeHtml(info.weekLabel) + '｜匹配案例 <b>' + info.caseCount + '</b> 个' + (info.people ? '｜待培训 <b>' + info.people.length + '</b> 人' : '') + '</div>' +
                 '<div style="margin-top:6px;">✅ 成功 <b style="color:#27ae60;">' + info.okTargets.length + '</b> 人' +
                     (info.okTargets.length ? '：' + info.okTargets.map(function(t) { return escapeHtml(t.name); }).join('、') : '') + '</div>' +
                 (info.failTargets.length ? '<div style="color:#c0392b;">❌ 失败 ' + info.failTargets.length + ' 人：' + info.failTargets.map(function(t) { return escapeHtml(t.name) + '(' + escapeHtml(t.email) + ')'; }).join('、') + '</div>' : '') +
@@ -19096,8 +19320,363 @@ URL.revokeObjectURL(url);
         };
         ov.querySelector('#scrAgain').onclick = function() {
             ov.remove();
-            runSiteCaseTrainingPush(info.site, info.monday, info.sunday, info.weekLabel);
+            if (typeof info.retryFn === 'function') info.retryFn();
+            else runSiteCaseTrainingPush(info.site, info.monday, info.sunday, info.weekLabel);
         };
+    }
+
+    // ==================== 「按失误类别」通道：界面 + 主流程（2026-10-02） ====================
+
+    // 月度报告期：上月 27 号 ~ 本月 26 号（例：10 月报告 = 9/27~10/26）
+    function _sccMonthRange(monthsAgo) {
+        var now = new Date();
+        var end = new Date(now.getFullYear(), now.getMonth() - (monthsAgo || 0), 26);
+        var start = new Date(end.getFullYear(), end.getMonth() - 1, 27);
+        return {
+            start: start, end: end,
+            label: (end.getMonth() + 1) + '月报告期',
+            name: end.getFullYear() + '-' + (end.getMonth() + 1) + '月',
+            complete: now > end
+        };
+    }
+
+    // 一个周期内的「按类别」速览：几个类别、共几条失误（只统计 ≥ MIN_ERR 的类别）
+    function _sccCatBrief(errors) {
+        var cnt = {};
+        (errors || []).forEach(function(e) {
+            var c = String(e.category || '').trim();
+            if (!c || c === '-') return;
+            cnt[c] = (cnt[c] || 0) + 1;
+        });
+        var kept = Object.keys(cnt).filter(function(c) { return cnt[c] >= SITE_CASE_CAT_MIN_ERR; })
+            .sort(function(a, b) { return cnt[b] - cnt[a]; });
+        var total = 0;
+        kept.forEach(function(c) { total += cnt[c]; });
+        return { cats: kept.length, total: total, kept: kept, all: cnt };
+    }
+
+    // 渲染「按失误类别」通道（挂进推送弹窗的第二个 tab）
+    function _sccRenderChannel(box) {
+        var st = { site: SITE_CASE_SITES[0], mode: 'week' };
+        var items = [];
+
+        function rangeBtn(i, label, brief) {
+            var dis = brief.cats === 0;
+            var sub = dis ? '' : '<div style="font-size:0.7rem;color:#5e6f8d;margin-top:3px;">' +
+                brief.kept.slice(0, 5).map(escapeHtml).join('、') + (brief.kept.length > 5 ? ' 等 ' + brief.kept.length + ' 类' : '') + '</div>';
+            return '<button data-i="' + i + '" ' + (dis ? 'disabled' : '') + ' style="display:block;width:100%;text-align:left;padding:11px 14px;margin-bottom:8px;border-radius:12px;border:1px solid #e2e8f0;background:' + (dis ? '#f8fafc' : '#fff') + ';cursor:' + (dis ? 'default' : 'pointer') + ';font-size:0.85rem;' + (dis ? 'opacity:0.45;' : '') + '">' +
+                label + ' · <b>' + brief.cats + '</b> 个类别 / <b>' + brief.total + '</b> 条失误' + sub + '</button>';
+        }
+        function paintSites() {
+            var el = box.querySelector('#sccSites');
+            if (!el) return;
+            el.innerHTML = SITE_CASE_SITES.map(function(s) {
+                var on = s === st.site;
+                return '<button data-site="' + s + '" style="flex:1;padding:10px;border-radius:12px;cursor:pointer;font-weight:600;font-size:0.85rem;' +
+                    (on ? 'background:#1f3a6b;color:#fff;border:1px solid #1f3a6b;' : 'background:#f8fafc;color:#1f3a6b;border:1px solid #e2e8f0;') + '">' + s + '</button>';
+            }).join('');
+            el.querySelectorAll('button').forEach(function(b) {
+                b.onclick = function() { st.site = b.dataset.site; paintSites(); paintRanges(); };
+            });
+        }
+        function paintModes() {
+            var el = box.querySelector('#sccModes');
+            if (!el) return;
+            var defs = [{ k: 'week', t: '按周（选一周）' }, { k: 'month', t: '按月（27号~26号）' }];
+            el.innerHTML = defs.map(function(d) {
+                var on = d.k === st.mode;
+                return '<button data-m="' + d.k + '" style="flex:1;padding:9px;border-radius:12px;cursor:pointer;font-weight:600;font-size:0.82rem;' +
+                    (on ? 'background:#2a5298;color:#fff;border:1px solid #2a5298;' : 'background:#f8fafc;color:#1f3a6b;border:1px solid #e2e8f0;') + '">' + d.t + '</button>';
+            }).join('');
+            el.querySelectorAll('button').forEach(function(b) {
+                b.onclick = function() { st.mode = b.dataset.m; paintModes(); paintRanges(); };
+            });
+        }
+        function paintRanges() {
+            var el = box.querySelector('#sccRanges');
+            if (!el) return;
+            items = [];
+            var rows = '';
+            if (st.mode === 'week') {
+                for (var w = 0; w < 4; w++) {
+                    var r = getSiteWeekRange(w);
+                    var brief = _sccCatBrief(getSiteWeekErrors(st.site, r.monday, r.sunday));
+                    items.push({ start: r.monday, end: r.sunday, kind: 'week' });
+                    rows += rangeBtn(w, (w === 0 ? '📌 ' : '📅 ') + getWeekLabel(r.monday) + '（' + formatShortDate(r.monday) + '~' + formatShortDate(r.sunday) + '）', brief);
+                }
+            } else {
+                for (var m = 0; m < 3; m++) {
+                    var mr = _sccMonthRange(m);
+                    var brief2 = _sccCatBrief(getSiteWeekErrors(st.site, mr.start, mr.end));
+                    items.push({ start: mr.start, end: mr.end, kind: 'month', name: mr.name, label: mr.label });
+                    rows += rangeBtn(m, '📆 ' + mr.label + '（' + formatShortDate(mr.start) + '~' + formatShortDate(mr.end) + '）' + (mr.complete ? '' : ' · 进行中'), brief2);
+                }
+            }
+            el.innerHTML = rows;
+            el.querySelectorAll('button[data-i]').forEach(function(b) {
+                if (b.disabled) return;
+                b.onclick = function() {
+                    var it = items[parseInt(b.dataset.i, 10)];
+                    var rlabel, rname;
+                    if (it.kind === 'week') {
+                        rlabel = getWeekLabel(it.start) + '（' + formatShortDate(it.start) + '~' + formatShortDate(it.end) + '）';
+                        rname = '分类培训案例_' + st.site + '_' + formatDate(it.start);
+                    } else {
+                        rlabel = it.label + '（' + formatShortDate(it.start) + '~' + formatShortDate(it.end) + '）';
+                        rname = '分类培训案例_' + st.site + '_' + it.name;
+                    }
+                    var host = box.closest ? box.closest('.modal-overlay') : null;   // 关掉推送弹窗本身，与通道一行为一致
+                    if (host) host.remove();
+                    _sccStart(st.site, it.start, it.end, rlabel, rname);
+                };
+            });
+        }
+        box.innerHTML =
+            '<div style="font-size:0.72rem;color:#94a3b8;margin-bottom:10px;">失误按「类别字段」归堆、按占比分条数（目标 ' + SITE_CASE_CAT_TOTAL + ' 条，凑不满降到 ' + (SITE_CASE_CAT_TOTAL - 2) + ' / ' + SITE_CASE_CAT_MIN_KEEP + '）｜ 少于 ' + SITE_CASE_CAT_MIN_ERR + ' 条的类别整类不推</div>' +
+            '<div id="sccSites" style="display:flex;gap:8px;margin-bottom:10px;"></div>' +
+            '<div id="sccModes" style="display:flex;gap:8px;margin-bottom:10px;"></div>' +
+            '<div id="sccRanges"></div>';
+        paintSites(); paintModes(); paintRanges();
+    }
+
+    // 点了某个周期：取数 → 按类别挑案例 → 弹「选收件人」窗
+    function _sccStart(site, start, end, rangeLabel, reportName) {
+        if (!isAdminMode()) { showToast('❌ 请先登录管理员', 'warning'); return; }
+        showToast('⏳ 正在按类别挑选案例…');
+        setTimeout(function() {
+            try {
+                var errors = getSiteWeekErrors(site, start, end);
+                var cases = getManualCases();                       // 只需文本字段；带图的完整版在生成报告时再取
+                var pick = _sccPickAll(errors, cases);
+                if (!pick.ok) { showAlert(pick.reason + '。', '⚠️'); return; }
+                if (!pick.picked.length) { showAlert('案例库里没有可用案例（或该周期一条都没挑出来），无法生成报告。', '⚠️'); return; }
+                _sccOpenRecipientPicker(site, { start: start, end: end, rangeLabel: rangeLabel, reportName: reportName, pick: pick });
+            } catch(e) {
+                showAlert('挑选案例出错：' + (e.message || e), '⚠️');
+            }
+        }, 60);
+    }
+
+    // 选收件人（全体邮箱名单；本站常用 2 人置顶并默认勾选）
+    function _sccOpenRecipientPicker(site, ctx) {
+        var emails = getPersonnelEmails();
+        var names = Object.keys(emails).filter(function(n) { return emails[n] && String(emails[n]).indexOf('@') > 0; });
+        if (!names.length) { showAlert('邮箱名单为空，请先在「管理 → 邮箱地址管理」补充收件人邮箱。', '⚠️'); return; }
+        var top = (SITE_CASE_TOP_RECIPIENTS[site] || []).filter(function(n) { return names.indexOf(n) >= 0; });
+        var sel = {};
+        top.forEach(function(n) { sel[n] = 1; });
+        var pick = ctx.pick;
+
+        var ov = document.createElement('div');
+        ov.className = 'modal-overlay'; ov.style.zIndex = '3000';
+        document.body.appendChild(ov);
+        ov.onclick = function(e) { if (e.target === ov) ov.remove(); };
+
+        var catRows = Object.keys(pick.quota).sort(function(a, b) { return pick.quota[b] - pick.quota[a]; }).map(function(c) {
+            var short = (pick.shortCats && pick.shortCats[c]) ? '<span style="color:#e67e22;">（缺 ' + pick.shortCats[c] + '）</span>' : '';
+            return escapeHtml(c) + '<span style="color:#94a3b8;">(' + pick.catCounts[c] + '→' + pick.quota[c] + ')' + short + '</span>';
+        }).join('　');
+        var dropped = Object.keys(pick.dropped || {});
+        ov.innerHTML = '<div class="modal-container" style="max-width:560px;">' +
+            '<div class="modal-header">📤 按失误类别推送 · ' + escapeHtml(site) + '<button class="modal-close-btn" id="sccClose">✕</button></div>' +
+            '<div class="modal-body" style="padding:16px;">' +
+                '<div style="background:#f8fafc;border-radius:12px;padding:12px;font-size:0.8rem;line-height:1.7;">' +
+                    '<div><b>周期：</b>' + escapeHtml(ctx.rangeLabel) + '</div>' +
+                    '<div><b>输出：</b><span style="color:#27ae60;font-weight:700;">' + pick.picked.length + '</span> 条案例' +
+                        '（目标 ' + SITE_CASE_CAT_TOTAL + '）' +
+                        (pick.filled ? '<span style="color:#e67e22;font-size:0.72rem;"> · 其中 ' + pick.filled + ' 条为高频案例兜底填充</span>' : '') + '</div>' +
+                    '<div style="margin-top:6px;font-size:0.72rem;color:#5e6f8d;"><b>类别分配：</b>' + catRows + '</div>' +
+                    (dropped.length ? '<div style="font-size:0.72rem;color:#94a3b8;margin-top:2px;">已剔除（失误 &lt; ' + SITE_CASE_CAT_MIN_ERR + ' 条）：' + dropped.map(function(c) { return escapeHtml(c) + '(' + pick.dropped[c] + ')'; }).join('、') + '</div>' : '') +
+                '</div>' +
+                '<div style="margin-top:14px;font-weight:600;color:#1f3a6b;font-size:0.85rem;">选择收件人 <span id="sccSelCount" style="color:#2a5298;"></span></div>' +
+                '<div style="font-size:0.72rem;color:#94a3b8;margin-top:2px;">⭐ 为本站点常用收件人（已默认勾选）</div>' +
+                '<input id="sccSearch" placeholder="🔍 搜索姓名或邮箱…" style="width:100%;box-sizing:border-box;padding:9px 12px;border:1px solid #e2e8f0;border-radius:10px;margin-top:8px;font-size:0.85rem;">' +
+                '<div id="sccList" style="max-height:250px;overflow:auto;margin-top:8px;border:1px solid #eef2f6;border-radius:12px;"></div>' +
+                '<div style="display:flex;gap:8px;margin-top:14px;">' +
+                    '<button id="sccCancel" style="flex:1;background:#f1f5f9;border:1px solid #cbd5e1;padding:11px;border-radius:20px;cursor:pointer;">取消</button>' +
+                    '<button id="sccGo" style="flex:2;background:#2a5298;color:#fff;border:none;padding:11px;border-radius:20px;cursor:pointer;font-weight:600;">📤 生成并推送</button>' +
+                '</div>' +
+            '</div></div>';
+
+        function rowHtml(n, isTop) {
+            return '<label style="display:flex;align-items:center;gap:9px;padding:8px 12px;border-bottom:1px solid #f1f5f9;cursor:pointer;font-size:0.82rem;">' +
+                '<input type="checkbox" data-n="' + escapeHtml(n) + '" ' + (sel[n] ? 'checked' : '') + ' style="width:16px;height:16px;flex:none;">' +
+                (isTop ? '<span title="本站常用">⭐</span>' : '') +
+                '<span style="font-weight:600;color:#1f3a6b;flex:none;">' + escapeHtml(n) + '</span>' +
+                '<span style="color:#94a3b8;font-size:0.7rem;margin-left:auto;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + escapeHtml(emails[n]) + '</span>' +
+            '</label>';
+        }
+        function paintList() {
+            var kw = String(ov.querySelector('#sccSearch').value || '').trim().toLowerCase();
+            function hit(n) { return !kw || n.toLowerCase().indexOf(kw) >= 0 || String(emails[n]).toLowerCase().indexOf(kw) >= 0; }
+            var topHit = top.filter(hit), restHit = names.filter(function(n) { return top.indexOf(n) < 0 && hit(n); });
+            var html = '';
+            if (topHit.length) html += '<div style="padding:5px 12px;font-size:0.68rem;color:#94a3b8;background:#fafcfd;">常用收件人</div>' + topHit.map(function(n) { return rowHtml(n, true); }).join('');
+            html += '<div style="padding:5px 12px;font-size:0.68rem;color:#94a3b8;background:#fafcfd;">全部名单（' + restHit.length + '）</div>' + restHit.map(function(n) { return rowHtml(n, false); }).join('');
+            ov.querySelector('#sccList').innerHTML = html || '<div style="padding:14px;color:#94a3b8;font-size:0.8rem;text-align:center;">没有匹配的人</div>';
+            ov.querySelectorAll('#sccList input[type=checkbox]').forEach(function(cb) {
+                cb.onchange = function() { if (cb.checked) sel[cb.dataset.n] = 1; else delete sel[cb.dataset.n]; paintCount(); };
+            });
+            paintCount();
+        }
+        function paintCount() {
+            var n = names.filter(function(x) { return sel[x]; }).length;
+            var el = ov.querySelector('#sccSelCount');
+            if (el) el.textContent = '（已选 ' + n + ' 人）';
+        }
+        ov.querySelector('#sccClose').onclick = function() { ov.remove(); };
+        ov.querySelector('#sccCancel').onclick = function() { ov.remove(); };
+        ov.querySelector('#sccSearch').oninput = paintList;
+        ov.querySelector('#sccGo').onclick = function() {
+            var chosen = names.filter(function(n) { return sel[n]; });
+            if (!chosen.length) { showToast('⚠️ 请至少选一位收件人', 'warning'); return; }
+            var targets = chosen.map(function(n) { return { name: n, email: emails[n] }; });
+            ov.remove();
+            runSiteCaseCatPush(site, ctx, targets);
+        };
+        paintList();
+    }
+
+    // 生成「按类别」培训报告（样式与现有培训报告一致，卡片字段也一致）
+    function _sccBuildDoc(pick, meta) {
+        var full = meta.fullCases || [];
+        var cards = '', n = 0;
+        (pick.picked || []).forEach(function(p) {
+            var c = full[p.i] || p.c;
+            if (!c) return;
+            n++;
+            cards += "<div class=\"case-card\"><div class=\"qc-code\">🔖 质检码：" + escapeHtml(c.qcCode) + " | 🏷️ " + escapeHtml(c.errorCategory || "") + "</div>" +
+            "<div class=\"label\">📝 问题描述</div><div class=\"desc\">" + escapeHtml(c.issueDesc || "") + "</div>";
+            if (c.issuePhotos && c.issuePhotos.length > 0) {
+                cards += "<div class=\"label\">📷 问题照片</div>" + c.issuePhotos.map(function(x) { return photoTag(x, 400, 400); }).join("");
+            }
+            cards += "<div class=\"label\">✅ 应操作方向</div><div class=\"correct\">" + escapeHtml(c.correctDir || "") + "</div>";
+            if (c.dirPhotos && c.dirPhotos.length > 0) {
+                cards += "<div class=\"label\">📷 方向示例照片</div>" + c.dirPhotos.map(function(x) { return photoTag(x, 400, 400); }).join("");
+            }
+            if (c.dirExamplePhotos && c.dirExamplePhotos.length > 0) {
+                cards += "<div class=\"label\">📸 方向示例补充照片</div>" + c.dirExamplePhotos.map(function(x) { return photoTag(x, 400, 400); }).join("");
+            }
+            cards += "</div>";
+        });
+        if (n === 0) return { ok: false, reason: '没有可输出的案例' };
+        // 类小计（按案例的实际类别数）
+        var catCnt = {};
+        (pick.picked || []).forEach(function(p) {
+            var c = full[p.i] || p.c;
+            if (!c) return;
+            var ec = String(c.errorCategory || '未分类');
+            catCnt[ec] = (catCnt[ec] || 0) + 1;
+        });
+        var catText = Object.keys(catCnt).sort(function(a, b) { return catCnt[b] - catCnt[a]; })
+            .map(function(k) { return escapeHtml(k) + ' ' + catCnt[k] + ' 条'; }).join('　');
+        var docHtml = "<!DOCTYPE html><html><head><meta charset=\"UTF-8\"><title>培训资料</title>" +
+        "<style>body{font-family:Microsoft YaHei,SimHei,sans-serif;padding:40px;max-width:900px;margin:0 auto;color:#333;}" +
+        "h1{color:#1f3a6b;border-bottom:3px solid #2a5298;padding-bottom:12px;}" +
+        ".case-card{border:1px solid #eef2f6;border-radius:16px;padding:20px;margin:20px 0;background:#fafcfd;}" +
+        ".qc-code{font-size:1.1rem;font-weight:700;color:#1f3a6b;margin-bottom:8px;}" +
+        ".label{font-weight:600;color:#5e6f8d;font-size:0.85rem;margin-top:14px;margin-bottom:6px;}" +
+        ".desc{line-height:1.7;color:#4a5568;}img{max-width:100%;border-radius:10px;margin:6px;border:1px solid #e2e8f0;cursor:pointer;}" +
+        ".correct{background:#eef2ff;padding:12px 16px;border-radius:12px;color:#2a5298;line-height:1.7;}" +
+        ".footer{color:#94a3b8;text-align:center;margin-top:40px;font-size:0.85rem;}" +
+        "</style></head><body><h1>" + escapeHtml(meta.titleLabel || '📄 站点培训案例（按失误类别）') + "</h1>" +
+        "<p style=\"color:#94a3b8;\">培训范围：" + escapeHtml(meta.scopeText || "") + " | 生成日期：" + new Date().toLocaleDateString("zh-CN") + " | 共 " + n + " 个案例</p>" +
+        "<p style=\"color:#5e6f8d;font-size:0.85rem;\">案例分布：" + catText + "</p>" +
+        cards +
+        "<div class=\"footer\">优学堂 · 站点培训案例（按失误类别）</div></body></html>";
+        return { ok: true, docHtml: docHtml, matched: pick.picked };
+    }
+    function _sccBuildDocWithMode(pick, meta, placeholderOnly) {
+        var prev = _photoPlaceholderOnly;
+        _photoPlaceholderOnly = !!placeholderOnly;
+        try { return _sccBuildDoc(pick, meta); } finally { _photoPlaceholderOnly = prev; }
+    }
+
+    // 推送主流程（存档 / 云端缓存 / 飞书卡片，均复用现有那套）
+    async function runSiteCaseCatPush(site, ctx, targets) {
+        if (!isAdminMode()) { showToast('❌ 请先登录管理员', 'warning'); return; }
+        var pick = ctx.pick, reportName = ctx.reportName;
+        var shareUrl = DEPLOYED_URL + '?report=' + encodeURIComponent(reportName);
+        var titleLabel = site + '站点培训案例 · 按失误类别';
+        var scopeText = site + ' · ' + ctx.rangeLabel;
+        var catSummary = Object.keys(pick.quota).length + '个失误类别';
+
+        showToast('⏳ 正在生成报告…');
+        await new Promise(function(r) { setTimeout(r, 30); });
+        var meta = { site: site, titleLabel: '📄 ' + titleLabel, scopeText: scopeText, rangeLabel: ctx.rangeLabel, fullCases: getManualCasesFull() };
+        var r = _sccBuildDocWithMode(pick, meta, false);
+        if (!r.ok) { showAlert(r.reason, '⚠️'); return; }
+        if (_utf8Len(r.docHtml) > KV_REPORT_HARD_BYTES) {
+            var r2 = _sccBuildDocWithMode(pick, meta, true);          // 太大 → 占位图模式重生成
+            if (r2.ok && _utf8Len(r2.docHtml) < _utf8Len(r.docHtml)) r = r2;
+        }
+        var bytes = _utf8Len(r.docHtml);
+        var warn = (bytes > 1024 * 1024) ? '\n⚠️ 报告 ' + (bytes / 1048576).toFixed(2) + ' MB，外部设备可能加载较慢' : '';
+        var dupWarn = getTrainingPushes().some(function(x) { return x.reportName === reportName; })
+            ? '\n⚠️ 该站点该周期此前已推送过，继续将覆盖旧链接内容\n' : '';
+        var okConfirm = await showConfirm(
+            '站点：' + site + '\n周期：' + ctx.rangeLabel + '\n' +
+            '输出案例：' + r.matched.length + ' 条（' + catSummary + '）｜报告大小：' + (bytes / 1024).toFixed(0) + ' KB\n' +
+            '收件人 ' + targets.length + ' 人：' + targets.map(function(t) { return t.name; }).join('、') + warn + dupWarn, '📤');
+        if (!okConfirm) return;
+
+        var info = {
+            site: site, weekLabel: ctx.rangeLabel, reportName: reportName, shareUrl: shareUrl,
+            caseCount: r.matched.length, people: null, okTargets: [], failTargets: [],
+            missing: [], kv: null, debug: null, monday: ctx.start, sunday: ctx.end,
+            retryFn: function() { runSiteCaseCatPush(site, ctx, targets); }
+        };
+        var prog = _scpProgressShow(site, ctx.rangeLabel);
+        try {
+            prog.set('gen', '报告已生成：输出案例 ' + r.matched.length + ' 条 · ' + (bytes / 1024).toFixed(0) + ' KB', 'ok');
+
+            prog.set('local', '存档到本地…', 'run');
+            try { saveReportToLocal(reportName, r.docHtml); prog.set('local', '报告已存档到本地', 'ok'); }
+            catch(e) { prog.set('local', '本地存档失败（' + (e.message || '可能超配额') + '），继续推送', 'fail'); }
+
+            var kv = null;
+            var kvPromise = kvPutReport(reportName, r.docHtml).then(function(x) { return x; }, function(e) { return { ok: false, reason: '网络错误', error: e.message }; });
+            prog.set('kv', '写入云端缓存…（后台进行，不阻塞推送）', 'run');
+            kvPromise.then(function(x) {
+                kv = x;
+                if (!document.body.contains(prog.ov)) return;
+                prog.set('kv', _scpKvText(x), x.ok ? 'ok' : 'fail');
+                var el = prog.resultBox.querySelector('#scrKvText');
+                if (el) el.innerHTML = _scpKvText(x);
+            });
+            kvCleanupReports(_kvReportKey(reportName));
+
+            prog.set('push', '正在推送 0/' + targets.length + ' …', 'run');
+            var results = [];
+            try {
+                results = await feishuPushDirect('training', {
+                    title: titleLabel, scope: scopeText, caseCount: r.matched.length,
+                    reviewerNames: catSummary, shareUrl: shareUrl
+                }, targets.map(function(t) { return t.email; }), function(done, total) {
+                    prog.set('push', '正在推送 ' + done + '/' + total + ' …', 'run');
+                });
+            } catch(e) { prog.set('push', '推送请求异常：' + (e.message || '未知错误'), 'fail'); }
+
+            targets.forEach(function(t, i) {
+                if (results[i] && results[i].success) info.okTargets.push(t);
+                else info.failTargets.push({ name: t.name, email: t.email, error: (results[i] && results[i].error) || '未知错误' });
+            });
+            prog.set('push', '推送完成：成功 ' + info.okTargets.length + ' 人' + (info.failTargets.length ? ' · 失败 ' + info.failTargets.length + ' 人' : '') + '（共 ' + targets.length + ' 人）', info.failTargets.length ? 'fail' : 'ok');
+
+            info.kv = kv;
+            if (info.okTargets.length > 0) {
+                try {
+                    var recs = getTrainingPushes();
+                    recs.push({ time: new Date().toISOString(), type: 'traincat', reviewerName: catSummary, reportName: reportName, scope: site + ' ' + ctx.rangeLabel, caseCount: r.matched.length, users: info.okTargets.map(function(t) { return t.name; }) });
+                    saveTrainingPushes(recs);
+                    markFeishuPushed('traincat_' + reportName, { type: 'traincat', title: titleLabel, site: site, reviewerName: catSummary, users: info.okTargets.map(function(t) { return t.name; }) });
+                } catch(e) {}
+                logAdminAction('培训案例', '按失误类别推送', site + '/' + ctx.rangeLabel + '/案例' + r.matched.length + '个/成功' + info.okTargets.length + '人/失败' + info.failTargets.length + '人/KV=' + (kv ? (kv.ok ? 'ok' : (kv.reason || 'fail')) : 'pending') + '/report=' + reportName);
+            }
+        } catch(e) {
+            prog.set('err', '推送流程中断：' + (e.message || e) + '（上方已完成的步骤仍然有效）', 'fail');
+        }
+        _showSiteCasePushResult(info, prog);
     }
 
     // ---- 报告 KV 兜底通道（Supabase 402 期间跨设备唯一可达通道；写次数必须极少）----
