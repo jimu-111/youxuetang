@@ -170,11 +170,41 @@ async function api(path, extra) {
   return r;
 }
 
-// —— 图片 cell 提取 fileToken ——
+// —— 媒体 cell 分流（2026-10-20 视频支持）——
+// 飞书单元格里的媒体有三种形态：
+//   图片        {fileToken, type:'embed-image'} 或图片附件 {fileToken, mimeType:'image/*', type:'attachment'}
+//   视频附件    {fileToken, mimeType:'video/*', type:'attachment'}  ← 能用应用身份下载，自动转存 KV
+//   视频外链    {link, text:'xxx.mp4', type:'url'}（企业微信微盘等） ← 取不到字节，只能提醒人工转存
+const VIDEO_EXT_RE = /\.(mp4|mov|avi|mkv|webm|m4v)(\?|$)/i;
+function isVideoObj(c) {
+  if (!c || typeof c !== 'object') return false;
+  if (c.type === 'attachment') return /^video\//i.test(c.mimeType || '') || VIDEO_EXT_RE.test(c.text || '');
+  if (c.type === 'url') return VIDEO_EXT_RE.test(c.text || '') || /drive\.weixin\.qq\.com/i.test(c.link || '');
+  if (c.type === 'embed-video' || c.type === 'embed-media') return true;
+  return false;
+}
+function splitMediaCell(cell) {
+  const images = [], videos = [];
+  const list = (cell === undefined || cell === null) ? [] : (Array.isArray(cell) ? cell : [cell]);
+  for (const c of list) {
+    if (!c || typeof c !== 'object') continue;
+    if (Array.isArray(c)) {
+      const sub = splitMediaCell(c);
+      images.push(...sub.images); videos.push(...sub.videos);
+      continue;
+    }
+    if (isVideoObj(c)) {
+      if (c.fileToken) videos.push({ token: c.fileToken, name: String(c.text || '').trim() || '视频.mp4', size: Number(c.size) || 0 });
+      else if (c.link) videos.push({ link: c.link, name: String(c.text || '').trim() || '视频' });
+      continue;
+    }
+    if (c.fileToken) images.push(c.fileToken);
+  }
+  return { images, videos };
+}
+// —— 图片 cell 提取 fileToken（视频不再混进 images）——
 function extractFileTokens(cell) {
-  if (!cell) return [];
-  const list = Array.isArray(cell) ? cell : [cell];
-  return list.filter(c => c && typeof c === 'object' && c.fileToken).map(c => c.fileToken);
+  return splitMediaCell(cell).images;
 }
 function cellText(cell) {
   if (cell === undefined || cell === null) return '';
@@ -182,6 +212,8 @@ function cellText(cell) {
   if (typeof cell === 'number') return String(cell);
   return '';
 }
+// parseSheetRows 顺手收集的视频位置（题目图/解析图/选项图），用于转存与提醒，不进题库 JSON
+const VIDEO_META = [];
 
 // —— 题型推断（与页面 inferQuestionType 同规则）——
 function inferType(typeColVal, answerStr) {
@@ -233,12 +265,14 @@ function parseSheetRows(rows, sheetTitle) {
       if (t) options.push({ key: optKeys[i], text: t, images: [] });
     });
     cOptImgs.forEach((colIdx, i) => {
-      const toks = extractFileTokens(row[colIdx]);
-      if (toks.length && options[i]) options[i].images = toks;
+      const m = splitMediaCell(row[colIdx]);
+      if (!options[i]) return;
+      if (m.images.length) options[i].images = m.images;
+      if (m.videos.length) options[i].videos = m.videos;
     });
-    const qImages = cQImg >= 0 ? extractFileTokens(row[cQImg]) : [];
-    const aImages = cAImg >= 0 ? extractFileTokens(row[cAImg]) : [];
-    questions.push({
+    const qMedia = cQImg >= 0 ? splitMediaCell(row[cQImg]) : { images: [], videos: [] };
+    const aMedia = cAImg >= 0 ? splitMediaCell(row[cAImg]) : { images: [], videos: [] };
+    const question = {
       id: 'qb_' + Math.random().toString(36).slice(2, 10) + Date.now().toString(36).slice(-4),
       sourceId: sourceId,
       type: inferType(cType >= 0 ? row[cType] : '', answer),
@@ -246,11 +280,23 @@ function parseSheetRows(rows, sheetTitle) {
       options: options,
       answer: answer,
       explanation: cAnalysis >= 0 ? cellText(row[cAnalysis]).trim() : '',
-      images: qImages,
-      analysisImages: aImages,
+      images: qMedia.images,
+      analysisImages: aMedia.images,
       difficulty: '中等',
       createdAt: new Date().toISOString()
+    };
+    // 视频只在有内容时才写字段（1300+ 题全写空数组会白肥 JSON）
+    if (qMedia.videos.length) question.videos = qMedia.videos;
+    if (aMedia.videos.length) question.analysisVideos = aMedia.videos;
+    questions.push(question);
+    // 收集视频位置，供转存/提醒用（不进题库 JSON）
+    const addMeta = (v, col) => VIDEO_META.push({
+      sheet: sheetTitle, row: ri + 1, qid: sourceId, col: col,
+      token: v.token || '', link: v.link || '', name: v.name || '', size: v.size || 0
     });
+    qMedia.videos.forEach(v => addMeta(v, '题目图'));
+    aMedia.videos.forEach(v => addMeta(v, '解析图'));
+    options.forEach((o, oi) => (o.videos || []).forEach(v => addMeta(v, (oi + 1) + '号选项图')));
   }
   return questions;
 }
@@ -323,6 +369,168 @@ function supabaseWrite(key, value) {
     req.on('error', reject);
     req.write(body); req.end();
   });
+}
+
+// ===================== 视频转存 KV（2026-10-20） =====================
+//   存储：KV key = qbvideo_<fileToken>，值为 base64 原文（/data 路由会包一层 {"v":..,"t":..}）
+//   索引：qbvideo_index = {"<token>":{n:文件名,s:字节数,t:时间}}，token 在索引里就跳过下载/上传，
+//         避免每周把 69MB 视频重新传一遍。上传成功才写索引 —— 失败的下周会自动重试。
+//   上限：KV 单值 25MiB，base64 膨胀 4/3，留余量后原始视频上限取 17MB（当前最大 13.8MB）。
+const VIDEO_INDEX_KEY = 'qbvideo_index';
+const VIDEO_MAX_BYTES = 17 * 1024 * 1024;
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+// 读一个 /data key 的「真值」（剥掉 {v,t} 信封）；不存在返回 null，网络/服务异常则抛错
+async function kvGetValue(key) {
+  const r = await httpJson(PAGES + '/data?key=' + encodeURIComponent(key), { headers: { 'x-yxt-secret': SECRET } });
+  if (r.status !== 200 || !r.json) throw new Error('HTTP ' + r.status);
+  if (r.json.value === null || r.json.value === undefined) return null;
+  const o = JSON.parse(r.json.value);
+  return o && o.v !== undefined ? o.v : null;
+}
+
+function kvPutLarge(key, value, timeoutMs) {
+  return new Promise((resolve, reject) => {
+    const body = JSON.stringify({ items: [{ key, v: value, t: new Date().toISOString() }] });
+    const u = new URL(PAGES + '/data');
+    const req = https.request({
+      hostname: u.hostname, path: u.pathname, method: 'POST',
+      headers: { 'x-yxt-secret': SECRET, 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) }
+    }, res => {
+      let d = '';
+      res.on('data', c => d += c);
+      res.on('end', () => {
+        let j = null; try { j = JSON.parse(d); } catch (e) {}
+        if (res.statusCode !== 200 || !j) return reject(new Error('HTTP ' + res.statusCode + ' ' + d.slice(0, 120)));
+        if (j.failed) return reject(new Error('KV 写入失败 ' + JSON.stringify(j)));
+        if (!j.written && !j.skipped) return reject(new Error('KV 未写入 ' + JSON.stringify(j)));
+        resolve(j);
+      });
+    });
+    req.on('error', reject);
+    req.setTimeout(timeoutMs || 180000, () => req.destroy(new Error('上传超时（' + Math.round((timeoutMs || 180000) / 1000) + ' 秒）')));
+    req.write(body);
+    req.end();
+  });
+}
+
+// 应用身份直连下载视频字节。必须直连：走 Pages 代理会把二进制转成 base64 JSON 包一层（体积 1.8 倍）
+function downloadVideoDirect(fileToken, tenantToken) {
+  return new Promise((resolve, reject) => {
+    const u = new URL('https://open.feishu.cn/open-apis/drive/v1/medias/' + encodeURIComponent(fileToken) + '/download');
+    const req = https.request({
+      hostname: u.hostname, path: u.pathname + u.search, method: 'GET',
+      headers: { Authorization: 'Bearer ' + tenantToken }
+    }, res => {
+      if (res.statusCode !== 200) {
+        let d = ''; res.on('data', c => d += c);
+        res.on('end', () => reject(new Error('HTTP ' + res.statusCode + ' ' + d.slice(0, 120))));
+        return;
+      }
+      const chunks = []; let total = 0;
+      res.on('data', c => {
+        total += c.length;
+        if (total > VIDEO_MAX_BYTES) { req.destroy(new Error('文件超过 ' + (VIDEO_MAX_BYTES / 1048576).toFixed(0) + 'MB 上限')); return; }
+        chunks.push(c);
+      });
+      res.on('end', () => resolve(Buffer.concat(chunks)));
+    });
+    req.on('error', reject);
+    // 120 秒：13.8MB 只需 ~115KB/s，留足余量；同时保证 10 个视频最坏也顶不满 60 分钟的 workflow 上限
+    req.setTimeout(120000, () => req.destroy(new Error('下载超时（120 秒）')));
+    req.end();
+  });
+}
+
+async function processVideos() {
+  const uniq = new Map();   // token -> {token,name,size,where[]}
+  const links = [];         // 外链视频（取不到字节）
+  for (const m of VIDEO_META) {
+    if (m.token) {
+      if (!uniq.has(m.token)) uniq.set(m.token, { token: m.token, name: m.name, size: m.size, where: [] });
+      const w = (m.sheet || '') + ' 第' + m.row + '行' + (m.qid ? ' 题目ID=' + m.qid : '');
+      if (uniq.get(m.token).where.indexOf(w) < 0) uniq.get(m.token).where.push(w);
+    } else if (m.link) {
+      links.push(m);
+    }
+  }
+  const result = { total: uniq.size, uploaded: 0, existed: 0, failed: [], links: links };
+  if (!uniq.size && !links.length) return result;
+  if (DRY_RUN) {
+    console.log('\n🔍 DRY_RUN：视频 ' + uniq.size + ' 个（仅计划，不下载不上传）' +
+      (links.length ? '；外链待转存 ' + links.length + ' 个' : ''));
+    links.slice(0, 20).forEach(v => console.log('  🎬 外链 [' + v.sheet + ' 第' + v.row + '行 题目ID=' + v.qid + '] ' + v.name + ' ' + v.link));
+    return result;
+  }
+
+  console.log('\n========== 视频转存（' + uniq.size + ' 个附件 + ' + links.length + ' 个外链） ==========');
+  let index;
+  try {
+    const raw = await kvGetValue(VIDEO_INDEX_KEY);
+    index = raw ? JSON.parse(raw) : {};
+    if (!index || typeof index !== 'object' || Array.isArray(index)) index = {};
+  } catch (e) {
+    // 索引读不到就停手：贸然当成空索引会把已转存的几十 MB 全部重传一遍
+    result.failed.push({ name: '（视频索引读取失败）', where: '', reason: e.message + '，本次不转存' });
+    console.log('  ❌ 视频索引读取失败：' + e.message + '，本次跳过视频转存（下周重试）');
+    return result;
+  }
+
+  let tenant = null;
+  try { tenant = await getTenantToken(); }
+  catch (e) { console.log('  ⚠️ 应用身份不可用：' + e.message); }
+
+  for (const [token, meta] of uniq) {
+    if (index[token]) { result.existed++; continue; }
+    if (!tenant) {
+      result.failed.push({ name: meta.name, where: meta.where.join('、'), reason: '应用身份不可用，无法下载' });
+      continue;
+    }
+    try {
+      if (meta.size && meta.size > VIDEO_MAX_BYTES) {
+        throw new Error('文件 ' + (meta.size / 1048576).toFixed(1) + 'MB，超过 ' + (VIDEO_MAX_BYTES / 1048576).toFixed(0) + 'MB 上限');
+      }
+      console.log('  ⬇️ 下载 ' + meta.name + (meta.size ? '（' + (meta.size / 1048576).toFixed(1) + 'MB）' : '') + ' …');
+      const buf = await downloadVideoDirect(token, tenant);
+      console.log('  ⬆️ 转存 KV（' + (buf.length / 1048576).toFixed(1) + 'MB → base64 ' + (buf.length * 4 / 3 / 1048576).toFixed(1) + 'MB）…');
+      await kvPutLarge('qbvideo_' + token, buf.toString('base64'), 120000);
+      index[token] = { n: meta.name, s: buf.length, t: new Date().toISOString() };
+      result.uploaded++;
+    } catch (e) {
+      result.failed.push({ name: meta.name, where: meta.where.join('、'), reason: e.message });
+      console.log('  ❌ ' + meta.name + '：' + e.message);
+    }
+    await sleep(600);   // KV 同 key 每秒 1 次写，逐个传也顺便避免限流
+  }
+  if (result.uploaded) {
+    try { await kvPutLarge(VIDEO_INDEX_KEY, JSON.stringify(index)); }
+    catch (e) { console.log('  ⚠️ 视频索引写回失败：' + e.message + '（下周会重传这批，已有视频不受影响）'); }
+  }
+  console.log('  ✅ 视频：新转存 ' + result.uploaded + ' 个，已存在跳过 ' + result.existed + ' 个，失败 ' + result.failed.length + ' 个');
+  return result;
+}
+
+async function sendVideoReminder(result) {
+  if (DRY_RUN) return;
+  const links = result.links || [];
+  if (!result.failed.length && !links.length) return;
+  const lines = [];
+  if (links.length) {
+    lines.push('**⚠️ 有 ' + links.length + ' 个视频还是外链**（企业微信微盘等），脚本取不到文件，请在总表里换成**视频附件**：');
+    links.slice(0, 20).forEach(v => {
+      lines.push('· 【' + v.sheet + '】第' + v.row + '行' + (v.qid ? ' 题目ID=' + v.qid : '') + '　' + v.name);
+      if (v.link) lines.push('　' + v.link);
+    });
+    if (links.length > 20) lines.push('… 共 ' + links.length + ' 个，其余见运行日志');
+  }
+  if (result.failed.length) {
+    if (lines.length) lines.push('');
+    lines.push('**❌ 有 ' + result.failed.length + ' 个视频转存失败**（换好后下周自动重试）：');
+    result.failed.slice(0, 15).forEach(f => lines.push('· ' + (f.where ? '【' + f.where + '】' : '') + f.name + '：' + f.reason));
+  }
+  lines.push('');
+  lines.push('_本次新转存 ' + result.uploaded + ' 个，已存在跳过 ' + result.existed + ' 个_');
+  await sendCard('🎬 题库视频待处理', lines.join('\n'), 'orange');
 }
 
 async function main() {
@@ -432,7 +640,11 @@ async function main() {
     (json.length / 1024 / 1024).toFixed(2) + ' MB');
 
   // 6. 写入
-  if (DRY_RUN) { console.log('\n🔍 DRY_RUN：闸门全部通过，跳过写入'); return; }
+  if (DRY_RUN) {
+    console.log('\n🔍 DRY_RUN：闸门全部通过，跳过写入');
+    try { await processVideos(); } catch (e) {}   // DRY_RUN 下只打印视频计划（processVideos 内部会跳过下载/上传）
+    return;
+  }
   console.log('\n☁️ 写入云端…');
   let writeTo = '';
   try {
@@ -472,6 +684,16 @@ async function main() {
     process.exitCode = 1;
     return;
   }
+  // 8. 视频转存（2026-10-20）：放在题库写入成功之后才做 —— 大文件传输再慢也不会拖住题库主同步。
+  //    附件视频 → KV（qbvideo_<fileToken>）；外链取不到字节 → 飞书卡片提醒人工转存。
+  //    失败只影响视频（下周自动重试），题库已写成功。
+  try {
+    const videoResult = await processVideos();
+    await sendVideoReminder(videoResult);
+  } catch (e) {
+    console.log('⚠️ 视频处理异常（题库已同步，不影响）：' + e.message);
+  }
+
   console.log('\n🎉 同步完成' + (FORCE ? '（本次有闸门被 FORCE=1 越过，请确认结果符合预期）' : ''));
 }
 

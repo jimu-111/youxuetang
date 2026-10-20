@@ -88,6 +88,18 @@ const LIMIT = parseInt(process.env.LIMIT || '0', 10) || 0;              // 只�
 const MIN_SRC_ROWS = parseInt(process.env.MIN_SRC_ROWS || '50', 10) || 50;
 const MAX_DELETE_RATIO = 0.3;
 const IGNORE_COLUMNS = (process.env.IGNORE_COLUMNS || '').split(/[,，]/).map(s => s.trim()).filter(Boolean);
+
+// —— 视频题白名单（2026-10-20）——
+//   这些题的「题目图」列以源2 为准，对账时完全跳过（不比较、不清空、不覆盖）。
+//   前 10 个：源2 里是视频附件，源1 还是微盘外链（脚本搬不了视频）；
+//   后 2 个：用户把视频换成了图片（89623、103102），源1 仍是外链 —— 不跳过的话图片会被当成
+//   「源1 没图」而清空。
+//   另有兜底规则（见 compareRow）：任意一格只要出现视频对象就跳过该格 —— 以后新增的视频题
+//   即使忘了加进白名单，也不会被对账冲掉。
+const VIDEO_QIDS = new Set([
+  '86318', '89622', '93885', '97469', '97477', '97508', '97509', '107335', '108982', '116628',
+  '89623', '103102'
+]);
 const RUN_URL = process.env.RUN_URL || '';
 const BACKUP_IMAGES = process.env.BACKUP_IMAGES !== 'false';             // 覆盖图片前留底（默认开）
 const BACKUP_IMAGE_MAX_MB = parseInt(process.env.BACKUP_IMAGE_MAX_MB || '40', 10) || 40;
@@ -310,13 +322,35 @@ function cellText(v) {
 function normText(v) {
   return cellText(v).normalize('NFKC').replace(/[​-‍﻿]/g, '').replace(/\s+/g, ' ').trim();
 }
+// —— 视频识别（2026-10-20）——
+//   视频有两种：飞书附件（type:'attachment' + mimeType video/*）和外链（type:'url' + 微盘链接/文件名 .mp4）。
+//   ★ 对账脚本里只要认出「视频」，就绝不把它当图片比、更不写空 —— 视频是人工在源2 维护的，清掉就得重传。
+const VIDEO_EXT_RE = /\.(mp4|mov|avi|mkv|webm|m4v)(\?|$)/i;
+function isVideoObj(c) {
+  if (!c || typeof c !== 'object') return false;
+  if (c.type === 'attachment') return /^video\//i.test(c.mimeType || '') || VIDEO_EXT_RE.test(c.text || '');
+  if (c.type === 'url') return VIDEO_EXT_RE.test(c.text || '') || /drive\.weixin\.qq\.com/i.test(c.link || '');
+  if (c.type === 'embed-video' || c.type === 'embed-media') return true;
+  return false;
+}
+function videoInfoOf(v) {
+  if (!v) return [];
+  const list = Array.isArray(v) ? v : [v];
+  const out = [];
+  for (const c of list) {
+    if (!c || typeof c !== 'object') continue;
+    if (Array.isArray(c)) { out.push(...videoInfoOf(c)); continue; }
+    if (isVideoObj(c)) out.push({ token: c.fileToken || '', link: c.link || '', name: c.text || '' });
+  }
+  return out;
+}
 function extractFileTokens(v) {
   if (!v) return [];
   const list = Array.isArray(v) ? v : [v];
   const out = [];
   for (const c of list) {
     if (c && typeof c === 'object') {
-      if (c.fileToken) out.push(c.fileToken);
+      if (c.fileToken && !isVideoObj(c)) out.push(c.fileToken);
       else if (Array.isArray(c)) out.push(...extractFileTokens(c));
     }
   }
@@ -325,7 +359,7 @@ function extractFileTokens(v) {
 function isImageCell(v) {
   if (!v) return false;
   const list = Array.isArray(v) ? v : [v];
-  return list.some(c => c && typeof c === 'object' && (c.fileToken || c.type === 'embed-image'));
+  return list.some(c => c && typeof c === 'object' && !isVideoObj(c) && (c.fileToken || c.type === 'embed-image'));
 }
 function colLetter(n) { let s = ''; n = n + 1; while (n > 0) { const m = (n - 1) % 26; s = String.fromCharCode(65 + m) + s; n = Math.floor((n - 1) / 26); } return s; }
 function md5(buf) { return crypto.createHash('md5').update(buf).digest('hex'); }
@@ -461,7 +495,7 @@ function diffRows(srcRows, dstRows, map, keyFn) {
     if (sl.length > 1 || dl.length > 1) dupKeys.push(k + ' ×' + Math.max(sl.length, dl.length));
     for (let i = 0; i < sl.length; i++) {
       if (i < dl.length) {
-        const { textChanged, imgChanged } = compareRow(sl[i], dl[i], map);
+        const { textChanged, imgChanged } = compareRow(sl[i], dl[i], map, k);
         if (textChanged.length || imgChanged.length) mods.push({ src: sl[i], dst: dl[i], textChanged, imgChanged, key: k });
       } else adds.push(sl[i]);
     }
@@ -472,12 +506,21 @@ function diffRows(srcRows, dstRows, map, keyFn) {
 }
 
 // 文本列归一化比较；图片列先比 fileToken 列表（MD5 二次确认在后续阶段）
-function compareRow(srcRow, dstRow, map) {
+// 视频保护（2026-10-20）：
+//   ① 白名单题目的「题目图」列直接跳过（以源2 为准）
+//   ② 兜底：源1 或源2 该格只要出现视频对象，整格跳过 —— 任何情况下都不会把视频清掉/覆盖
+function compareRow(srcRow, dstRow, map, key) {
+  const qid = String(key || '').replace(/^id:/, '');
+  const inWL = VIDEO_QIDS.has(qid);
   const textChanged = [], imgChanged = [];
   for (const c of map.textCols) {
+    // 文本列同样保护：视频外链若落在文本列里，也不参与比较（不会把附件当文本覆盖）
+    if (videoInfoOf(srcRow.cells[c.src]).length || videoInfoOf(dstRow.cells[c.dst]).length) continue;
     if (normText(srcRow.cells[c.src]) !== normText(dstRow.cells[c.dst])) textChanged.push(c.name);
   }
   for (const c of map.imageCols) {
+    if (inWL && c.name === '题目图') continue;
+    if (videoInfoOf(srcRow.cells[c.src]).length || videoInfoOf(dstRow.cells[c.dst]).length) continue;
     const a = extractFileTokens(srcRow.cells[c.src]);
     const b = extractFileTokens(dstRow.cells[c.dst]);
     if (JSON.stringify(a) !== JSON.stringify(b)) imgChanged.push(c.name);
@@ -700,6 +743,49 @@ function kvGet(key) {
     .catch(() => null);
 }
 
+// ===================== 视频待转存扫描（2026-10-20） =====================
+// 只有「源1 是视频」且「源2 对应格没有任何媒体」才算待转存：
+//   · 源2 已是视频附件  → 已转存好，不再提醒
+//   · 源2 已换成图片    → 用户主动改的，也算处理过，不再提醒
+// 所以用户转好一个，提醒里就少一个，不需要额外记状态；转好的下周自然消失。
+function scanPendingVideos(srcKeyed, dstKeyed, map, keyFn) {
+  const dstByKey = new Map();
+  for (const r of dstKeyed) { const k = keyFn(r); if (k && !dstByKey.has(k)) dstByKey.set(k, r); }
+  const out = [];
+  for (const sr of srcKeyed) {
+    const k = keyFn(sr);
+    if (!k) continue;
+    const dr = dstByKey.get(k) || null;
+    for (const c of map.imageCols) {
+      const vs = videoInfoOf(sr.cells[c.src]);
+      if (!vs.length) continue;
+      const dv = dr ? dr.cells[c.dst] : null;
+      if (isImageCell(dv) || videoInfoOf(dv).length > 0) continue;   // 源2 已有图或视频 → 已处理
+      for (const v of vs) {
+        out.push({ qid: String(k).replace(/^id:/, ''), row: sr.row, col: c.name, name: v.name || '(未命名)', link: v.link || '', token: v.token || '' });
+      }
+    }
+  }
+  return out;
+}
+function buildVideoPendingCard(items) {
+  const lines = [];
+  lines.push('**源1 有 ' + items.length + ' 个视频还没转成源2 的附件**（脚本搬不了视频文件，需要人工下载后放进总表对应格子）。');
+  lines.push('');
+  items.slice(0, 20).forEach(v => {
+    lines.push('· 【' + v.pair + '】第' + v.row + '行 题目ID=' + (v.qid || '(无)') + '　' + v.col + '　' + v.name);
+    if (v.link) lines.push('　' + v.link);
+  });
+  if (items.length > 20) lines.push('… 共 ' + items.length + ' 个，其余见运行日志');
+  lines.push('');
+  lines.push('_转好后下周自动生效；已经转好的不会再提醒。_');
+  return {
+    config: { wide_screen_mode: true },
+    header: { title: { tag: 'plain_text', content: '🎬 题库视频待转存' }, template: 'orange' },
+    elements: [{ tag: 'div', text: { tag: 'lark_md', content: lines.join('\n') } }].concat(RUN_URL ? [{ tag: 'action', actions: [{ tag: 'button', text: { tag: 'plain_text', content: '📋 查看运行日志' }, type: 'primary', url: RUN_URL }] }] : [])
+  };
+}
+
 // ===================== 飞书汇报 =====================
 async function sendCard(card) {
   if (process.env.NO_CARD === '1') { console.log('📨（NO_CARD=1，未发送飞书卡片）'); return; }
@@ -748,7 +834,7 @@ async function syncPair(pair) {
     pair: pair.name, key: pair.key, phase: 'init', error: '',
     srcRows: 0, dstRows: 0, add: 0, mod: 0, del: 0,
     imgUp: 0, imgSkip: 0, imgFail: 0, unkeyedSrc: 0, unkeyedDst: 0, dupKeys: 0,
-    warn: [], backupKey: '', sec: 0, detail: {}
+    warn: [], backupKey: '', sec: 0, detail: {}, videoPending: []
   };
   IMG_CACHE.clear();   // 图片缓冲区只在本对内有意义，不清会跨对累积（实测 7 对到 2 GB）
   const stateKey = 'qb_src_state_' + pair.key;
@@ -810,6 +896,9 @@ async function syncPair(pair) {
     if (prev && prev.srcRows && srcKeyed.length < prev.srcRows * 0.7) throw new Error('源1 条数骤降：' + prev.srcRows + ' → ' + srcKeyed.length + '，终止（FORCE=true 可强制）');
   }
   const { adds, mods, dels, dupKeys } = diffRows(srcKeyed, dstKeyed, map, keyFn);
+  // 视频待转存（只读扫描，不改任何格）：源1 有视频、源2 还是空 → 记下来发提醒
+  s.videoPending = scanPendingVideos(srcKeyed, dstKeyed, map, keyFn).map(v => Object.assign({ pair: pair.name }, v));
+  if (s.videoPending.length) console.log('🎬 视频待转存 ' + s.videoPending.length + ' 个（源1 有视频、源2 还没放）');
   s.srcRows = srcKeyed.length; s.dstRows = dstKeyed.length;
   s.add = adds.length; s.mod = mods.length; s.del = dels.length; s.dupKeys = dupKeys.length;
   if (dupKeys.length) s.warn.push('重复键：' + dupKeys.slice(0, 5).join('、'));
@@ -952,7 +1041,11 @@ async function syncPair(pair) {
     console.log('➕ 已追加 ' + adds.length + ' 行（第 ' + nextRow + '~' + (nextRow + adds.length - 1) + ' 行），开始传图…');
     for (let ti = 0; ti < targets.length; ti++) {
       const t = targets[ti], a = adds[ti];
+      const addQid = idColShared ? normText(a.cells[idColShared.src]) : '';
       for (const c of map.imageCols) {
+        // 视频保护：源1 该格是视频（搬不了字节）→ 不写；白名单题目的题目图列 → 以源2 为准
+        if (videoInfoOf(a.cells[c.src]).length) continue;
+        if (VIDEO_QIDS.has(addQid) && c.name === '题目图') continue;
         const toks = extractFileTokens(a.cells[c.src]);
         for (const tok of toks) {
           try { await uploadImage(pair.dst.ss, dstSheet.sheet_id, t.row, colLetter(c.dst), tok); s.imgUp++; }
@@ -1190,6 +1283,15 @@ async function main() {
   } catch (e) { console.log('⚠️ 报告落盘失败：' + e.message); }
 
   await sendCard(buildReportCard(summaries, totalSec));
+  // 视频待转存：单独一张卡片（写清品类/行号/题目ID/文件名/链接）。全部处理完后自然不再发送。
+  const pendingVideos = [];
+  summaries.forEach(s => (s.videoPending || []).forEach(v => pendingVideos.push(v)));
+  if (pendingVideos.length) {
+    console.log('\n🎬 视频待转存 ' + pendingVideos.length + ' 个：');
+    pendingVideos.slice(0, 20).forEach(v => console.log('  · 【' + v.pair + '】第' + v.row + '行 题目ID=' + v.qid + ' ' + v.col + ' ' + v.name + (v.link ? ' ' + v.link : '')));
+    if (DRY_RUN) console.log('  （DRY_RUN：未发送提醒卡片）');
+    else await sendCard(buildVideoPendingCard(pendingVideos));
+  }
   if (failed) process.exitCode = 1;
   console.log(DRY_RUN ? '🔍 DRY_RUN 结束（未写任何数据）' : '🎉 同步流程结束');
 }
