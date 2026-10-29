@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <!-- 版本行：每次部署新代码必须 bump 此 content（YYYYMMDD.N），旧设备靠它自检静默升级 -->
-    <meta name="yxt-ver" content="20261020.2">
+    <meta name="yxt-ver" content="20261029.1">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
     <title>优学堂</title>
     <script src="https://cdn.sheetjs.com/xlsx-0.20.2/package/dist/xlsx.full.min.js" defer></script>
@@ -15168,20 +15168,36 @@ URL.revokeObjectURL(url);
 
     // ==================== 知识库模块 ====================
     const KB_LIST_KEY = 'knowledgeBaseList';
+    // 质检标准库的默认分类卡片（名称统一加「-质检标准」）
+    const KB_STANDARD_CATEGORIES = ['手机','平板','笔记本','耳机','手表','游戏机','游戏卡','手写笔','微单机身','单反机身','相机镜头','学习机'];
+    function defaultKBChildren() {
+        return KB_STANDARD_CATEGORIES.map(function(n, i) {
+            return { id: 'kbs_std_' + i, name: n + '-质检标准', cover: '', url: '', desc: '' };
+        });
+    }
     function getKBList() {
+        var list = null;
         try {
             const saved = JSON.parse(localStorage.getItem(KB_LIST_KEY));
-            if (saved && Array.isArray(saved) && saved.length > 0) return saved;
+            if (saved && Array.isArray(saved) && saved.length > 0) list = saved;
         } catch(e) {}
-        return [
+        if (!list) list = [
             { id: 'kb1', name: '判责知识库', cover: '', url: 'https://zhuanspirit.feishu.cn/wiki/WQnywMV6EiTh1LkGDvHcBAqSnVm', desc: '判责相关规范与案例' },
             { id: 'kb2', name: '质检标准库', cover: '', url: '', desc: '质检标准与操作指南' },
             { id: 'kb3', name: '培训资料库', cover: '', url: '', desc: '新人培训相关文档' }
         ];
+        // 老数据没有 children 时，给「质检标准库」补上默认分类卡片
+        for (var i = 0; i < list.length; i++) {
+            if (list[i] && (list[i].id === 'kb2' || list[i].name === '质检标准库') && !Array.isArray(list[i].children)) {
+                list[i].children = defaultKBChildren();
+            }
+        }
+        return list;
     }
     function saveKBList(list) { localStorage.setItem(KB_LIST_KEY, JSON.stringify(list)); }
 
     let kbActiveId = null;
+    let kbActiveChild = null;
 
     function renderKnowledgeBase() {
         var container = document.getElementById('mainContent');
@@ -15189,7 +15205,37 @@ URL.revokeObjectURL(url);
 
         if (kbActiveId) {
             var kb = kbList.find(function(k) { return k.id === kbActiveId; });
-            if (!kb || !kb.url) { kbActiveId = null; renderKnowledgeBase(); return; }
+            if (!kb) { kbActiveId = null; kbActiveChild = null; renderKnowledgeBase(); return; }
+
+            // 分组知识库（如质检标准库）：先显示分类卡片
+            if (Array.isArray(kb.children) && !kbActiveChild) {
+                renderKBGroup(kb);
+                return;
+            }
+
+            // 分类卡片详情
+            if (kbActiveChild) {
+                var child = (kb.children || []).find(function(c) { return c.id === kbActiveChild; });
+                if (!child || !child.url) { kbActiveChild = null; renderKnowledgeBase(); return; }
+                container.innerHTML = '<div class="report-box" style="margin-bottom:12px;">' +
+                    '<div class="report-title" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">' +
+                    '<span>📖 ' + escapeHtml(kb.name) + ' / ' + escapeHtml(child.name) + '</span>' +
+                    '<div style="display:flex;gap:8px;flex-wrap:wrap;">' +
+                    '<button class="analysis-type-btn" id="kbBackBtn">← 返回分类列表</button>' +
+                    '<a href="' + escapeHtml(child.url) + '" target="_blank" class="small-outline" style="text-decoration:none;">🔗 在飞书打开</a>' +
+                    '</div></div>' +
+                    '<div style="font-size:0.7rem;color:#94a3b8;">' + escapeHtml(child.url) + '</div></div>' +
+                    '<div style="background:white;border-radius:16px;overflow:hidden;box-shadow:0 4px 12px rgba(0,0,0,0.05);border:1px solid #eef2f6;height:calc(100vh - 190px);">' +
+                    '<iframe src="' + escapeHtml(child.url) + '" style="width:100%;height:100%;border:none;" sandbox="allow-same-origin allow-scripts allow-popups allow-forms allow-top-navigation"></iframe>' +
+                    '</div>';
+                setTimeout(function() {
+                    var bb = document.getElementById('kbBackBtn');
+                    if (bb) bb.onclick = function() { kbActiveChild = null; renderKnowledgeBase(); };
+                }, 50);
+                return;
+            }
+
+            if (!kb.url) { kbActiveId = null; renderKnowledgeBase(); return; }
             container.innerHTML = '<div class="report-box" style="margin-bottom:12px;">' +
                 '<div class="report-title" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">' +
                 '<span>📖 ' + escapeHtml(kb.name) + '</span>' +
@@ -15208,34 +15254,12 @@ URL.revokeObjectURL(url);
             return;
         }
 
-        var coverColors = ['#eef2ff','#fff3e0','#e8f5e9','#fce4ec','#e0f7fa','#f3e5f5','#fff8e1','#e8eaf6'];
         var cardsHtml = '';
         if (kbList.length === 0) {
             cardsHtml = '<div class="empty-placeholder" style="padding:40px;">暂无知识库，请点击下方按钮添加</div>';
         } else {
             cardsHtml = '<div class="dashboard-grid">';
-            kbList.forEach(function(kb, i) {
-                var bg = coverColors[i % coverColors.length];
-                var hasUrl = kb.url && kb.url.trim();
-                var hasCover = kb.cover && kb.cover.trim();
-                var cardBg = hasCover ? 'background-image:url(' + escapeHtml(kb.cover) + ');background-size:cover;background-position:center;' : 'background:' + bg + ';';
-                var overlay = hasCover ? 'background:linear-gradient(to top,rgba(0,0,0,0.75) 0%,rgba(0,0,0,0.2) 50%,rgba(0,0,0,0.05) 100%);' : '';
-                var textColor = hasCover ? 'color:#fff;' : 'color:#1f3a6b;';
-                var subColor = hasCover ? 'color:rgba(255,255,255,0.8);' : 'color:#5e6f8d;';
-                var hintColor = hasCover ? 'color:rgba(255,255,255,0.6);' : 'color:#94a3b8;';
-                cardsHtml += '<div class="stat-card" style="cursor:' + (hasUrl ? 'pointer' : 'default') + ';opacity:' + (hasUrl ? '1' : '0.5') + ';padding:0;overflow:hidden;position:relative;' + cardBg + '"' +
-                    (hasUrl ? ' onclick="window._kbOpen(\'' + escapeJsInAttr(kb.id) + '\')"' : '') + '>' +
-                    '<div style="position:absolute;inset:0;' + overlay + '"></div>' +
-                    '<div style="position:relative;z-index:1;padding:16px;min-height:180px;display:flex;flex-direction:column;justify-content:flex-end;">' +
-                    (!hasCover ? '<div style="font-size:3rem;text-align:center;margin-bottom:8px;">📖</div>' : '') +
-                    '<div style="font-weight:700;font-size:1.05rem;margin-bottom:4px;' + textColor + '">' + escapeHtml(kb.name) + '</div>' +
-                    '<div style="font-size:0.8rem;margin-bottom:4px;' + subColor + '">' + escapeHtml(kb.desc || '') + '</div>' +
-                    '<div style="font-size:0.7rem;' + hintColor + '">' + (hasUrl ? '点击查看' : '未配置链接') + '</div>' +
-                    '<div style="display:flex;gap:4px;margin-top:8px;justify-content:flex-end;">' +
-                    '<button class="action-btn admin-only" onclick="event.stopPropagation();window._kbEdit(\'' + escapeJsInAttr(kb.id) + '\')" style="font-size:0.65rem;">✏️</button>' +
-                    '<button class="action-btn danger admin-only" onclick="event.stopPropagation();window._kbDelete(\'' + escapeJsInAttr(kb.id) + '\')" style="font-size:0.65rem;">🗑️</button>' +
-                    '</div></div></div>';
-            });
+            kbList.forEach(function(kb, i) { cardsHtml += kbCardHtml(kb, i, '_kbOpen', '_kbEdit', '_kbDelete'); });
             cardsHtml += '</div>';
         }
 
@@ -15243,11 +15267,52 @@ URL.revokeObjectURL(url);
             '<div class="report-title" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;">' +
             '<span>📖 知识库</span><button class="primary admin-only" id="kbAddBtn">➕ 添加知识库</button></div>' +
             '<div style="font-size:0.8rem;color:#5e6f8d;margin-bottom:4px;">共 ' + kbList.length + ' 个知识库，点击卡片进入对应飞书文档</div></div>' +
-            cardsHtml +
-            '<div id="kbEditModal" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.5);z-index:1000;align-items:center;justify-content:center;">' +
+            cardsHtml + kbEditModalHtml();
+
+        window._kbOpen = function(id) { kbActiveId = id; kbActiveChild = null; renderKnowledgeBase(); };
+        window._kbEdit = function(id) { openKBEditModal(id); };
+        window._kbDelete = function(id) { deleteKBEntry(id); };
+
+        setTimeout(function() {
+            var ab = document.getElementById('kbAddBtn');
+            if (ab) ab.onclick = function() { openKBEditModal(null); };
+            bindKBEditModal();
+        }, 50);
+    }
+
+    // 知识库卡片（顶层和分类卡片共用同一套样式）
+    function kbCardHtml(kb, i, openFn, editFn, deleteFn) {
+        var coverColors = ['#eef2ff','#fff3e0','#e8f5e9','#fce4ec','#e0f7fa','#f3e5f5','#fff8e1','#e8eaf6'];
+        var bg = coverColors[i % coverColors.length];
+        var isGroup = Array.isArray(kb.children);
+        var hasUrl = (kb.url && kb.url.trim()) || isGroup;
+        var hasCover = kb.cover && kb.cover.trim();
+        var cardBg = hasCover ? 'background-image:url(' + escapeHtml(kb.cover) + ');background-size:cover;background-position:center;' : 'background:' + bg + ';';
+        var overlay = hasCover ? 'background:linear-gradient(to top,rgba(0,0,0,0.75) 0%,rgba(0,0,0,0.2) 50%,rgba(0,0,0,0.05) 100%);' : '';
+        var textColor = hasCover ? 'color:#fff;' : 'color:#1f3a6b;';
+        var subColor = hasCover ? 'color:rgba(255,255,255,0.8);' : 'color:#5e6f8d;';
+        var hintColor = hasCover ? 'color:rgba(255,255,255,0.6);' : 'color:#94a3b8;';
+        return '<div class="stat-card" style="cursor:' + (hasUrl ? 'pointer' : 'default') + ';opacity:' + (hasUrl ? '1' : '0.5') + ';padding:0;overflow:hidden;position:relative;' + cardBg + '"' +
+            (hasUrl ? ' onclick="window.' + openFn + '(\'' + escapeJsInAttr(kb.id) + '\')"' : '') + '>' +
+            '<div style="position:absolute;inset:0;' + overlay + '"></div>' +
+            '<div style="position:relative;z-index:1;padding:16px;min-height:180px;display:flex;flex-direction:column;justify-content:flex-end;">' +
+            (!hasCover ? '<div style="font-size:3rem;text-align:center;margin-bottom:8px;">📖</div>' : '') +
+            '<div style="font-weight:700;font-size:1.05rem;margin-bottom:4px;' + textColor + '">' + escapeHtml(kb.name) + '</div>' +
+            '<div style="font-size:0.8rem;margin-bottom:4px;' + subColor + '">' + escapeHtml(kb.desc || '') + '</div>' +
+            '<div style="font-size:0.7rem;' + hintColor + '">' + (isGroup ? '点击进入' : (hasUrl ? '点击查看' : '未配置链接')) + '</div>' +
+            '<div style="display:flex;gap:4px;margin-top:8px;justify-content:flex-end;">' +
+            '<button class="action-btn admin-only" onclick="event.stopPropagation();window.' + editFn + '(\'' + escapeJsInAttr(kb.id) + '\')" style="font-size:0.65rem;">✏️</button>' +
+            '<button class="action-btn danger admin-only" onclick="event.stopPropagation();window.' + deleteFn + '(\'' + escapeJsInAttr(kb.id) + '\')" style="font-size:0.65rem;">🗑️</button>' +
+            '</div></div></div>';
+    }
+
+    // 知识库编辑弹窗（顶层和分类卡片共用）
+    function kbEditModalHtml() {
+        return '<div id="kbEditModal" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.5);z-index:1000;align-items:center;justify-content:center;">' +
             '<div style="background:white;border-radius:16px;padding:24px;width:90%;max-width:500px;">' +
             '<div style="font-weight:700;margin-bottom:16px;" id="kbEditTitle">➕ 添加知识库</div>' +
             '<input type="hidden" id="kbEditId">' +
+            '<input type="hidden" id="kbEditParent">' +
             '<label style="font-size:0.8rem;color:#5e6f8d;">封面图片：</label>' +
             '<div id="kbCoverUploadArea" style="border:2px dashed #cbd5e1;border-radius:12px;padding:16px;text-align:center;cursor:pointer;margin:4px 0 4px 0;transition:0.2s;background:#fafcff;" onclick="document.getElementById(\'kbCoverFileInput\').click()">' +
             '<div id="kbCoverPreview" style="display:none;margin-bottom:8px;"><img id="kbCoverImg" style="max-width:100%;max-height:150px;border-radius:8px;"></div>' +
@@ -15266,64 +15331,100 @@ URL.revokeObjectURL(url);
             '<div style="display:flex;gap:12px;justify-content:flex-end;">' +
             '<button class="primary" id="kbEditCancel" style="background:#94a3b8;">取消</button>' +
             '<button class="primary" id="kbEditSave">💾 保存</button></div></div></div>';
+    }
 
-        window._kbOpen = function(id) { kbActiveId = id; renderKnowledgeBase(); };
-        window._kbEdit = function(id) { openKBEditModal(id); };
-        window._kbDelete = function(id) { deleteKBEntry(id); };
+    function bindKBEditModal() {
+        var ec = document.getElementById('kbEditCancel');
+        if (ec) ec.onclick = function() { document.getElementById('kbEditModal').style.display = 'none'; };
+        var es = document.getElementById('kbEditSave');
+        if (es) es.onclick = saveKBEntry;
+        var em = document.getElementById('kbEditModal');
+        if (em) em.onclick = function(e) { if (e.target === this) this.style.display = 'none'; };
+        // 封面上传
+        var cfi = document.getElementById('kbCoverFileInput');
+        if (cfi) cfi.onchange = function() {
+            var file = this.files[0];
+            if (!file) return;
+            var reader = new FileReader();
+            reader.onload = function(e) {
+                document.getElementById('kbEditCover').value = e.target.result;
+                document.getElementById('kbEditCoverUrl').value = ''; // 清空URL以上传为准
+                document.getElementById('kbCoverImg').src = e.target.result;
+                document.getElementById('kbCoverPreview').style.display = 'block';
+                document.getElementById('kbCoverPlaceholder').textContent = '📁 点击更换封面';
+            };
+            reader.readAsDataURL(file);
+        };
+    }
+
+    // 分组知识库（如质检标准库）的分类卡片页
+    function renderKBGroup(kb) {
+        var container = document.getElementById('mainContent');
+        var children = kb.children || [];
+        var cardsHtml = '';
+        if (children.length === 0) {
+            cardsHtml = '<div class="empty-placeholder" style="padding:40px;">暂无分类，请点击下方按钮添加</div>';
+        } else {
+            cardsHtml = '<div class="dashboard-grid">';
+            children.forEach(function(c, i) { cardsHtml += kbCardHtml(c, i, '_kbChildOpen', '_kbChildEdit', '_kbChildDelete'); });
+            cardsHtml += '</div>';
+        }
+        container.innerHTML = '<div class="report-box" style="margin-bottom:16px;">' +
+            '<div class="report-title" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;">' +
+            '<span>📖 ' + escapeHtml(kb.name) + '</span>' +
+            '<div style="display:flex;gap:8px;flex-wrap:wrap;">' +
+            '<button class="analysis-type-btn" id="kbBackBtn">← 返回知识库列表</button>' +
+            '<button class="primary admin-only" id="kbChildAddBtn">➕ 添加分类</button>' +
+            '</div></div>' +
+            '<div style="font-size:0.8rem;color:#5e6f8d;margin-bottom:4px;">共 ' + children.length + ' 个分类，点击卡片进入对应飞书文档</div></div>' +
+            cardsHtml + kbEditModalHtml();
+
+        window._kbChildOpen = function(id) { kbActiveChild = id; renderKnowledgeBase(); };
+        window._kbChildEdit = function(id) { openKBEditModal(id, kb.id); };
+        window._kbChildDelete = function(id) { deleteKBEntry(id, kb.id); };
 
         setTimeout(function() {
-            var ab = document.getElementById('kbAddBtn');
-            if (ab) ab.onclick = function() { openKBEditModal(null); };
-            var ec = document.getElementById('kbEditCancel');
-            if (ec) ec.onclick = function() { document.getElementById('kbEditModal').style.display = 'none'; };
-            var es = document.getElementById('kbEditSave');
-            if (es) es.onclick = saveKBEntry;
-            var em = document.getElementById('kbEditModal');
-            if (em) em.onclick = function(e) { if (e.target === this) this.style.display = 'none'; };
-            // 封面上传
-            var cfi = document.getElementById('kbCoverFileInput');
-            if (cfi) cfi.onchange = function() {
-                var file = this.files[0];
-                if (!file) return;
-                var reader = new FileReader();
-                reader.onload = function(e) {
-                    document.getElementById('kbEditCover').value = e.target.result;
-                    document.getElementById('kbEditCoverUrl').value = ''; // 清空URL以上传为准
-                    document.getElementById('kbCoverImg').src = e.target.result;
-                    document.getElementById('kbCoverPreview').style.display = 'block';
-                    document.getElementById('kbCoverPlaceholder').textContent = '📁 点击更换封面';
-                };
-                reader.readAsDataURL(file);
-            };
+            var bb = document.getElementById('kbBackBtn');
+            if (bb) bb.onclick = function() { kbActiveId = null; kbActiveChild = null; renderKnowledgeBase(); };
+            var ab = document.getElementById('kbChildAddBtn');
+            if (ab) ab.onclick = function() { openKBEditModal(null, kb.id); };
+            bindKBEditModal();
         }, 50);
     }
 
-    function openKBEditModal(kbId) {
+    function openKBEditModal(kbId, parentId) {
         var kbList = getKBList();
         var modal = document.getElementById('kbEditModal');
         var title = document.getElementById('kbEditTitle');
+        var parent = parentId ? kbList.find(function(k) { return k.id === parentId; }) : null;
         document.getElementById('kbEditId').value = kbId || '';
+        document.getElementById('kbEditParent').value = parentId || '';
+        var kb = null;
         if (kbId) {
-            var kb = kbList.find(function(k) { return k.id === kbId; });
-            if (kb) {
-                title.textContent = '✏️ 编辑知识库';
-                var coverVal = kb.cover || '';
-                // 判断是 base64 还是 URL
-                var isUrl = coverVal.startsWith('http');
-                document.getElementById('kbEditCover').value = isUrl ? '' : coverVal;
-                document.getElementById('kbEditCoverUrl').value = isUrl ? coverVal : '';
-                document.getElementById('kbEditName').value = kb.name || '';
-                document.getElementById('kbEditUrl').value = kb.url || '';
-                document.getElementById('kbEditDesc').value = kb.desc || '';
-                // 显示已有封面预览
-                if (coverVal) {
-                    document.getElementById('kbCoverImg').src = coverVal;
-                    document.getElementById('kbCoverPreview').style.display = 'block';
-                    document.getElementById('kbCoverPlaceholder').textContent = isUrl ? '📁 点击上传替换' : '📁 点击更换封面';
-                }
+            kb = parent ? (parent.children || []).find(function(k) { return k.id === kbId; }) : kbList.find(function(k) { return k.id === kbId; });
+        }
+        if (kb) {
+            title.textContent = parentId ? '✏️ 编辑分类' : '✏️ 编辑知识库';
+            var coverVal = kb.cover || '';
+            // 判断是 base64 还是 URL
+            var isUrl = coverVal.startsWith('http');
+            document.getElementById('kbEditCover').value = isUrl ? '' : coverVal;
+            document.getElementById('kbEditCoverUrl').value = isUrl ? coverVal : '';
+            document.getElementById('kbEditName').value = kb.name || '';
+            document.getElementById('kbEditUrl').value = kb.url || '';
+            document.getElementById('kbEditDesc').value = kb.desc || '';
+            // 显示已有封面预览
+            if (coverVal) {
+                document.getElementById('kbCoverImg').src = coverVal;
+                document.getElementById('kbCoverPreview').style.display = 'block';
+                document.getElementById('kbCoverPlaceholder').textContent = isUrl ? '📁 点击上传替换' : '📁 点击更换封面';
+            } else {
+                document.getElementById('kbCoverImg').src = '';
+                document.getElementById('kbCoverPreview').style.display = 'none';
+                document.getElementById('kbCoverPlaceholder').textContent = '📁 点击上传封面图片';
             }
         } else {
-            title.textContent = '➕ 添加知识库';
+            title.textContent = parentId ? '➕ 添加分类' : '➕ 添加知识库';
             document.getElementById('kbEditCover').value = '';
             document.getElementById('kbEditCoverUrl').value = '';
             document.getElementById('kbEditName').value = '';
@@ -15338,20 +15439,48 @@ URL.revokeObjectURL(url);
 
     function saveKBEntry() {
         var kbId = document.getElementById('kbEditId').value;
+        var parentId = document.getElementById('kbEditParent').value;
         var name = document.getElementById('kbEditName').value.trim();
         var url = document.getElementById('kbEditUrl').value.trim();
-        if (!name) { alert('请输入知识库名称'); return; }
+        if (!name) { alert(parentId ? '请输入分类名称' : '请输入知识库名称'); return; }
         // 封面：URL 优先（跨设备可看），其次取上传的 base64
         var coverUrl = document.getElementById('kbEditCoverUrl').value.trim();
         var coverData = coverUrl || document.getElementById('kbEditCover').value.trim();
+        var desc = document.getElementById('kbEditDesc').value.trim();
         var kbList = getKBList();
+        if (parentId) {
+            var parent = kbList.find(function(k) { return k.id === parentId; });
+            if (!parent) return;
+            if (!Array.isArray(parent.children)) parent.children = [];
+            if (kbId) {
+                var child = parent.children.find(function(k) { return k.id === kbId; });
+                if (child) {
+                    child.name = name;
+                    child.cover = coverData;
+                    child.url = url;
+                    child.desc = desc;
+                }
+            } else {
+                parent.children.push({
+                    id: 'kbs_' + Date.now(),
+                    name: name,
+                    url: url,
+                    cover: coverData,
+                    desc: desc
+                });
+            }
+            saveKBList(kbList);
+            document.getElementById('kbEditModal').style.display = 'none';
+            renderKnowledgeBase();
+            return;
+        }
         if (kbId) {
             var kb = kbList.find(function(k) { return k.id === kbId; });
             if (kb) {
                 kb.name = name;
                 kb.cover = coverData;
                 kb.url = url;
-                kb.desc = document.getElementById('kbEditDesc').value.trim();
+                kb.desc = desc;
             }
         } else {
             kbList.push({
@@ -15359,7 +15488,7 @@ URL.revokeObjectURL(url);
                 name: name,
                 url: url,
                 cover: coverData,
-                desc: document.getElementById('kbEditDesc').value.trim()
+                desc: desc
             });
         }
         saveKBList(kbList);
@@ -15367,11 +15496,20 @@ URL.revokeObjectURL(url);
         renderKnowledgeBase();
     }
 
-    async function deleteKBEntry(kbId) {
-        if (!await confirmDelete('该知识库')) return;
+    async function deleteKBEntry(kbId, parentId) {
+        if (!await confirmDelete(parentId ? '该分类' : '该知识库')) return;
         var kbList = getKBList();
-        saveKBList(kbList.filter(function(k) { return k.id !== kbId; }));
-        if (kbActiveId === kbId) kbActiveId = null;
+        if (parentId) {
+            var parent = kbList.find(function(k) { return k.id === parentId; });
+            if (parent && Array.isArray(parent.children)) {
+                parent.children = parent.children.filter(function(k) { return k.id !== kbId; });
+                saveKBList(kbList);
+            }
+            if (kbActiveChild === kbId) kbActiveChild = null;
+        } else {
+            saveKBList(kbList.filter(function(k) { return k.id !== kbId; }));
+            if (kbActiveId === kbId) { kbActiveId = null; kbActiveChild = null; }
+        }
         renderKnowledgeBase();
     }
 
