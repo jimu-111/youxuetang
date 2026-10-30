@@ -1,0 +1,59 @@
+name: 质检标准卡片每日同步
+
+# 2026-10-30 建。
+# 每天 9:00（北京时间 = UTC 1:00）读飞书表 gMNoIv 的 A~D 列：
+#   A 品类 / B 封面照片 / C 飞书链接 / D 描述
+# 和云端 kbs_config 比对指纹：没变就什么都不写；变了才更新（换了图只重传那一张）。
+# 页面打开「质检标准库」时读这份配置，顺序完全按表里从上到下。
+#
+# 手动触发可勾 dry_run 先演练（只读不写）；勾 force 可越过「品类数少一半」的闸门。
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: '只读演练（不写任何数据）'
+        default: 'false'
+      force:
+        description: '强制（越过「品类数骤降一半」的闸门）'
+        default: 'false'
+  # 每天 9:00 北京时间 = UTC 1:00（GitHub Actions cron 用 UTC）
+  schedule:
+    - cron: "0 1 * * *"
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    concurrency:
+      group: kb-standards-sync
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      # sharp：把飞书原图压到 600px 再存云端（原图动辄 1~2MB，压缩后十几 KB）
+      # 装不上也不阻断：脚本会退回「按原图存」，功能不受影响
+      - name: 装图片压缩库（失败不影响同步）
+        run: npm install --no-audit --no-fund || echo "⚠️ sharp 没装上 —— 本次封面按原图存"
+
+      - name: 读飞书表 → 更新云端配置
+        id: kbsync
+        run: node kb-standards-sync.js
+        env:
+          DRY_RUN: ${{ github.event.inputs.dry_run || 'false' }}
+          FORCE: ${{ github.event.inputs.force || 'false' }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          FEISHU_APP_SECRET: ${{ secrets.FEISHU_APP_SECRET }}
+
+      # 失败告警：没这个的话，同步悄悄停掉也没人知道（页面会一直显示上一次的内容）
+      - name: 同步失败告警（飞书）
+        if: steps.kbsync.outcome == 'failure'
+        continue-on-error: true
+        run: |
+          node kb-standards-sync.js --alert-only "⚠️ **质检标准卡片同步未完成**（脚本异常退出，详见运行日志）。云端配置没有被修改，页面仍是上一次的内容。常见原因：表被改名/删掉、封面图片下载失败、品类名重复、品类数突然少一半（闸门拦下）。"
+        env:
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          FEISHU_APP_SECRET: ${{ secrets.FEISHU_APP_SECRET }}
