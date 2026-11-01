@@ -6,6 +6,11 @@
  *                问题照片 / 应操作方向（兼容「正确方向」）/ 方向照片 / 方向示例照片
  *   「日期」「更新人」不导入（和页面手动导入的字段保持一致）。
  *
+ * 没填质检码的行（「/」或空）：
+ *   以前页面手动导入只保留第 1 条，其余全丢。现在每一行都当独立案例同步，
+ *   用表里的行号临时编号成「/-143」这种（网页靠质检码区分案例，不能全叫「/」）。
+ *   等表里补上真实质检码，下一次同步会按行号认出来，自动把编号改成真实码。
+ *
  * 目标：云端 app_data 的 manualCases（就是网页「案例库 → 📝 培训案例收集」那份数据）。
  *
  * 每周一、三、五、日 9:00（北京时间 = UTC 1:00）由 GitHub Actions 在云端跑：
@@ -250,7 +255,7 @@ function extractFields(row, col) {
 }
 
 function parseCaseRows(rows) {
-  if (!Array.isArray(rows) || rows.length === 0) return { cases: [], dup: [], rowCount: 0, col: {} };
+  if (!Array.isArray(rows) || rows.length === 0) return { cases: [], dup: [], missing: [], rowCount: 0, col: {} };
   const col = buildColMap(rows[0]);
   if (col['质检码'] === undefined) {
     throw new Error('表头里找不到「质检码」列，本轮不写入（请检查表头是否被改过）');
@@ -258,17 +263,26 @@ function parseCaseRows(rows) {
   const byCode = new Map();
   const order = [];
   const dupCount = {};
+  const missing = [];
   let rowCount = 0;
 
   for (let r = 1; r < rows.length; r++) {
     const row = rows[r];
     if (!Array.isArray(row)) continue;
-    const code = cellText(row[col['质检码']]);
-    if (!code) continue;
-    rowCount++;
+    const rawCode = cellText(row[col['质检码']]);
     const fields = extractFields(row, col);
+    const hasContent = TEXT_FIELDS.some(k => fields[k]) || IMG_FIELDS.some(k => (fields[k] || []).length);
+    if (!rawCode && !hasContent) continue;   // 完全空白的行，跳过
+    rowCount++;
+
+    // 「/」或空质检码：每一行都是独立案例，用表里的行号临时编号（/-143 这种）。
+    // 不能全叫「/」——网页的编辑/删除是按质检码找案例的，重名会改错/删错。
+    const noCode = !rawCode || rawCode === '/' || rawCode === '／';
+    const code = noCode ? '/-' + (r + 1) : rawCode;
+
     if (byCode.has(code)) {
-      dupCount[code] = (dupCount[code] || 1) + 1;
+      // 只剩真实质检码重复的情况（「/」和空码已经按行号拆开，不会重名）
+      dupCount[rawCode] = (dupCount[rawCode] || 1) + 1;
       // 和页面手动导入一致：第 1 条为准，只补空着的字段
       const prev = byCode.get(code);
       for (const k of TEXT_FIELDS) if (!prev[k] && fields[k]) prev[k] = fields[k];
@@ -276,6 +290,12 @@ function parseCaseRows(rows) {
       continue;
     }
     const c = Object.assign({ qcCode: code }, fields, { caseType: '培训案例' });
+    if (noCode) {
+      c._feishuRow = r + 1;   // 云端也带着，补真实码时靠它认人
+      missing.push({ row: r + 1, code: rawCode || '(空)', desc: fields.issueDesc });
+    }
+    // 表里的行号只给合并逻辑用，不写进云端（不可枚举，Object.assign 不会带走）
+    Object.defineProperty(c, '_row', { value: r + 1, enumerable: false });
     byCode.set(code, c);
     order.push(code);
   }
@@ -284,6 +304,7 @@ function parseCaseRows(rows) {
   return {
     cases: order.map(code => byCode.get(code)),
     dup,
+    missing,
     rowCount,
     col
   };
@@ -328,26 +349,64 @@ function mergeCases(cloudCases, tableCases) {
     .map(c => Object.assign({}, c));
 
   const tableCodes = new Set(tableCases.map(t => t.qcCode));
+  const tableRows = new Set(tableCases.map(t => t._row).filter(Boolean));
   const addedCodes = [];
   const updatedCodes = [];
   const deletedCodes = [];
+  const reusedCodes = [];
   const warnings = [];
-  let added = 0, updatedCases = 0, updatedFields = 0, deleted = 0, adopted = 0;
+  let added = 0, updatedCases = 0, updatedFields = 0, deleted = 0, adopted = 0, reused = 0;
 
-  // 1) 删除：只删「上次从飞书同步来的」且表里已经没有的
+  // 0) 旧数据迁移：云端可能还留着一条质检码是「/」的占位案例（旧版手动导入只保留第 1 条）。
+  //    如果它的内容和表里某个「没填码」的行完全一样，就把它接到那一行上，编号改成 /-行号，
+  //    内容原样保留（包括 createTime 和网页上的手改）；接不上的才按删除处理。
+  const legacySlash = result.filter(c => c[FEISHU_MARK] === 1 && (c.qcCode === '/' || c.qcCode === '／'));
+  if (legacySlash.length) {
+    const claimed = new Set();
+    for (const legacy of legacySlash) {
+      const oldH = legacy[HASH_FIELD];
+      if (!oldH || typeof oldH !== 'object') continue;
+      const cand = tableCases.find(t => t._feishuRow && !claimed.has(t.qcCode) &&
+        !result.some(c => c !== legacy && c.qcCode === t.qcCode) &&
+        ALL_FIELDS.every(k => oldH[k] === fieldHash(t[k])));
+      if (!cand) continue;
+      legacy.qcCode = cand.qcCode;
+      legacy._feishuRow = cand._feishuRow;
+      claimed.add(cand.qcCode);
+      reused++;
+      reusedCodes.push(cand.qcCode);
+    }
+  }
+
+  // 1) 删除：只删「上次从飞书同步来的」且表里已经没有的。
+  //    补真实质检码的行靠 _feishuRow 认出来，不删（下一步会把编号改成真实码）。
   for (let i = result.length - 1; i >= 0; i--) {
     const c = result[i];
     if (!c || c[FEISHU_MARK] !== 1) continue;
-    if (!tableCodes.has(c.qcCode)) {
-      result.splice(i, 1);
-      deleted++;
-      deletedCodes.push(c.qcCode);
-    }
+    if (tableCodes.has(c.qcCode)) continue;
+    if (c._feishuRow && tableRows.has(c._feishuRow)) continue;
+    result.splice(i, 1);
+    deleted++;
+    deletedCodes.push(c.qcCode);
   }
 
   // 2) 逐条处理表里的案例
   for (const t of tableCases) {
-    const idx = findCaseIndex(result, t.qcCode);
+    let idx = findCaseIndex(result, t.qcCode);
+    let viaRow = false;
+
+    // 这一行原来没填码（云端存的是 /-行号），现在补上了真实码：按表行号接上，别删了重加
+    if (idx < 0 && t._row) {
+      for (let i = 0; i < result.length; i++) {
+        const x = result[i];
+        if (!x || x._feishuRow !== t._row) continue;
+        if (x[FEISHU_MARK] !== 1 && !isTrainingCase(x)) continue;
+        idx = i;
+        viaRow = true;
+        break;
+      }
+    }
+
     const curH = fieldHashes(t);
 
     if (idx < 0) {
@@ -374,6 +433,8 @@ function mergeCases(cloudCases, tableCases) {
       // 首次运行「认领」：只打标记，不改内容
       c[FEISHU_MARK] = 1;
       c[HASH_FIELD] = curH;
+      if (viaRow) c.qcCode = t.qcCode;
+      if (t._feishuRow) c._feishuRow = t._feishuRow; else if (viaRow) delete c._feishuRow;
       adopted++;
       continue;
     }
@@ -382,9 +443,14 @@ function mergeCases(cloudCases, tableCases) {
     if (!oldH) {
       // 有标记但没有指纹（理论上不该出现）：按认领处理，不覆盖内容
       c[HASH_FIELD] = curH;
+      if (viaRow) c.qcCode = t.qcCode;
+      if (t._feishuRow) c._feishuRow = t._feishuRow; else if (viaRow) delete c._feishuRow;
       adopted++;
       continue;
     }
+
+    let codeChanged = false;
+    if (viaRow && c.qcCode !== t.qcCode) { c.qcCode = t.qcCode; codeChanged = true; }
 
     const changedFields = [];
     for (const k of ALL_FIELDS) {
@@ -394,7 +460,10 @@ function mergeCases(cloudCases, tableCases) {
       }
     }
     c[HASH_FIELD] = curH;
-    if (changedFields.length) {
+    if (t._feishuRow) c._feishuRow = t._feishuRow;
+    else if (viaRow) delete c._feishuRow;
+
+    if (changedFields.length || codeChanged) {
       updatedCases++;
       updatedFields += changedFields.length;
       updatedCodes.push(t.qcCode);
@@ -403,22 +472,24 @@ function mergeCases(cloudCases, tableCases) {
 
   return {
     cases: result,
-    changed: (added + updatedCases + deleted + adopted) > 0,
+    changed: (added + updatedCases + deleted + adopted + reused) > 0,
     added,
     updatedCases,
     updatedFields,
     deleted,
     adopted,
+    reused,
     addedCodes,
     updatedCodes,
     deletedCodes,
+    reusedCodes,
     warnings
   };
 }
 
 function checkGates(cloudCases, tableCases, force) {
   if (!Array.isArray(tableCases) || tableCases.length === 0) {
-    throw new Error('表里读不到任何带质检码的案例（0 条），本轮不写入。请检查表格是否被清空、表头是否被改过');
+    throw new Error('表里读不到任何有效案例（0 条），本轮不写入。请检查表格是否被清空、表头是否被改过');
   }
   const prevFeishu = (Array.isArray(cloudCases) ? cloudCases : []).filter(c => c && c[FEISHU_MARK] === 1).length;
   if (!force && prevFeishu >= 4 && tableCases.length < prevFeishu * 0.5) {
@@ -511,21 +582,21 @@ function listCodes(arr, max) {
   return arr.length > m ? s + ' …等 ' + arr.length + ' 条' : s;
 }
 
-function buildCardMessage(merged, dup, firstRun) {
+function buildCardMessage(merged, dup, missing, firstRun) {
   const lines = [];
   if (firstRun) lines.push('首次同步：认领 **' + merged.adopted + '** 条现有案例（内容未改）');
+  if (merged.reused) lines.push('复用 **' + merged.reused + '** 条旧的「/」占位案例（内容保留，编号改为 ' + listCodes(merged.reusedCodes, 5) + '）');
   if (merged.added) lines.push('新增 **' + merged.added + '** 条：' + listCodes(merged.addedCodes, 10));
   if (merged.updatedCases) lines.push('更新 **' + merged.updatedCases + '** 条：' + listCodes(merged.updatedCodes, 10));
   if (merged.deleted) lines.push('删除 **' + merged.deleted + '** 条：' + listCodes(merged.deletedCodes, 10));
   if (!lines.length) lines.push('内容和上次一致，没有变化');
   lines.push('');
   lines.push('规则：表里改了哪项就用表里的；网页手动改过、表里没变的项保留；手动录入的案例不动。');
+  if (missing && missing.length) {
+    lines.push('ℹ️ 表里有 **' + missing.length + '** 行没填质检码（「/」或空），已按表里的行号临时编号为 /-行号，全部同步了。建议补上真实质检码，补完后下次同步会自动改成真实码。');
+  }
   if (dup && dup.length) {
-    const slash = dup.filter(d => d.code === '/').reduce((n, d) => n + d.rows, 0);
-    let warn = '⚠️ 表里有 ' + dup.length + ' 个质检码重复';
-    if (slash) warn += '（其中「/」占 ' + slash + ' 行，只能保留第 1 条）';
-    warn += '；重复码按第 1 条为准、空字段用后面的补。';
-    lines.push(warn);
+    lines.push('⚠️ 表里有 ' + dup.length + ' 个质检码重复；重复码按第 1 条为准、空字段用后面的补。');
   }
   if (merged.warnings && merged.warnings.length) {
     lines.push('⚠️ ' + merged.warnings.slice(0, 5).join('；') + (merged.warnings.length > 5 ? ' …' : ''));
@@ -539,7 +610,10 @@ async function main() {
 
   const rows = await readCaseTable();
   const parsed = parseCaseRows(rows);
-  console.log('📋 表里有效案例：' + parsed.cases.length + ' 条（去重后；原始 ' + parsed.rowCount + ' 行）');
+  console.log('📋 表里有效案例：' + parsed.cases.length + ' 条（含没填码的行；原始 ' + parsed.rowCount + ' 行）');
+  if (parsed.missing.length) {
+    console.log('ℹ️ 没填质检码的行 ' + parsed.missing.length + ' 行（已按行号临时编号）：' + parsed.missing.map(m => '第' + m.row + '行→/-' + m.row).slice(0, 20).join('、') + (parsed.missing.length > 20 ? ' …' : ''));
+  }
   if (parsed.dup.length) {
     console.log('ℹ️ 重复质检码 ' + parsed.dup.length + ' 个：' + parsed.dup.map(d => d.code + '×' + d.rows).slice(0, 20).join('、') + (parsed.dup.length > 20 ? ' …' : ''));
   }
@@ -558,6 +632,7 @@ async function main() {
   console.log('  更新：' + merged.updatedCases + (merged.updatedCases ? '（' + listCodes(merged.updatedCodes) + '）' : ''));
   console.log('  删除：' + merged.deleted + (merged.deleted ? '（' + listCodes(merged.deletedCodes) + '）' : ''));
   console.log('  认领：' + merged.adopted);
+  if (merged.reused) console.log('  复用旧「/」案例：' + merged.reused + '（' + listCodes(merged.reusedCodes) + '）');
   if (merged.warnings.length) merged.warnings.forEach(w => console.log('  ⚠️ ' + w));
 
   if (!merged.changed) {
@@ -583,7 +658,7 @@ async function main() {
 
   await sendCard(
     firstRun ? '✅ 培训案例自动同步已启用' : '✅ 培训案例已自动更新',
-    buildCardMessage(merged, parsed.dup, firstRun),
+    buildCardMessage(merged, parsed.dup, parsed.missing, firstRun),
     'green'
   );
   return { changed: true, merged };
