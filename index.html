@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <!-- 版本行：每次部署新代码必须 bump 此 content（YYYYMMDD.N），旧设备靠它自检静默升级 -->
-    <meta name="yxt-ver" content="20261109.2">
+    <meta name="yxt-ver" content="20261109.3">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
     <title>优学堂</title>
     <script src="https://cdn.sheetjs.com/xlsx-0.20.2/package/dist/xlsx.full.min.js" defer></script>
@@ -15354,15 +15354,16 @@ URL.revokeObjectURL(url);
             if (kbActiveChild) {
                 var child = (kb.children || []).find(function(c) { return c.id === kbActiveChild; });
                 if (!child || !child.url) { kbActiveChild = null; renderKnowledgeBase(); return; }
-                container.innerHTML = '<div class="report-box" style="margin-bottom:12px;">' +
-                    '<div class="report-title" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">' +
+                // 2026-11-09：文档视图顶部压成一行（原「标题块 + 网址行」两行改成一条窄工具栏），
+                //   去掉灰色网址行，iframe 高度从 100vh-190px 提到 100vh-100px，文档窗口高约多 90px。
+                container.innerHTML = '<div class="report-box" style="margin-bottom:8px;padding:8px 14px;border-radius:14px;box-shadow:0 2px 8px rgba(0,0,0,0.04);">' +
+                    '<div class="report-title" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:0;padding-bottom:0;border-bottom:none;font-size:0.85rem;">' +
                     '<span>📖 ' + escapeHtml(kb.name) + ' / ' + escapeHtml(child.name) + '</span>' +
                     '<div style="display:flex;gap:8px;flex-wrap:wrap;">' +
                     '<button class="analysis-type-btn" id="kbBackBtn">← 返回分类列表</button>' +
                     '<a href="' + escapeHtml(child.url) + '" target="_blank" class="small-outline" style="text-decoration:none;">🔗 在飞书打开</a>' +
-                    '</div></div>' +
-                    '<div style="font-size:0.7rem;color:#94a3b8;">' + escapeHtml(child.url) + '</div></div>' +
-                    '<div style="background:white;border-radius:16px;overflow:hidden;box-shadow:0 4px 12px rgba(0,0,0,0.05);border:1px solid #eef2f6;height:calc(100vh - 190px);">' +
+                    '</div></div></div>' +
+                    '<div style="background:white;border-radius:16px;overflow:hidden;box-shadow:0 4px 12px rgba(0,0,0,0.05);border:1px solid #eef2f6;height:calc(100vh - 100px);">' +
                     '<iframe src="' + escapeHtml(child.url) + '" style="width:100%;height:100%;border:none;" sandbox="allow-same-origin allow-scripts allow-popups allow-forms allow-top-navigation"></iframe>' +
                     '</div>';
                 setTimeout(function() {
@@ -15373,15 +15374,15 @@ URL.revokeObjectURL(url);
             }
 
             if (!kb.url) { kbActiveId = null; renderKnowledgeBase(); return; }
-            container.innerHTML = '<div class="report-box" style="margin-bottom:12px;">' +
-                '<div class="report-title" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">' +
+            // 2026-11-09：同分类视图，顶部压成一行窄工具栏，iframe 100vh-190px → 100vh-100px。
+            container.innerHTML = '<div class="report-box" style="margin-bottom:8px;padding:8px 14px;border-radius:14px;box-shadow:0 2px 8px rgba(0,0,0,0.04);">' +
+                '<div class="report-title" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:0;padding-bottom:0;border-bottom:none;font-size:0.85rem;">' +
                 '<span>📖 ' + escapeHtml(kb.name) + '</span>' +
                 '<div style="display:flex;gap:8px;flex-wrap:wrap;">' +
                 '<button class="analysis-type-btn" id="kbBackBtn">← 返回知识库列表</button>' +
                 '<a href="' + escapeHtml(kb.url) + '" target="_blank" class="small-outline" style="text-decoration:none;">🔗 在飞书打开</a>' +
-                '</div></div>' +
-                '<div style="font-size:0.7rem;color:#94a3b8;">' + escapeHtml(kb.url) + '</div></div>' +
-                '<div style="background:white;border-radius:16px;overflow:hidden;box-shadow:0 4px 12px rgba(0,0,0,0.05);border:1px solid #eef2f6;height:calc(100vh - 190px);">' +
+                '</div></div></div>' +
+                '<div style="background:white;border-radius:16px;overflow:hidden;box-shadow:0 4px 12px rgba(0,0,0,0.05);border:1px solid #eef2f6;height:calc(100vh - 100px);">' +
                 '<iframe src="' + escapeHtml(kb.url) + '" style="width:100%;height:100%;border:none;" sandbox="allow-same-origin allow-scripts allow-popups allow-forms allow-top-navigation"></iframe>' +
                 '</div>';
             setTimeout(function() {
