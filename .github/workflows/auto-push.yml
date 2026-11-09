@@ -41,6 +41,7 @@ jobs:
       - name: 装图片压缩库（失败不影响推送）
         run: npm install --no-audit --no-fund || echo "⚠️ sharp 没装上 —— 本次照片退回占位图模式，推送照发"
       - name: 分析上周数据并推送
+        id: push
         run: node feishu-auto-push.js
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
@@ -53,3 +54,17 @@ jobs:
           #   换行，飞书回 200+code 10003)或没密钥时**自动退回 Pages 代理**，由代理用 Cloudflare 环境变量
           #   里的真值补上。所以这个 Secret 现在是「有更好、没有也能跑」，不再是单点。
           FEISHU_APP_SECRET: ${{ secrets.FEISHU_APP_SECRET }}
+
+      # 2026-11-09：只要推送跑过，就给徐行发一张结果卡 —— 成功（含「无人达标 0 条」）、失败、被取消都发。
+      # 用 if: always() 保证推送步骤失败/取消时这一步也会执行；continue-on-error 保证发卡本身出问题不会把整个工作流标红。
+      # 幂等靠 Supabase 里的 auto_push_notified_<日期> 标记，Cloudflare + GitHub 两条触发通道不会重复发。
+      - name: 发推送结果卡片（成功/失败/无人达标都发）
+        if: always()
+        continue-on-error: true
+        run: node push-result-card.js
+        env:
+          PUSH_OUTCOME: ${{ steps.push.outcome }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          FEISHU_APP_SECRET: ${{ secrets.FEISHU_APP_SECRET }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
