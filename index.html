@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <!-- 版本行：每次部署新代码必须 bump 此 content（YYYYMMDD.N），旧设备靠它自检静默升级 -->
-    <meta name="yxt-ver" content="20261109.3">
+    <meta name="yxt-ver" content="20261109.4">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
     <title>优学堂</title>
     <script src="https://cdn.sheetjs.com/xlsx-0.20.2/package/dist/xlsx.full.min.js" defer></script>
@@ -15326,6 +15326,28 @@ URL.revokeObjectURL(url);
     }
     function saveKBList(list) { localStorage.setItem(KB_LIST_KEY, JSON.stringify(list)); }
 
+    // 2026-11-09 知识库看文档改成案例库「月度标准更新」那套：
+    //   卡片列表原地不动，文档窗口追加到下方，再平滑滑下去；点同一张卡片=收起。
+    function openKBDocOverlay(docKey, title, url) {
+        var existing = document.getElementById('kbDocWrap');
+        var same = existing && existing.getAttribute('data-kb-doc') === docKey;
+        if (existing) existing.remove();
+        if (same) return;   // 再点同一份 = 收起（与月度标准更新一致）
+        var wrap = document.createElement('div');
+        wrap.id = 'kbDocWrap';
+        wrap.setAttribute('data-kb-doc', docKey);
+        wrap.style.cssText = 'background:white;border-radius:16px;overflow:hidden;box-shadow:0 4px 12px rgba(0,0,0,0.05);border:1px solid #eef2f6;height:calc(100vh - 55px);margin-bottom:16px;';
+        wrap.innerHTML = '<div style="background:#1f3a6b;color:white;padding:8px 16px;display:flex;justify-content:space-between;align-items:center;gap:8px;">' +
+            '<span style="font-size:0.85rem;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">📖 ' + escapeHtml(title) + '</span>' +
+            '<div style="display:flex;gap:8px;flex-shrink:0;align-items:center;">' +
+            '<a href="' + escapeHtml(url) + '" target="_blank" style="color:white;font-size:0.7rem;text-decoration:none;background:rgba(255,255,255,0.2);padding:4px 10px;border-radius:12px;">🔗 在飞书打开</a>' +
+            '<button onclick="document.getElementById(\'kbDocWrap\').remove()" style="background:rgba(255,255,255,0.2);border:none;color:white;width:28px;height:28px;border-radius:50%;cursor:pointer;font-size:1rem;">✕</button>' +
+            '</div></div>' +
+            '<div style="width:100%;height:calc(100% - 44px);"><iframe src="' + escapeHtml(url) + '" style="width:100%;height:100%;border:none;" sandbox="allow-same-origin allow-scripts allow-popups allow-forms allow-top-navigation"></iframe></div>';
+        document.getElementById('mainContent').appendChild(wrap);
+        wrap.scrollIntoView({behavior: 'smooth'});
+    }
+
     let kbActiveId = null;
     let kbActiveChild = null;
 
@@ -15407,7 +15429,15 @@ URL.revokeObjectURL(url);
             '<div style="font-size:0.8rem;color:#5e6f8d;margin-bottom:4px;">共 ' + kbList.length + ' 个知识库，点击卡片进入对应飞书文档</div></div>' +
             cardsHtml + kbEditModalHtml();
 
-        window._kbOpen = function(id) { kbActiveId = id; kbActiveChild = null; renderKnowledgeBase(); };
+        window._kbOpen = function(id) {
+            var list = getKBList();
+            var kb = list.find(function(k) { return k.id === id; });
+            if (!kb) return;
+            // 分组卡片（如质检标准库）仍然进分类页；有直链的卡片直接在下方展开文档
+            if (Array.isArray(kb.children)) { kbActiveId = id; kbActiveChild = null; renderKnowledgeBase(); return; }
+            if (!kb.url) return;
+            openKBDocOverlay('top:' + kb.id, kb.name, kb.url);
+        };
         window._kbEdit = function(id) { openKBEditModal(id); };
         window._kbDelete = function(id) { deleteKBEntry(id); };
 
@@ -15631,7 +15661,11 @@ URL.revokeObjectURL(url);
             (sheetDriven ? '；<span style="color:#94a3b8;">本页由飞书表自动同步，要增删改请直接改表</span>' : '') + '</div></div>' +
             cardsHtml + kbEditModalHtml();
 
-        window._kbChildOpen = function(id) { kbActiveChild = id; renderKnowledgeBase(); };
+        window._kbChildOpen = function(id) {
+            var child = children.find(function(c) { return c.id === id; });
+            if (!child || !child.url) return;
+            openKBDocOverlay(kb.id + ':' + child.id, kb.name + ' / ' + child.name, child.url);
+        };
         window._kbChildEdit = function(id) { openKBEditModal(id, kb.id); };
         window._kbChildDelete = function(id) { deleteKBEntry(id, kb.id); };
         window._kbChildMove = function(id, delta) { moveKBChild(kb.id, id, delta); };
