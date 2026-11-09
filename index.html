@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <!-- 版本行：每次部署新代码必须 bump 此 content（YYYYMMDD.N），旧设备靠它自检静默升级 -->
-    <meta name="yxt-ver" content="20261030.3">
+    <meta name="yxt-ver" content="20261109.1">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
     <title>优学堂</title>
     <script src="https://cdn.sheetjs.com/xlsx-0.20.2/package/dist/xlsx.full.min.js" defer></script>
@@ -742,6 +742,12 @@
                     return true;
                 });
                 if (keyConds.length === 0) want = allKeys; // 无 key 条件：维持全量语义
+                // 2026-11-09：qbimg_（题库图）/ qb_src_backup_（源同步备份）只在 KV 和 IndexedDB 里用，
+                //   页面从不读它们；从 KV 兜底路径读回来等于把几十 MB 又搬一遍，必须挡掉。
+                want = want.filter(function(k){
+                    var s = String(k);
+                    return s.indexOf('qbimg_') !== 0 && s.indexOf('qb_src_backup_') !== 0;
+                });
                 // 2026-09-09.3 增量预剪枝（10 万读限最大烧源的修复）：list 元数据已带每 key 镜像时间 t
                 // （与值内 o.t 同源），带 updated_at=gt.游标 的增量拉取可 GET 前先剔除游标之前未变的 key。
                 // 此前增量拉取也要把全部 KV key（259 个）逐个 GET 回来再客户端过滤 → 每台设备每次
@@ -793,7 +799,12 @@
             return keysPromise.then(function(keys){
                 // 2026-10-20：qbvideo_* 是题库视频（几 MB 的 base64），不是 Supabase 的 app_data，
                 // 绝不能回灌进 Supabase、更不能在回灌后被 /data/clear 清掉——那样视频就全没了。
-                keys = (keys || []).filter(function(k){ return String(k).indexOf('qbvideo_') !== 0; });
+                // 2026-11-09：qbimg_*（题库图）/ qb_src_backup_*（源同步备份）同理，只属于 KV。
+                //   之前它们被回灌进 Supabase，攒到 39MB 后整份拉取直接超时，页面就报「云端拉取失败」。
+                keys = (keys || []).filter(function(k){
+                    var s = String(k);
+                    return s.indexOf('qbvideo_') !== 0 && s.indexOf('qbimg_') !== 0 && s.indexOf('qb_src_backup_') !== 0;
+                });
                 if (keys.length === 0) { _supDown = false; try { _kvFpReset(); } catch(e) {} return 0; }
                 return Promise.all(keys.map(function(k){
                     return _origFetch(KV_PAGES + '/data?key=' + encodeURIComponent(k), { headers: { 'x-yxt-secret': KV_SECRET } })
@@ -23864,7 +23875,8 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
             var rm = [];
             for (var i = 0; i < _realLS.length; i++) {
                 var k3 = _realLS.key(i);
-                if (k3 && (k3.indexOf('qbimg_') === 0 || k3.indexOf('thumb_') === 0)) rm.push(k3);
+                // 2026-11-09：qb_src_backup_（源同步备份）页面从不读，历史版本曾把它同步到本机，一并清掉
+                if (k3 && (k3.indexOf('qbimg_') === 0 || k3.indexOf('thumb_') === 0 || k3.indexOf('qb_src_backup_') === 0)) rm.push(k3);
             }
             rm.forEach(function(k) { try { _realLS.removeItem(k); } catch(e) {} });
             if (rm.length > 0) { console.log('🧹 容量护栏: 已清理图片缓存 ' + rm.length + ' 条'); return; }
@@ -24797,16 +24809,20 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
         var _lastSyncAt = null;
         try { _lastSyncAt = _realLS.getItem(_cursorKey); } catch(e) {}
         var _pullUrl = SUPABASE_URL + '/rest/v1/app_data?select=*&order=updated_at.desc';
+        // 2026-11-09 超时修复：qbimg_*（题库图 base64）和 qb_src_backup_*（源同步备份）只存在 Pages KV / IndexedDB，
+        //   页面从不读它们。整份拉取把它们也带上，云端一次要吐 39MB → Supabase 报 statement timeout（57014），
+        //   页面就显示「云端拉取失败」。排除后整份约 7.1MB / 3.4 秒。
+        var _SKIP_BIG_KV = '&key=not.like.qbimg_*&key=not.like.qb_src_backup_*';
         if (mode === 'guest') {
             // yxts_*（2026-09-22）：一人一条的学员影子记录，游客没有名单可看，白拉
-            _pullUrl += '&key=not.in.(' + _GUEST_EXCLUDE_LIST + ')&key=not.like.feishu_panze*&key=not.like.auto_push_*&key=not.like.yxts_*';
+            _pullUrl += '&key=not.in.(' + _GUEST_EXCLUDE_LIST + ')&key=not.like.feishu_panze*&key=not.like.auto_push_*&key=not.like.yxts_*' + _SKIP_BIG_KV;
         } else if (mode === 'exam') {
             _pullUrl += '&key=in.(' + _EXAM_KEYS_LIST + ')';
         } else {
             // 2026-09-30 流量修复：errorDashboardCache（1.08MB）也一并排除。
             //   它已改成只存本机、不上云（见 saveErrorDashboardCache），云端那份是死数据；
             //   不排它的话，每台设备每次开页面仍会把它拉下来盖掉本机的新缓存，白烧 1MB。
-            _pullUrl += '&key=not.in.(generatedReports,errorDashboardCache)';
+            _pullUrl += '&key=not.in.(generatedReports,errorDashboardCache)' + _SKIP_BIG_KV;
         }
         if (!force && _lastSyncAt) _pullUrl += '&updated_at=gt.' + encodeURIComponent(_lastSyncAt);
         var _maxCloudUpdated = null;
