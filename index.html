@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <!-- 版本行：每次部署新代码必须 bump 此 content（YYYYMMDD.N），旧设备靠它自检静默升级 -->
-    <meta name="yxt-ver" content="20261109.4">
+    <meta name="yxt-ver" content="20261114.6">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
     <title>优学堂</title>
     <script src="https://cdn.sheetjs.com/xlsx-0.20.2/package/dist/xlsx.full.min.js" defer></script>
@@ -1081,8 +1081,8 @@
     // ==================== 存储生成的周报 ====================
     let generatedReports = JSON.parse(localStorage.getItem('generatedReports') || '{}');
     function refreshReportSection() { var s = document.getElementById('reportGenSection'); if (s && s.parentNode) s.parentNode.removeChild(s); appendReportSection(); }
-    function saveReportToLocal(name, htmlContent) { generatedReports[name] = htmlContent; localStorage.setItem('generatedReports', JSON.stringify(generatedReports)); refreshReportSection(); logAdminAction('报告', '生成报告', name); }
-    function deleteReport(name) { logAdminAction('报告', '删除报告', name); delete generatedReports[name]; var val = JSON.stringify(generatedReports); localStorage.setItem('generatedReports', val); refreshReportSection(); try { fetch(SUPABASE_URL + '/rest/v1/app_data', { method: 'POST', headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY, 'Content-Type': 'application/json', 'Prefer': 'resolution=merge-duplicates' }, body: JSON.stringify([{ key: 'generatedReports', value: val, updated_at: new Date().toISOString() }]) }).catch(function(){}); } catch(e) {} }
+    function saveReportToLocal(name, htmlContent) { if (!isAdminMode()) return; generatedReports[name] = htmlContent; localStorage.setItem('generatedReports', JSON.stringify(generatedReports)); refreshReportSection(); logAdminAction('报告', '生成报告', name); }
+    function deleteReport(name) { if (!isAdminMode()) { showToast('🔒 删除报告仅管理员可用', 'warning'); return; } logAdminAction('报告', '删除报告', name); delete generatedReports[name]; var val = JSON.stringify(generatedReports); localStorage.setItem('generatedReports', val); refreshReportSection(); try { fetch(SUPABASE_URL + '/rest/v1/app_data', { method: 'POST', headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY, 'Content-Type': 'application/json', 'Prefer': 'resolution=merge-duplicates' }, body: JSON.stringify([{ key: 'generatedReports', value: val, updated_at: new Date().toISOString() }]) }).catch(function(){}); } catch(e) {} }
     
     // ==================== 新人情况模块 ====================
     const ADMIN_PASSWORD = "888888";
@@ -1516,7 +1516,7 @@
         const suggestions = generateStageSuggestions(student, stageId);
         
         const modalId = 'stageModal_' + Date.now() + '_' + Math.random().toString(36).substr(2, 6);
-        const modalHtml=`<div class="modal-overlay" id="${modalId}"><div class="modal-container"><div class="modal-header"><span>📋 ${stage.name} · ${student.name} (${student.site})${isReadOnly?' · 档案查看':''}</span><div style="display:flex;gap:8px;"><button class="modal-close-btn">✕</button></div></div><div class="modal-body"><div class="rule-hint"><span>📌 考评标准：${stage.standards}</span></div><div class="rule-hint"><span>🔄 退回机制：${stage.returnRule}</span></div>${tableHtml}<div class="advice-split"><div class="advice-box"><label>⚠️ 问题点（可编辑）</label><textarea id="issuesTextarea" rows="2">${issues}</textarea></div><div class="advice-box"><label>💡 改善建议（可编辑）</label><textarea id="suggestionsTextarea" rows="2">${suggestions}</textarea></div></div>${!isReadOnly?`<div style="margin-top:12px; text-align:right;"><button id="saveModalBtn" class="primary">💾 保存修改</button></div>`:''}</div></div></div>`;
+        const modalHtml=`<div class="modal-overlay" id="${modalId}"><div class="modal-container"><div class="modal-header"><span>📋 ${stage.name} · ${student.name} (${student.site})${isReadOnly?' · 档案查看':''}</span><div style="display:flex;gap:8px;"><button class="modal-close-btn">✕</button></div></div><div class="modal-body"><div class="rule-hint"><span>📌 考评标准：${stage.standards}</span></div><div class="rule-hint"><span>🔄 退回机制：${stage.returnRule}</span></div>${tableHtml}<div class="advice-split"><div class="advice-box"><label>⚠️ 问题点${isReadOnly?'':'（可编辑）'}</label><textarea id="issuesTextarea" rows="2"${isReadOnly?' readonly':''}>${issues}</textarea></div><div class="advice-box"><label>💡 改善建议${isReadOnly?'':'（可编辑）'}</label><textarea id="suggestionsTextarea" rows="2"${isReadOnly?' readonly':''}>${suggestions}</textarea></div></div>${!isReadOnly?`<div style="margin-top:12px; text-align:right;"><button id="saveModalBtn" class="primary">💾 保存修改</button></div>`:''}</div></div></div>`;
         document.body.insertAdjacentHTML('beforeend',modalHtml);
         const modalElement = document.getElementById(modalId);
         modalElement.querySelector('.modal-close-btn').onclick = () => modalElement.remove();
@@ -1774,7 +1774,7 @@
         if(stu) currentPanoramaStudentId = stu.id;
         let panoramaHtml = `<div class="panorama-card"><div class="panorama-header"><h3>🌟 新人全景成长看板</h3><select id="panoramaSelect"></select></div><div id="panoramaDetail"></div></div>`;
         let syncBadgeHtml = (()=>{var t=localStorage.getItem('trainee_data_sync_time');if(t){var d=new Date(t);var now=new Date();var diffMin=Math.floor((now-d)/60000);var diffStr=diffMin<1?'刚刚':(diffMin<60?diffMin+'分钟前':(diffMin<1440?Math.floor(diffMin/60)+'小时前':Math.floor(diffMin/1440)+'天前'));return `<span style="font-size:0.7rem;color:#27ae60;background:#e6f7e6;padding:4px 10px;border-radius:12px;white-space:nowrap;" title="上次同步: ${d.toLocaleString()}">☁️ 已同步 · ${diffStr}</span>`;}return '<span style="font-size:0.7rem;color:#f39c12;background:#fff8e1;padding:4px 10px;border-radius:12px;white-space:nowrap;">☁️ 未同步</span>';})();
-        container.innerHTML = `<div style="display:flex;justify-content:space-between;align-items:center;"><div style="display:flex;gap:6px;align-items:center;">${cityHtml}${syncBadgeHtml}</div><button id="frontendAdminBtn" style="background:linear-gradient(135deg,#1f3a6b,#2a5298);color:white;border:none;padding:8px 16px;border-radius:20px;cursor:pointer;font-size:0.85rem;box-shadow:0 2px 8px rgba(31,58,107,0.25);">⚙️ 管理</button></div>` + stagesHtml + archiveHtml + panoramaHtml;
+        container.innerHTML = `<div style="display:flex;justify-content:space-between;align-items:center;"><div style="display:flex;gap:6px;align-items:center;">${cityHtml}${syncBadgeHtml}</div><button id="frontendAdminBtn" class="admin-only" style="background:linear-gradient(135deg,#1f3a6b,#2a5298);color:white;border:none;padding:8px 16px;border-radius:20px;cursor:pointer;font-size:0.85rem;box-shadow:0 2px 8px rgba(31,58,107,0.25);">⚙️ 管理</button></div>` + stagesHtml + archiveHtml + panoramaHtml;
         
         document.querySelectorAll('.student-item').forEach(el=>{
             el.addEventListener('click',(e)=>{
@@ -1782,7 +1782,7 @@
                 const sid = parseInt(el.dataset.sid);
                 const stageIdx = parseInt(el.dataset.stageidx);
                 const s = students.find(st=>st.id===sid);
-                if(s) showStageDetailModal(s, stageIdx, false);
+                if(s) showStageDetailModal(s, stageIdx, !isAdminMode());
             });
         });
         
@@ -1843,7 +1843,7 @@
             stagesHtmlDetail+=`</div>`;
             const detailHtml = `<div style="display:flex; gap:16px; align-items:center; flex-wrap:wrap;">
                 <img src="${stu.avatar}" style="width:60px;height:60px;border-radius:50%;">
-                <div><strong>${stu.name}</strong> ${stu.site}<br>📅 入职: <input type="date" id="joinDateInput" value="${stu.joinDate}" class="date-input"> &nbsp; 📆 已学习: ${used}天<br>⏱️ 当前阶段剩余:${stu.getStageRemainingDays()}天</div>
+                <div><strong>${stu.name}</strong> ${stu.site}<br>📅 入职: ${isAdminMode() ? `<input type="date" id="joinDateInput" value="${stu.joinDate}" class="date-input">` : `<strong>${stu.joinDate || '—'}</strong>`} &nbsp; 📆 已学习: ${used}天<br>⏱️ 当前阶段剩余:${stu.getStageRemainingDays()}天</div>
                 <div><span class="badge-status">🎯 综合完成度: ${prog}%</span><br><span class="badge-status" style="background:#1f3a6b; color:white;">🏆 综合评分: ${totalScore}/100</span></div>
             </div>${stagesHtmlDetail}<div class="advice-text">💡 ${generateStageSuggestions(stu, stu.stage)}</div>`;
             document.getElementById('panoramaDetail').innerHTML = detailHtml;
@@ -1854,7 +1854,7 @@
                     e.stopPropagation();
                     const idx = parseInt(block.dataset.stageidx);
                     const s = students.find(st=>st.id===currentPanoramaStudentId);
-                    if(s) showStageDetailModal(s, idx, false);
+                    if(s) showStageDetailModal(s, idx, !isAdminMode());
                 });
             });
         }
@@ -4060,6 +4060,7 @@
 
     // 初审准确率 - 弹出识别窗口
     function showAccRateModal() {
+        if (!isAdminMode()) { showToast('🔒 录入准确率仅管理员可用', 'warning'); return; }
         if (currentAnalysisType === 'custom') return;
         const pr = window._analysisPeriodRanges || [];
         if (!pr.length) return;
@@ -4433,6 +4434,7 @@
 
     // 确认保存（从文本框读取数据保存到localStorage）
     function saveAccRateFromModal() {
+        if (!isAdminMode()) { showToast('🔒 保存准确率仅管理员可用', 'warning'); return; }
         const periodKey = window._accRateCurrentPeriodKey;
         if (!periodKey) return;
         const textArea = document.getElementById('accRateTextInput');
@@ -5000,7 +5002,8 @@
         return null;
     }
     function saveFeishuSamplingCache(c) {
-        try { localStorage.setItem(FEISHU_SAMPLING_CACHE_KEY, JSON.stringify(c)); return true; }
+        // 2026-11-14 游客只读：缓存只写本机、不上云，避免游客浏览时反推一份数据覆盖管理员
+        try { (isAdminMode() ? localStorage : _realLS).setItem(FEISHU_SAMPLING_CACHE_KEY, JSON.stringify(c)); return true; }
         catch(e) { console.log('[飞书抽检总量] 缓存写入失败: ' + e.message); return false; }
     }
     // 解析单行 → {ds: 日期串, site: 站点, fn: 初审人正名}，无效返回null
@@ -5894,8 +5897,8 @@
             const isLast = i === reversedPr.length - 1;
             weeklyTableRows += `<tr>
                 <td style="padding:5px 8px;font-size:0.78rem;border:1px solid #eee;color:#5e6f8d;white-space:nowrap;">${isLast ? '<b>本周</b>' : escapeHtml(p.periodName)}</td>
-                <td style="padding:5px 8px;border:1px solid #eee;text-align:center;"><input type="number" class="nc-weekly-input" data-name="${escapeHtml(ncName)}" data-period="${p.periodKey}" data-field="attendanceDaysThis" min="0" max="31" value="${att}" style="width:48px;padding:2px 4px;border:1px solid #cbd5e1;border-radius:4px;text-align:center;font-size:0.82rem;" placeholder="天"></td>
-                <td style="padding:5px 8px;border:1px solid #eee;text-align:center;"><input type="number" class="nc-weekly-input" data-name="${escapeHtml(ncName)}" data-period="${p.periodKey}" data-field="efficiencyThis" min="0" value="${eff}" style="width:60px;padding:2px 4px;border:1px solid #cbd5e1;border-radius:4px;text-align:center;font-size:0.82rem;" placeholder="台"></td>
+                <td style="padding:5px 8px;border:1px solid #eee;text-align:center;"><input type="number" class="nc-weekly-input" data-name="${escapeHtml(ncName)}" data-period="${p.periodKey}" data-field="attendanceDaysThis" min="0" max="31" value="${att}" style="width:48px;padding:2px 4px;border:1px solid #cbd5e1;border-radius:4px;text-align:center;font-size:0.82rem;" placeholder="天"${isAdminMode()?'':' disabled'}></td>
+                <td style="padding:5px 8px;border:1px solid #eee;text-align:center;"><input type="number" class="nc-weekly-input" data-name="${escapeHtml(ncName)}" data-period="${p.periodKey}" data-field="efficiencyThis" min="0" value="${eff}" style="width:60px;padding:2px 4px;border:1px solid #cbd5e1;border-radius:4px;text-align:center;font-size:0.82rem;" placeholder="台"${isAdminMode()?'':' disabled'}></td>
             </tr>`;
         });
         const modalId = 'ncTrendModal_' + Date.now();
@@ -5911,7 +5914,7 @@
                         <thead><tr style="background:#eef2ff;"><th style="padding:5px 8px;font-size:0.78rem;border:1px solid #dde;color:#1f3a6b;">周期</th><th style="padding:5px 8px;font-size:0.78rem;border:1px solid #dde;color:#1f3a6b;">出勤天数</th><th style="padding:5px 8px;font-size:0.78rem;border:1px solid #dde;color:#1f3a6b;">人效</th></tr></thead>
                         <tbody>${weeklyTableRows}</tbody>
                     </table>
-                    <button class="nc-weekly-save" style="margin-top:8px;background:linear-gradient(135deg,#1f3a6b,#2a5298);color:white;border:none;padding:6px 18px;border-radius:16px;cursor:pointer;font-size:0.8rem;font-weight:600;">💾 保存并刷新</button>
+                    <button class="nc-weekly-save admin-only" style="margin-top:8px;background:linear-gradient(135deg,#1f3a6b,#2a5298);color:white;border:none;padding:6px 18px;border-radius:16px;cursor:pointer;font-size:0.8rem;font-weight:600;">💾 保存并刷新</button>
                 </div>
                 <div style="margin-bottom:12px;background:#eef3ff;border-radius:10px;padding:10px 12px;">
                     <div style="font-weight:600;font-size:0.82rem;color:#2a5298;margin-bottom:4px;">📈 人效趋势</div>
@@ -5930,6 +5933,7 @@
         document.body.insertAdjacentHTML('beforeend', modalHtml);
         // 保存→同步刷新下方卡片表格+总结+趋势图
         document.querySelector('#' + modalId + ' .nc-weekly-save')?.addEventListener('click', () => {
+            if (!isAdminMode()) return;
             let nd = {};
             try { nd = JSON.parse(localStorage.getItem('newcomerAnalysisData') || '{}'); } catch(e) {}
             const thisPk = pr[0].periodKey;
@@ -6460,6 +6464,7 @@
     }
     
     function generateWeeklyReport(analysis, filterResult, weekRange, periodRanges, allRows, dateColumn, reviewerColumn, sourceColumn, reviewerPeriodStats, sortedReviewers, totalCounts, totalThisWeek, totalLastWeek, increaseCount, decreaseCount, sameCount, top3Reviewers, diffClass, diffText, persona, accRateThisPeriod, accRateLastPeriod, categoryRowsHtml, sourceRowsHtml, siteColumn) {
+        if (!isAdminMode()) { showToast('🔒 生成报告仅管理员可用', 'warning'); return; }
         const periodName = periodRanges[0].periodName;
         const thisPeriodKey = periodRanges[0].periodKey || '';
         const isMonth = periodName.includes('月') && !periodName.includes('周');
@@ -7376,7 +7381,7 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
         container.innerHTML = `
             <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px; flex-wrap:wrap;">
                 <div class="week-badge">📅 ${reportTitle} | ${periodRange.start} 至 ${periodRange.end} | 共 ${filterResult.filteredCount} 条记录</div>
-                <button id="generateReportBtn" class="generate-btn">📄 生成报告并保存</button>
+                <button id="generateReportBtn" class="generate-btn admin-only">📄 生成报告并保存</button>
             </div>
             
             <div class="analysis-section" id="section-source">
@@ -7403,7 +7408,7 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
                 </div>
                 <div style="font-size: 0.7rem; color: #94a3b8; text-align:center; margin-bottom: 8px;">💡 点击上方文字可手动编辑 | 💡 表头右侧可拖拽调整列宽</div>
                 <table class="compact-table resizable-table" id="reviewerCompareTable">
-                    <thead><tr><th>初审</th><th>趋势（曲线图+对比）</th><th>初审准确率 ${currentAnalysisType !== 'custom' ? '<button onclick="showAccRateModal()" style="background:#eef2ff;border:1px solid #cbd5e1;padding:2px 10px;border-radius:10px;cursor:pointer;font-size:0.7rem;margin-left:4px;">📸 识别</button>' : ''}</th><th>判责量</th>${weekHeaders}</tr></thead>
+                    <thead><tr><th>初审</th><th>趋势（曲线图+对比）</th><th>初审准确率 ${currentAnalysisType !== 'custom' ? '<button class="admin-only" onclick="showAccRateModal()" style="background:#eef2ff;border:1px solid #cbd5e1;padding:2px 10px;border-radius:10px;cursor:pointer;font-size:0.7rem;margin-left:4px;">📸 识别</button>' : ''}</th><th>判责量</th>${weekHeaders}</tr></thead>
                     <tbody>
                         <tr style="background:#f0f2f6;"><td style="font-weight:bold;text-align:center;">总计</td><td><div class="trend-cell"><canvas id="${totalSparklineId}" width="100" height="20"></canvas><span class="trend-text" style="font-size:0.65rem; margin-left:3px;">${totalTrendHtml}</span></div></td><td style="font-weight:bold;padding:2px 4px;"><div style="position:relative;text-align:center;">${(() => { var trend = ''; if (_totalAccAvg !== null && _totalAccLastAvg !== null) { var d = _totalAccAvg - _totalAccLastAvg; if (d > 0) trend = '<span style=\"position:absolute;right:0;top:50%;transform:translateY(-50%);font-size:0.65rem;color:#27ae60;font-weight:600;\">↑'+d.toFixed(2)+'%</span>'; else if (d < 0) trend = '<span style=\"position:absolute;right:0;top:50%;transform:translateY(-50%);font-size:0.65rem;color:#c0392b;font-weight:600;\">↓'+Math.abs(d).toFixed(2)+'%</span>'; else trend = '<span style=\"position:absolute;right:0;top:50%;transform:translateY(-50%);font-size:0.65rem;color:#2980b9;font-weight:600;\">→0.00%</span>'; } return (_totalAccAvg !== null ? _totalAccAvg.toFixed(2) + '%' : '-') + trend; })()}</div></td><td style="font-weight:bold;text-align:center;">${(() => { const total = sortedReviewers.reduce((a,rv)=>a+Number(_panZeBySite(rv)),0); console.log('[判责总计] sel='+JSON.stringify(window._selectedSites)+' total='+total+' reviewers='+sortedReviewers.length); return total ? '<span class="clickable-panze" data-reviewer-name="__ALL__" data-start="' + _pzStartISO + '" data-end="' + _pzEndISO + '" style="cursor:pointer;" title="点击查看全员品类明细">' + total + '</span>' : '-'; })()}</td>${totalRowCells}</tr>
                         ${reviewerRows || '<tr><td colspan="10" style="text-align:center;">暂无数据</td></tr>'}
@@ -7606,7 +7611,7 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
                                 '<div style="flex:1;">🏷️ <strong>'+escapeHtml(topCat?.[0]||'—')+'</strong></div>' +
                             '</div>' +
                             '<div style="font-size:0.75rem;color:#e67e22;margin-bottom:6px;">⚠️ 建议：重点改善'+escapeHtml(topCat?.[0]||'失误项')+'</div>' +
-                            '<div style="text-align:center;"><button class="generate-btn" style="font-size:0.72rem;padding:3px 12px;" data-genexam="'+escapeHtml(r.name)+'">📝 生成试卷</button></div>' +
+                            '<div style="text-align:center;"><button class="generate-btn admin-only" style="font-size:0.72rem;padding:3px 12px;" data-genexam="'+escapeHtml(r.name)+'">📝 生成试卷</button></div>' +
                             '</div>';
                     }).join('') + '</div>';
                 })()}
@@ -7648,7 +7653,7 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
                         '<td style="color:'+(parseFloat(dev)>0?'#c0392b':(parseFloat(dev)<0?'#27ae60':'#5e6f8d'))+';">'+(parseFloat(dev)>0?'+':'')+dev+'</td>' +
                         '<td>'+Object.keys(cats).length+'</td><td>'+(rvSrcMap[r.name]?rvSrcMap[r.name].size:0)+'</td>' +
                         '<td>'+escapeHtml(topCat?.[0]||'—')+'</td>' +
-                        '<td><button class="action-btn" data-genexam2="'+escapeHtml(r.name)+'">📝 出卷</button></td></tr>';
+                        '<td><button class="action-btn admin-only" data-genexam2="'+escapeHtml(r.name)+'">📝 出卷</button></td></tr>';
                 };
                 // 最优N & 最差N
                 const miniN = (window._selectedSites || []).length === 1 ? 3 : 5;
@@ -7813,7 +7818,25 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
                 <button id="screenshotMainBtn" class="generate-btn" style="background:#27ae60;">📸 截图当前分析结果</button>
             </div>
         `;
-        
+
+        // 2026-11-14 游客只读：分析结果里的手工标注、抽检卡片输入框只允许管理员修改
+        // （这些内容不落库，但避免游客改数后截图/汇报看到不一致的数字）
+        if (!isAdminMode()) {
+            try {
+                container.querySelectorAll('[contenteditable]').forEach(function(el){ el.setAttribute('contenteditable', 'false'); });
+                container.querySelectorAll('input, select, textarea').forEach(function(el){
+                    if (el.tagName === 'SELECT') { el.disabled = true; return; }
+                    if (el.type === 'file') return;
+                    el.readOnly = true;
+                    el.setAttribute('readonly', 'readonly');
+                    el.tabIndex = -1;
+                    el.style.pointerEvents = 'none';
+                });
+                // 状态切换：只显示当前状态，不给游客点开下拉
+                container.querySelectorAll('.nc-status-current').forEach(function(el){ el.style.pointerEvents = 'none'; });
+            } catch(e) {}
+        }
+
         setTimeout(() => drawSparkline(totalSparklineId, totalCounts, 100), 50);
         
         // 初始化表格列宽拖拽 + 恢复抽检卡片缓存
@@ -7960,6 +7983,7 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
         // 可编辑单元格保存（总结）
         document.querySelectorAll('.nc-editable.nc-summary').forEach(el => {
             el.addEventListener('blur', () => {
+                if (!isAdminMode()) return;
                 const name = el.dataset.name;
                 const field = el.dataset.field;
                 if (!name || !field) return;
@@ -7974,6 +7998,7 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
         // 日期选择器：选后永久记录到全局
         document.querySelectorAll('.nc-date-input').forEach(inp => {
             inp.addEventListener('change', () => {
+                if (!isAdminMode()) return;
                 const name = inp.dataset.name;
                 const field = inp.dataset.field;
                 if (!name || !field) return;
@@ -7999,6 +8024,7 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
         // 点击选项：保存并刷新按钮文字
         document.querySelectorAll('.nc-status-option').forEach(opt => {
             opt.addEventListener('click', () => {
+                if (!isAdminMode()) return;
                 const name = opt.dataset.name;
                 const st = opt.dataset.status;
                 if (!name || !st) return;
@@ -8020,8 +8046,8 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
         document.addEventListener('click', () => {
             document.querySelectorAll('.nc-status-dropdown').forEach(d => d.style.display = 'none');
         });
-        // 毛玻璃：每人独立提示填写出勤天数和人效
-        if (isNewPeriod) {
+        // 毛玻璃：每人独立提示填写出勤天数和人效（游客只读，不弹填写层）
+        if (isNewPeriod && isAdminMode()) {
             NEWCOMER_NAMES.forEach((ncName) => {
                 const card = document.querySelector(`.nc-person-card[data-ncname="${ncName}"]`);
                 if (!card) return;
@@ -8733,7 +8759,7 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
             document.getElementById('uploadStatus').textContent = '☁️ 数据来源：飞书表格（' + errorDashboardData.length + ' 条记录）';
             document.querySelectorAll('.analysis-type-btn[data-type]').forEach(function(btn){ btn.classList.toggle('active', btn.dataset.type === 'week'); });
             errorCurrentPeriod = 'week';
-            var now3=new Date();var dw3=now3.getDay();dw3=dw3===0?7:dw3;var thisMon=new Date(now3);thisMon.setDate(now3.getDate()-dw3+1);thisMon.setHours(0,0,0,0);var thisSun=new Date(thisMon);thisSun.setDate(thisMon.getDate()+6);thisSun.setHours(23,59,59,999);var wr={start:thisMon.getFullYear()+'-'+String(thisMon.getMonth()+1).padStart(2,'0')+'-'+String(thisMon.getDate()).padStart(2,'0'),end:thisSun.getFullYear()+'-'+String(thisSun.getMonth()+1).padStart(2,'0')+'-'+String(thisSun.getDate()).padStart(2,'0'),startDate:thisMon,endDate:thisSun,startDateNum:thisMon.getFullYear()*10000+(thisMon.getMonth()+1)*100+thisMon.getDate(),endDateNum:thisSun.getFullYear()*10000+(thisSun.getMonth()+1)*100+thisSun.getDate(),periodName:getWeekLabel(thisMon)};await window.doAnalysis('week',wr);localStorage.removeItem('samplingCardCache');refreshSamplingFromFeishu();
+            var now3=new Date();var dw3=now3.getDay();dw3=dw3===0?7:dw3;var thisMon=new Date(now3);thisMon.setDate(now3.getDate()-dw3+1);thisMon.setHours(0,0,0,0);var thisSun=new Date(thisMon);thisSun.setDate(thisMon.getDate()+6);thisSun.setHours(23,59,59,999);var wr={start:thisMon.getFullYear()+'-'+String(thisMon.getMonth()+1).padStart(2,'0')+'-'+String(thisMon.getDate()).padStart(2,'0'),end:thisSun.getFullYear()+'-'+String(thisSun.getMonth()+1).padStart(2,'0')+'-'+String(thisSun.getDate()).padStart(2,'0'),startDate:thisMon,endDate:thisSun,startDateNum:thisMon.getFullYear()*10000+(thisMon.getMonth()+1)*100+thisMon.getDate(),endDateNum:thisSun.getFullYear()*10000+(thisSun.getMonth()+1)*100+thisSun.getDate(),periodName:getWeekLabel(thisMon)};await window.doAnalysis('week',wr);(isAdminMode()?localStorage:_realLS).removeItem('samplingCardCache');refreshSamplingFromFeishu();
             if (area) { area.style.opacity = '1'; area.querySelector('p').textContent = '☁️ 从飞书获取数据（' + errorDashboardData.length + ' 条）'; }
         } catch(e) { alert('❌ 获取失败：' + e.message); if(area){area.style.opacity='1';area.querySelector('p').textContent='使用看板同一份飞书表格';} }
     }
@@ -8764,9 +8790,10 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
         const container = document.getElementById('mainContent');
         container.innerHTML = `
             <div id="uploadAndSheetRow" style="display:flex; gap:16px; align-items:stretch; flex-wrap:wrap; margin-bottom:16px;">
-                <div class="upload-area" id="dataUploadArea" style="flex:1; min-width:200px;"><span>📎 上传Excel/CSV文件</span><p style="font-size:0.7rem; margin-top:8px; color:#94a3b8;">支持 .xlsx, .xls, .csv 格式</p><input type="file" id="dataFileInput" accept=".xlsx,.xls,.csv" style="display:none"></div>
+                <!-- 2026-11-14 按要求「上传Excel/CSV文件」只对管理员可见：游客看不到这块，只能走飞书获取 -->
+                <div class="upload-area admin-only" id="dataUploadArea" style="flex:1; min-width:200px;"><span>📎 上传Excel/CSV文件</span><p style="font-size:0.7rem; margin-top:8px; color:#94a3b8;">支持 .xlsx, .xls, .csv 格式</p><input type="file" id="dataFileInput" accept=".xlsx,.xls,.csv" style="display:none"></div>
                 <div class="upload-area" id="feishuFetchArea" style="flex:1; min-width:200px;cursor:pointer;" onclick="fetchAnalysisFromFeishu()"><span>☁️ 从飞书获取数据</span><p style="font-size:0.7rem; margin-top:8px; color:#94a3b8;">使用看板同一份飞书表格</p></div>
-                <div id="sheetSelectorPanel" style="display:none; flex:1; min-width:280px; background:#f8fafc; border-radius:20px; padding:16px 20px; display:flex; align-items:center; gap:12px;">
+                <div id="sheetSelectorPanel" style="display:none; flex:1; min-width:280px; background:#f8fafc; border-radius:20px; padding:16px 20px; align-items:center; gap:12px;">
                     <label style="font-weight:600; color:#1f3a6b; white-space:nowrap;">📄 选择工作表：</label>
                     <select id="sheetSelect" style="padding:8px 12px; border:1px solid #cbd5e1; border-radius:8px; font-size:0.85rem; background:white; min-width:120px; flex:1;"></select>
                 </div>
@@ -8829,11 +8856,16 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
         const resultBox = document.getElementById('analysisResultBox');
         const sheetSelectorPanel = document.getElementById('sheetSelectorPanel');
         
-        uploadArea.onclick = () => fileInput.click();
+        // 2026-11-14 上传入口仅管理员可用（游客看不到这块，这里再挡一道）
+        uploadArea.onclick = () => {
+            if (!isAdminMode()) { showToast('🔒 上传文件仅管理员可用，游客请用「☁️ 从飞书获取数据」', 'warning'); return; }
+            fileInput.click();
+        };
         
         // currentParseResult已提升为全局变量
         
         fileInput.onchange = async (e) => {
+            if (!isAdminMode()) { e.target.value = ''; return; }
             const file = e.target.files[0];
             if (!file) return;
             statusDiv.innerHTML = `<span style="color:#2a5298;">📤 正在解析 ${escapeHtml(file.name)}...</span>`;
@@ -9049,8 +9081,10 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
                     }
                 });
             }
-            localStorage.setItem('samplingModule3MistakeMap', JSON.stringify(mistakeMap));
-            localStorage.setItem('reviewerTotalMistakeMap', JSON.stringify(totalMistakeMap));
+            // 2026-11-14 游客只读：这两份派生数据只在本机参与计算，不推云端（游客浏览不应覆盖管理员的统计口径）
+            var _mapLS = isAdminMode() ? localStorage : _realLS;
+            _mapLS.setItem('samplingModule3MistakeMap', JSON.stringify(mistakeMap));
+            _mapLS.setItem('reviewerTotalMistakeMap', JSON.stringify(totalMistakeMap));
 
             // 自动从飞书表格获取抽检量（F列初审人名字按选定周期筛选后计数）
             console.log('[DEBUG] doAnalysis called, type=' + type + ' selectedSites=' + JSON.stringify(selectedSites) + ' window._selectedSites=' + JSON.stringify(window._selectedSites));
@@ -9340,7 +9374,7 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
                     periodName: getWeekLabel(startDate)
                 };
                 await doAnalysis('week', weekRange);
-                localStorage.removeItem('samplingCardCache');
+                (isAdminMode()?localStorage:_realLS).removeItem('samplingCardCache');
                 refreshSamplingFromFeishu();
             }
         });
@@ -9364,7 +9398,7 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
                     monthName: `${year}年${month}月`, periodName: `${year}年${month}月`
                 };
                 await doAnalysis('month', monthRange);
-                localStorage.removeItem('samplingCardCache');
+                (isAdminMode()?localStorage:_realLS).removeItem('samplingCardCache');
                 refreshSamplingFromFeishu();
             }
         });
@@ -9384,7 +9418,7 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
                     yearName: `${yr}年`, periodName: `${yr}年`
                 };
                 await doAnalysis('year', yearRange);
-                localStorage.removeItem('samplingCardCache');
+                (isAdminMode()?localStorage:_realLS).removeItem('samplingCardCache');
                 refreshSamplingFromFeishu();
             }
         });
@@ -9425,7 +9459,7 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
                 const resultBox = document.getElementById('analysisResultBox');
                 if (resultBox) resultBox.style.display = 'block';
 
-                document.getElementById('uploadStatus').innerHTML = '<span style="color:#2e7d32;">📊 已恢复上次分析（共 ' + currentParseResult.totalRows + ' 条记录），可点击上方上传区更换文件</span>';
+                document.getElementById('uploadStatus').innerHTML = '<span style="color:#2e7d32;">📊 已恢复上次分析（共 ' + currentParseResult.totalRows + ' 条记录），可点击上方「☁️ 从飞书获取数据」重新获取</span>';
 
                 // 高亮当前分析类型按钮
                 document.querySelectorAll('.analysis-type-btn[data-type]').forEach(btn => {
@@ -9477,7 +9511,7 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
         const reportNames = Object.keys(generatedReports).filter(function(n){ return n.indexOf('培训资料') !== 0; });
         let html = '<div class="report-title">📄 已生成的报告</div>';
         if (reportNames.length === 0) {
-            html += '<div class="empty-placeholder">暂无生成的周报，请先上传数据分析并点击"生成周报"</div>';
+            html += '<div class="empty-placeholder">暂无生成的周报' + (isAdminMode() ? '，请先获取数据并点击"生成周报"' : '') + '</div>';
         } else {
             reportNames.forEach(name => {
                 const blob = new Blob([generatedReports[name]], { type: 'text/html' });
@@ -9486,7 +9520,7 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
                     '<span>📄 '+name+'</span>' +
                     '<div><a href=\"'+url+'\" download=\"'+name+'.html\" style=\"color:#2a5298;text-decoration:none;margin-left:12px;\">📥 下载</a>' +
                     '<a href=\"'+url+'\" target=\"_blank\" style=\"color:#2a5298;text-decoration:none;margin-left:12px;\">👁️ 预览</a>' +
-                    '<span class=\"del-report\" data-rname=\"'+name+'\" style=\"color:#c0392b;cursor:pointer;margin-left:12px;\">🗑️ 删除</span></div>' +
+                    (isAdminMode() ? '<span class=\"del-report\" data-rname=\"'+name+'\" style=\"color:#c0392b;cursor:pointer;margin-left:12px;\">🗑️ 删除</span>' : '') + '</div>' +
                 '</div>';
             });
         }
@@ -12355,13 +12389,13 @@ URL.revokeObjectURL(url);
     const SIDEBAR_MENU = [
         { id: 'newcomerTraining', name: '🎓 新人培养', subs: [
             { nav: 'dashboard', label: '📊 仪表盘' },
-            { nav: 'frontend', label: '👥 新人进度', guestHidden: true }
+            { nav: 'frontend', label: '👥 新人进度', guestHidden: false }
         ]},
         { id: 'learningMap', name: '🗺️ 学习地图', subs: [
             { nav: 'learningMapView', label: '📖 学习地图' }
         ] },
         { id: 'qualityAnalysis', name: '📊 品控分析', subs: [
-            { nav: 'dataAnalysis', label: '📈 数据分析', guestHidden: true },
+            { nav: 'dataAnalysis', label: '📈 数据分析', guestHidden: false },
             { nav: 'errorDashboard', label: '📋 失误分析看板' }
         ]},
         { id: 'trainingMaterials', name: '📚 培训资料', subs: [
@@ -12440,7 +12474,8 @@ URL.revokeObjectURL(url);
         // 关闭所有弹窗
         document.querySelectorAll('.modal-overlay').forEach(function(m) { m.remove(); });
         // 游客拦截
-        var guestBlocked = ['frontend','dataAnalysis','examSystem','admin'];
+        // 2026-11-14 新人进度、数据分析已对游客开放（只读），仅剩考试系统和后台管理拦截
+        var guestBlocked = ['examSystem','admin'];
         if (guestBlocked.indexOf(nav) >= 0 && !isAdminMode()) {
             showToast('🔒 此功能仅管理员可用，请先登录', 'warning');
             return;
@@ -15072,6 +15107,7 @@ URL.revokeObjectURL(url);
     }
 
     function generateExamForReviewer(reviewerName) {
+        if (!isAdminMode()) { showToast('🔒 出卷仅管理员可用', 'warning'); return; }
         const top5Data = window._errorTop5 || [];
         const person = top5Data.find(p => p.name === reviewerName);
         if (!person) { alert('未找到该初审数据'); return; }
@@ -17855,6 +17891,149 @@ URL.revokeObjectURL(url);
             return html;
         }
 
+        // ===== 判责量品类明细：跟随看板当前筛选周期（2026-11-14 改） =====
+        // 选中周期 ∩ 每日同步数据；哪一段没数据就在下方标注。
+        // 例：选 2026/2/3~2026/9/17、数据从 6/25 才有 → 显示 6/25~9/17，标注「2/3~6/24 数据缺失」。
+        function _pzFmtDay(d) {
+            return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+        }
+        function _pzAddDay(d, n) {
+            var x = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+            x.setDate(x.getDate() + n);
+            return x;
+        }
+        function _pzRangeText(a, b) {
+            var sameYear = a.getFullYear() === b.getFullYear();
+            function f(d, withYear) { return (withYear ? d.getFullYear() + '/' : '') + (d.getMonth() + 1) + '/' + d.getDate(); }
+            if (_pzFmtDay(a) === _pzFmtDay(b)) return f(a, true);
+            return f(a, !sameYear) + '~' + f(b, !sameYear);
+        }
+        // 标题里始终带年份，避免看历史周期时分不清是哪一年
+        function _pzLabelText(a, b) {
+            function f(d) { return d.getFullYear() + '/' + (d.getMonth() + 1) + '/' + d.getDate(); }
+            return _pzFmtDay(a) === _pzFmtDay(b) ? f(a) : f(a) + '~' + f(b);
+        }
+        function _pzSelectedRange() {
+            var f = errorDashboardFilter;
+            var now = new Date();
+            var today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+            // 日度：数据一般是前一日才同步，单看某一天经常是空的 → 改看「选定日所在那一周」。
+            // 默认（没选日期）看今天所在这一周。
+            if (f.period === 'day') {
+                var dBase = f.customStart ? parseLocalDate(f.customStart) : today;
+                var dDow = dBase.getDay();
+                var dMon = new Date(dBase.getFullYear(), dBase.getMonth(), dBase.getDate() - (dDow === 0 ? 6 : dDow - 1));
+                var dSun = new Date(dMon.getFullYear(), dMon.getMonth(), dMon.getDate() + 6);
+                return { start: dMon, end: dSun, isDayWeek: true };
+            }
+            if (f.customStart) {
+                var s = parseLocalDate(f.customStart);
+                var e = f.customEnd ? parseLocalDate(f.customEnd) : new Date(s.getTime());
+                return { start: s, end: e };
+            }
+            if (f.period === 'week') {
+                var dow = today.getDay();
+                var mon = new Date(today);
+                mon.setDate(today.getDate() - (dow === 0 ? 6 : dow - 1));
+                var sun = new Date(mon);
+                sun.setDate(mon.getDate() + 6);
+                return { start: mon, end: sun };
+            }
+            if (f.period === 'month') {
+                var ms, me;
+                if (today.getDate() >= 27) {
+                    ms = new Date(today.getFullYear(), today.getMonth(), 27);
+                    me = new Date(today.getFullYear(), today.getMonth() + 1, 26);
+                } else {
+                    ms = new Date(today.getFullYear(), today.getMonth() - 1, 27);
+                    me = new Date(today.getFullYear(), today.getMonth(), 26);
+                }
+                return { start: ms, end: me };
+            }
+            return { start: today, end: today };
+        }
+        function renderPzCatBlock() {
+            var sel = _pzSelectedRange();
+            var now = new Date();
+            var today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+            var selStartKey = _pzFmtDay(sel.start);
+            var selEndKey = _pzFmtDay(sel.end);
+            var todayKey = _pzFmtDay(today);
+            var cappedEndKey = selEndKey > todayKey ? todayKey : selEndKey;   // 未来日期不算缺失
+
+            var have = {}, minKey = '', maxKey = '';
+            (window._panzeAllData || []).forEach(function(d) {
+                if (!d || !/^\d{4}-\d{2}-\d{2}$/.test(String(d.date || ''))) return;
+                have[d.date] = true;
+                if (!minKey || d.date < minKey) minKey = d.date;
+                if (!maxKey || d.date > maxKey) maxKey = d.date;
+            });
+
+            var pzd = { cats: {}, total: 0 };
+            var pzLabel = '';
+            var notes = [];
+            var pzPrefix = sel.isDayWeek ? '当周明细：' : '';
+            if (!minKey) {
+                pzLabel = '（' + pzPrefix + _pzLabelText(sel.start, sel.end) + '，暂无数据）';
+            } else if (selStartKey > maxKey) {
+                pzLabel = '（' + pzPrefix + _pzLabelText(sel.start, sel.end) + '）';
+                notes.push('现有数据只到 ' + maxKey.replace(/-/g, '/') + '，之后尚未同步');
+            } else if (cappedEndKey < minKey) {
+                pzLabel = '（' + pzPrefix + _pzLabelText(sel.start, sel.end) + '）';
+                notes.push('现有数据从 ' + minKey.replace(/-/g, '/') + ' 开始，之前无数据');
+            } else {
+                var aKey = selStartKey < minKey ? minKey : selStartKey;
+                var bKey = cappedEndKey > maxKey ? maxKey : cappedEndKey;
+                var aD = parseLocalDate(aKey), bD = parseLocalDate(bKey);
+                pzd = getPanzeCategoryData(name, aD.toISOString(), new Date(bD.getTime() + 86399999).toISOString());
+                // 日度：标题写「当周明细」并带整周日期；其他周期：写有数据的那段具体日期
+                pzLabel = '（' + pzPrefix + _pzLabelText(sel.isDayWeek ? sel.start : aD, sel.isDayWeek ? sel.end : bD) + '）';
+
+                // 前段缺失（选择起点早于现有数据）
+                if (selStartKey < minKey) {
+                    notes.push(_pzRangeText(parseLocalDate(selStartKey), _pzAddDay(parseLocalDate(minKey), -1)) + ' 数据缺失');
+                }
+                // 后段尚未同步（只算到今天；未来的日期不提示）
+                if (cappedEndKey > maxKey) {
+                    notes.push(_pzRangeText(_pzAddDay(parseLocalDate(maxKey), 1), parseLocalDate(cappedEndKey)) + ' 尚未同步');
+                }
+                // 中间空洞
+                var gapStart = null, gapEnd = null, cur = new Date(aD.getTime());
+                while (cur <= bD) {
+                    var k = _pzFmtDay(cur);
+                    if (!have[k]) {
+                        if (!gapStart) gapStart = new Date(cur.getTime());
+                        gapEnd = new Date(cur.getTime());
+                    } else if (gapStart) {
+                        notes.push(_pzRangeText(gapStart, gapEnd) + ' 数据缺失');
+                        gapStart = null; gapEnd = null;
+                    }
+                    cur = _pzAddDay(cur, 1);
+                }
+                if (gapStart) notes.push(_pzRangeText(gapStart, gapEnd) + ' 数据缺失');
+            }
+
+            var pzRows = '';
+            if (pzd.total > 0) {
+                var ents = Object.entries(pzd.cats).sort(function(a, b) { return b[1] - a[1]; });
+                pzRows = ents.map(function(e) {
+                    var pct = pzd.total > 0 ? (e[1] / pzd.total * 100) : 0;
+                    return '<tr style="border-bottom:1px solid #eef2f6;"><td style="padding:5px 8px;text-align:center;"><span class="product-tag" style="' + getProductStyle(e[0]) + 'padding:2px 8px;border-radius:10px;font-weight:600;">' + escapeHtml(e[0]) + '</span></td><td style="padding:5px 8px;text-align:center;font-weight:600;">' + e[1] + '</td><td style="padding:5px 8px;text-align:center;color:#5e6f8d;">' + pct.toFixed(2) + '%</td></tr>';
+                }).join('');
+            } else {
+                pzRows = '<tr><td colspan="3" style="padding:10px;text-align:center;color:#94a3b8;">该周期内无判责量数据</td></tr>';
+            }
+            var noteHtml = notes.length
+                ? '<div style="font-size:0.66rem;color:#c0392b;margin-top:6px;line-height:1.6;">⚠️ ' + notes.map(function(n) { return escapeHtml(n); }).join('；') + '</div>'
+                : '';
+            return '<div style="font-weight:700;color:#1f3a6b;margin-bottom:6px;">📦 判责量品类明细 <span style="font-size:0.6rem;color:#94a3b8;">' + escapeHtml(pzLabel) + '</span></div>' +
+                '<div style="flex:1;background:#f8fafc;border-radius:12px;padding:12px;border:1px solid #eef2f6;">' +
+                    '<div style="font-size:0.72rem;color:#1f3a6b;font-weight:600;margin-bottom:8px;">📊 判责量总计：' + pzd.total + ' 次</div>' +
+                    '<table style="width:100%;border-collapse:collapse;table-layout:fixed;"><colgroup><col style="width:33.33%;"><col style="width:33.33%;"><col style="width:33.34%;"></colgroup>' +
+                    '<thead><tr style="background:#eef2ff;"><th style="padding:5px 8px;text-align:center;font-size:0.72rem;">品类</th><th style="padding:5px 8px;text-align:center;font-size:0.72rem;">判责量</th><th style="padding:5px 8px;text-align:center;font-size:0.72rem;">占比</th></tr></thead>' +
+                    '<tbody>' + pzRows + '</tbody></table>' + noteHtml + '</div>';
+        }
+
         var overlay = document.createElement('div');
         overlay.className = 'modal-overlay'; overlay.style.zIndex = '2000';
         overlay.innerHTML = '<div class="modal-container" style="max-width:1100px;">' +
@@ -17870,41 +18049,7 @@ URL.revokeObjectURL(url);
                         '<div style="font-weight:700;color:#1f3a6b;margin-bottom:6px;">📊 失误来源</div>' +
                         '<div style="flex:1;background:#f8fafc;padding:8px;border-radius:12px;display:flex;gap:8px;align-items:stretch;">' + (sourceCols || '<span style="color:#94a3b8;">-</span>') + '</div>' +
                     '</div>' +
-                    '<div style="flex:1;min-width:0;display:flex;flex-direction:column;">' +
-                        (function(){
-                            // 本周范围（与失误总结模块同口径）；本周还没数据时（如周一）回退显示上周
-                            var nowWk = new Date();
-                            var dowWk = nowWk.getDay();
-                            var mondayOffset = dowWk === 0 ? 6 : dowWk - 1;
-                            var thisMonday = new Date(nowWk.getFullYear(), nowWk.getMonth(), nowWk.getDate() - mondayOffset);
-                            thisMonday.setHours(0,0,0,0);
-                            var wkEnd = new Date(thisMonday.getTime() + 6 * 86400000);
-                            var pzLabel = '（本周，每日同步）';
-                            var pzd = getPanzeCategoryData(name, thisMonday.toISOString(), wkEnd.toISOString());
-                            if (pzd.total === 0) {
-                                var lastMonday = new Date(thisMonday.getTime() - 7 * 86400000);
-                                var lastEnd = new Date(thisMonday.getTime() - 1000);
-                                var pzdLast = getPanzeCategoryData(name, lastMonday.toISOString(), lastEnd.toISOString());
-                                if (pzdLast.total > 0) { pzd = pzdLast; pzLabel = '（本周暂无数据，显示上周）'; }
-                            }
-                            var pzRows = '';
-                            if (pzd.total > 0) {
-                                var ents = Object.entries(pzd.cats).sort(function(a,b){ return b[1]-a[1]; });
-                                pzRows = ents.map(function(e){
-                                    var pct = pzd.total > 0 ? (e[1] / pzd.total * 100) : 0;
-                                    return '<tr style="border-bottom:1px solid #eef2f6;"><td style="padding:5px 8px;text-align:center;"><span class="product-tag" style="' + getProductStyle(e[0]) + 'padding:2px 8px;border-radius:10px;font-weight:600;">' + escapeHtml(e[0]) + '</span></td><td style="padding:5px 8px;text-align:center;font-weight:600;">' + e[1] + '</td><td style="padding:5px 8px;text-align:center;color:#5e6f8d;">' + pct.toFixed(2) + '%</td></tr>';
-                                }).join('');
-                            } else {
-                                pzRows = '<tr><td colspan="3" style="padding:10px;text-align:center;color:#94a3b8;">暂无每日同步的品类明细数据</td></tr>';
-                            }
-                            return '<div style="font-weight:700;color:#1f3a6b;margin-bottom:6px;">📦 判责量品类明细 <span style="font-size:0.6rem;color:#94a3b8;">' + pzLabel + '</span></div>' +
-                                '<div style="flex:1;background:#f8fafc;border-radius:12px;padding:12px;border:1px solid #eef2f6;">' +
-                                    '<div style="font-size:0.72rem;color:#1f3a6b;font-weight:600;margin-bottom:8px;">📊 判责量总计：' + pzd.total + ' 次</div>' +
-                                    '<table style="width:100%;border-collapse:collapse;table-layout:fixed;"><colgroup><col style="width:33.33%;"><col style="width:33.33%;"><col style="width:33.34%;"></colgroup>' +
-                                    '<thead><tr style="background:#eef2ff;"><th style="padding:5px 8px;text-align:center;font-size:0.72rem;">品类</th><th style="padding:5px 8px;text-align:center;font-size:0.72rem;">判责量</th><th style="padding:5px 8px;text-align:center;font-size:0.72rem;">占比</th></tr></thead>' +
-                                    '<tbody>' + pzRows + '</tbody></table></div>';
-                        })() +
-                    '</div>' +
+                    '<div id="pzCatBlock" style="flex:1;min-width:0;display:flex;flex-direction:column;">' + renderPzCatBlock() + '</div>' +
                 '</div>' +
                 (function(){
                     var ef = errorDashboardFilter;
@@ -18160,6 +18305,20 @@ URL.revokeObjectURL(url);
             if (noteArea) noteArea.innerHTML = window._personRenderNoteTableForWeek(window._personCurWeekIdx);
         };
         document.body.appendChild(overlay);
+        // 历史周期的判责量本机可能还没缓存：按需从云端补齐，补完原地刷新这块（不阻塞弹窗）
+        try {
+            var _pzSel = _pzSelectedRange();
+            var _pzNow = new Date();
+            var _pzToday = new Date(_pzNow.getFullYear(), _pzNow.getMonth(), _pzNow.getDate());
+            var _pzFetchEnd = _pzSel.end > _pzToday ? _pzToday : _pzSel.end;   // 未来日期不用去云端问
+            if (_pzSel.start <= _pzFetchEnd) {
+                ensurePanzeRange(_pzSel.start, _pzFetchEnd).then(function(changed) {
+                    if (!changed) return;
+                    var el = document.getElementById('pzCatBlock');
+                    if (el && document.body.contains(el)) el.innerHTML = renderPzCatBlock();
+                });
+            }
+        } catch(e) {}
         overlay.querySelector('#popupCloseBtn').onclick = function() { overlay.remove(); window._renderNoteTable = null; window._personWeeks = null; window._personSwitchWeek = null; window._personSelectCat = null; };
         overlay.onclick = function(e) { if (e.target === overlay) { overlay.remove(); window._renderNoteTable = null; window._personWeeks = null; window._personSwitchWeek = null; window._personSelectCat = null; } };
     }
@@ -20928,7 +21087,7 @@ URL.revokeObjectURL(url);
                         '<button onclick="refreshErrorDashboardData(true)" style="background:#2a5298;color:white;border:none;padding:4px 10px;border-radius:14px;cursor:pointer;font-size:0.7rem;">🔄 刷新</button>' +
                         // 常驻授权入口（2026-09-13）：原来所有授权链接都藏在 errorDashboardAllFailed 分支里，
                         // 而应用身份能读到全部表 → 那个条件永远不成立 → 页面上根本没地方重新授权。
-                        '<button onclick="showFeishuAuthPanel()" title="重新授权飞书（徐行账号）" style="background:#f1f5f9;color:#1f3a6b;border:1px solid #cbd5e1;padding:4px 10px;border-radius:14px;cursor:pointer;font-size:0.7rem;">🔑 授权</button>' +
+                        '<button class="admin-only" onclick="showFeishuAuthPanel()" title="重新授权飞书（徐行账号）" style="background:#f1f5f9;color:#1f3a6b;border:1px solid #cbd5e1;padding:4px 10px;border-radius:14px;cursor:pointer;font-size:0.7rem;">🔑 授权</button>' +
                     '</div>' +
                 '</div>' +
                 '<div class="sheet-status">' + statusDots + '<span style="margin-left:12px;font-size:0.75rem;color:#5e6f8d;">总失误数（' + errorDashboardData.length + '条）</span></div>' +
@@ -24262,7 +24421,7 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
         //   渲染时加 admin-only 类，配合 body.guest-mode .admin-only{display:none} 游客点不到。
         //   注意：每次管理员编辑案例，所有游客下次开页面都要重下这 97KB，是持续消耗。
         manualCases:               { guest: false, exam: false },
-        reviewerAccRateData:       { guest: false, exam: false },  // 审核员准确率：只在数据分析模块读，而 dataAnalysis 在 guestBlocked 里；另一处 viewExamRecords 有 isAdminMode 前置
+        reviewerAccRateData:       { guest: false, exam: false },  // 审核员准确率：数据分析模块虽已对游客开放（2026-11-14），但游客启动不预取它；进面板时由 _yxtPanelCheck 按需拉
         samplingCardCache:         { guest: false, exam: false },  // 抽查卡 innerHTML 快照：全文件只写不读（无 getItem），_lsCleanup 自己标注「可重建」并会清它 —— 本不该上云
         autoPushQueue:             { guest: false, exam: false },
         departedReviewers:         { guest: false, exam: false },
