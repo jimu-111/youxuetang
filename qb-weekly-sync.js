@@ -706,7 +706,7 @@ async function syncTrainingBank() {
   console.log('\n========== 培训案例题库 ==========');
   const TRAIN_SHEET_ID = '1K3owU';
   try {
-    const v = await api('/sheets/v2/spreadsheets/' + SS_TOKEN + '/values/' + TRAIN_SHEET_ID + '!A1:O2000?majorDimension=ROWS');
+    const v = await api('/sheets/v2/spreadsheets/' + SS_TOKEN + '/values/' + TRAIN_SHEET_ID + '!A1:Q2000?majorDimension=ROWS');
     if (v.status !== 200 || !v.json || v.json.code !== 0) {
       console.log('⚠️ 读取培训题库表失败，跳过（不影响主题库）');
       return;
@@ -721,7 +721,7 @@ async function syncTrainingBank() {
       if (!id || !text) continue;
       const setName = String(r[1] || '').trim() || '未命名套题';
       const options = [];
-      ['A', 'B', 'C', 'D'].forEach((k, oi) => {
+      ['A', 'B', 'C', 'D', 'E', 'F'].forEach((k, oi) => {
         const t = String(r[5 + oi] || '').trim();
         if (t) options.push({ key: k, text: t, images: [] });
       });
@@ -729,15 +729,15 @@ async function syncTrainingBank() {
         id: id,
         set: setName,
         seq: Number(r[2]) || i,
-        type: inferType(r[3], r[9]),
+        type: inferType(r[3], r[11]),
         question: text,
         options: options,
-        answer: String(r[9] || '').trim(),
-        explanation: String(r[10] || '').trim(),
-        images: splitMediaCell(r[11]).images,
-        analysisImages: splitMediaCell(r[12]).images,
-        sourceQc: String(r[13] || '').trim(),
-        approvedAt: String(r[14] || '').trim()
+        answer: String(r[11] || '').trim(),
+        explanation: String(r[12] || '').trim(),
+        images: splitMediaCell(r[13]).images,
+        analysisImages: splitMediaCell(r[14]).images,
+        sourceQc: String(r[15] || '').trim(),
+        approvedAt: String(r[16] || '').trim()
       };
       if (!setMap[setName]) setMap[setName] = { name: setName, questions: [], updatedAt: '' };
       setMap[setName].questions.push(q);

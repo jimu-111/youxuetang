@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <!-- 版本行：每次部署新代码必须 bump 此 content（YYYYMMDD.N），旧设备靠它自检静默升级 -->
-    <meta name="yxt-ver" content="20261115.1">
+    <meta name="yxt-ver" content="20261115.6">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
     <title>优学堂</title>
     <script src="https://cdn.sheetjs.com/xlsx-0.20.2/package/dist/xlsx.full.min.js" defer></script>
@@ -11854,7 +11854,8 @@ URL.revokeObjectURL(url);
     targetId = targetId || 'mainContent';
     const container = document.getElementById(targetId);
     const allCases = getManualCasesFull();
-    
+    try { _tqLearnPrefetch(); } catch (e) {}
+
     const weekSet = new Set();
     allCases.forEach(c => { weekSet.add(getCurrentWeekKeyFromTimestamp(c.createTime)); });
     const weeks = Array.from(weekSet).sort().reverse();
@@ -11868,36 +11869,48 @@ URL.revokeObjectURL(url);
             <div style="margin-bottom:12px;color:#64748b;font-size:0.85rem;">
                 默认选择本周的案例（${currentWeekCases.length}条），请勾选需要生成考题的案例后点击生成。考题将以"问题描述"为题干，"正确方向"为参考答案。
             </div>
-            <div style="margin-bottom:12px;display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
+            <div style="margin-bottom:12px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
                 <label style="font-weight:600;">📅 按周筛选：</label>
                 <select id="examWeekFilter" style="padding:6px 16px;border:1px solid #cbd5e1;border-radius:20px;font-size:0.85rem;">
                     <option value="all">全部案例</option>
                     ${weeks.map(w => `<option value="${w}" ${w===currentWeek?'selected':''}>${formatWeekLabel(w)}${w===currentWeek?'（本周）':''}</option>`).join('')}
                 </select>
-                <label style="cursor:pointer;margin-left:8px;"><input type="checkbox" id="examSelectAll" checked> 全选/取消</label>
+                <label style="cursor:pointer;"><input type="checkbox" id="examSelectAll" checked> 全选/取消</label>
+                <button id="tqDraftBtn" style="margin-left:auto;background:linear-gradient(135deg,#1f3a6b,#2a5298);color:#fff;border:none;padding:7px 16px;border-radius:18px;cursor:pointer;font-weight:600;font-size:0.8rem;white-space:nowrap;">🎓 生成培训题库草稿</button>
+                <button id="generateExamBtn" style="background:#f1f5f9;color:#1f3a6b;border:1px solid #cbd5e1;padding:7px 12px;border-radius:18px;cursor:pointer;font-size:0.78rem;white-space:nowrap;">📄 导出旧版</button>
             </div>
         </div>
         <div id="examChecklistArea"></div>
-        <div style="text-align:center;margin-top:16px;display:flex;gap:10px;justify-content:center;flex-wrap:wrap;">
-            <button id="tqDraftBtn" class="generate-btn">🎓 生成培训题库草稿（判断 / 单选 / 多选）</button>
-            <button id="generateExamBtn" style="background:#f1f5f9;color:#1f3a6b;border:1px solid #cbd5e1;padding:12px 24px;border-radius:30px;cursor:pointer;font-weight:600;font-size:0.9rem;">📄 导出成文档（旧版）</button>
-        </div>
     </div>`;
 
-    renderChecklist('exam', currentWeekCases, allCases, currentWeekCases);
+    renderChecklist('exam', currentWeekCases, allCases, currentWeekCases, { resetSelection: true, page: 1 });
 
     document.getElementById('examWeekFilter').addEventListener('change', function() {
         const filtered = this.value === 'all' ? allCases : allCases.filter(c => getCurrentWeekKeyFromTimestamp(c.createTime) === this.value);
         const defaults = this.value === currentWeek ? currentWeekCases : filtered;
-        renderChecklist('exam', defaults, allCases, currentWeekCases);
+        renderChecklist('exam', defaults, allCases, currentWeekCases, { resetSelection: true, page: 1 });
         document.getElementById('examSelectAll').checked = true;
     });
 
     document.getElementById('examSelectAll').addEventListener('change', function() {
-        document.querySelectorAll('.exam-case-chk').forEach(chk => { chk.checked = this.checked; });
+        var checked = this.checked;
+        document.querySelectorAll('.exam-case-chk').forEach(function(chk) {
+            chk.checked = checked;
+            var k = chk.getAttribute('data-key');
+            if (k) {
+                if (!window._examSelected) window._examSelected = new Set();
+                if (checked) window._examSelected.add(k); else window._examSelected.delete(k);
+            }
+        });
+        if (typeof updateExamSelCount === 'function') updateExamSelCount();
     });
 
     function _tqSelectedCases() {
+        // 分页后 DOM 里只有当前页，必须用跨页的选中集合
+        if (window._examSelected) {
+            var keys = window._examSelected;
+            return allCases.filter(function(c) { return keys.has(c.qcCode + '|' + c.createTime); });
+        }
         return Array.from(document.querySelectorAll('.exam-case-chk:checked'))
             .map(chk => allCases[parseInt(chk.dataset.idx)])
             .filter(Boolean);
@@ -12017,6 +12030,151 @@ URL.revokeObjectURL(url);
         return { images: imgs, analysisImages: ans };
     }
 
+    // ===== 审核学习（2026-11-15）：记录你每次改了什么，下次出题尽量贴近 =====
+    var TQ_LEARN_KEY = 'trainingLearningData';
+    function _tqLearnLoad() {
+        try {
+            var raw = _realLS.getItem(TQ_LEARN_KEY);
+            if (raw) { var o = JSON.parse(raw); if (o && typeof o === 'object') return o; }
+        } catch (e) {}
+        return { reviews: 0, typeApproved: {}, optionCounts: {}, stemPatternCounts: {}, recentExamples: [] };
+    }
+    function _tqLearnSave(data) {
+        data.updatedAt = new Date().toISOString();
+        var val = JSON.stringify(data);
+        try { _realLS.setItem(TQ_LEARN_KEY, val); } catch (e) {}
+        try {
+            fetch(SUPABASE_URL + '/rest/v1/app_data', {
+                method: 'POST',
+                headers: {
+                    'apikey': SUPABASE_KEY,
+                    'Authorization': 'Bearer ' + SUPABASE_KEY,
+                    'Content-Type': 'application/json',
+                    'Prefer': 'resolution=merge-duplicates'
+                },
+                body: JSON.stringify([{ key: TQ_LEARN_KEY, value: val, updated_at: new Date().toISOString() }])
+            }).catch(function() {});
+        } catch (e) {}
+    }
+    function _tqLearnPrefetch() {
+        if (_realLS.getItem(TQ_LEARN_KEY)) return;
+        _tdSbGet(TQ_LEARN_KEY).then(function(v) {
+            if (v) { try { _realLS.setItem(TQ_LEARN_KEY, v); } catch (e) {} }
+        }).catch(function() {});
+    }
+    // 题型配比：默认 判断4/单选4/多选2；审核 ≥2 次后按你最终入库的比例分配 10 个位置
+    function _tqTypePlan(learn) {
+        var base = { judge: 4, choice: 4, multi: 2 };
+        if (!learn || !learn.reviews || learn.reviews < 2) return base;
+        var t = learn.typeApproved || {};
+        var total = (t.judge || 0) + (t.choice || 0) + (t.multi || 0);
+        if (!total) return base;
+        var raw = {
+            judge: (t.judge || 0) / total * 10,
+            choice: (t.choice || 0) / total * 10,
+            multi: (t.multi || 0) / total * 10
+        };
+        var plan = {
+            judge: Math.max(1, Math.floor(raw.judge)),
+            choice: Math.max(1, Math.floor(raw.choice)),
+            multi: Math.max(1, Math.floor(raw.multi))
+        };
+        var sum = plan.judge + plan.choice + plan.multi;
+        var order = ['judge', 'choice', 'multi'].sort(function(a, b) {
+            return (raw[b] - plan[b]) - (raw[a] - plan[a]);
+        });
+        var i = 0;
+        while (sum < 10) { plan[order[i % 3]]++; sum++; i++; }
+        while (sum > 10 && (plan.judge + plan.choice + plan.multi) > 3) {
+            var keys = ['judge', 'choice', 'multi'].sort(function(a, b) { return plan[b] - plan[a]; });
+            for (var j = 0; j < keys.length; j++) {
+                if (plan[keys[j]] > 1) { plan[keys[j]]--; sum--; break; }
+            }
+        }
+        return plan;
+    }
+    function _tqPreferredOptionCount(learn) {
+        if (!learn || !learn.optionCounts) return 4;
+        var best = 4, bestCount = 0;
+        Object.keys(learn.optionCounts).forEach(function(k) {
+            var n = parseInt(k, 10);
+            if (!isNaN(n) && learn.optionCounts[k] > bestCount) { bestCount = learn.optionCounts[k]; best = n; }
+        });
+        if (bestCount < 2) return 4;
+        return Math.max(3, Math.min(6, best));
+    }
+    function _tqBestPattern(learn, type) {
+        var m = learn && learn.stemPatternCounts && learn.stemPatternCounts[type];
+        if (!m) return '';
+        var best = '', bc = 0;
+        Object.keys(m).forEach(function(p) { if (m[p] > bc) { bc = m[p]; best = p; } });
+        return bc >= 2 ? best : '';
+    }
+    function _tqApplyPattern(pattern, c, direction, type) {
+        var p = pattern || '';
+        if (!p) return '';
+        var dir = _tqNorm(direction || c.correctDir);
+        p = p.replace(/\{案例\}/g, _tqNorm(c.issueDesc))
+             .replace(/\{问题\}/g, _tqNorm(c.issueDesc))
+             .replace(/\{方向\}/g, dir);
+        if (type === 'judge' && dir && p.indexOf(dir) < 0) p += '\n' + dir;
+        return _tqNorm(p);
+    }
+    function _tqExtractPattern(d, c) {
+        var q = _tqNorm(d.question);
+        var issue = _tqNorm(c.issueDesc), dir = _tqNorm(c.correctDir);
+        if (issue && q.indexOf(issue) >= 0) q = q.split(issue).join('{案例}');
+        if (dir && q.indexOf(dir) >= 0) q = q.split(dir).join('{方向}');
+        else if (d.type === 'judge') return '';   // 假判断题用的是另一条案例的方向，无法反推
+        return (q.indexOf('{案例}') >= 0 || q.indexOf('{方向}') >= 0 || d.type === 'multi') ? q : '';
+    }
+    function _tqLearnFromReview(finalDrafts) {
+        var learn = _tqLearnLoad();
+        learn.reviews = (learn.reviews || 0) + 1;
+        learn.typeApproved = learn.typeApproved || {};
+        learn.optionCounts = learn.optionCounts || {};
+        learn.stemPatternCounts = learn.stemPatternCounts || {};
+        learn.recentExamples = learn.recentExamples || [];
+        var origById = {};
+        (window._tqOriginalDrafts || []).forEach(function(d) { if (d.tmpId) origById[d.tmpId] = d; });
+        var cases = {};
+        try { getManualCasesFull().forEach(function(c) { cases[String(c.qcCode)] = c; }); } catch (e) {}
+        var changes = 0;
+        finalDrafts.forEach(function(d) {
+            var o = origById[d.tmpId];
+            if (o) {
+                if (o.type !== d.type) changes++;
+                if (_tqNorm(o.question) !== _tqNorm(d.question)) changes++;
+                if ((o.options || []).map(function(x) { return _tqNorm(x.text); }).join('|') !==
+                    (d.options || []).map(function(x) { return _tqNorm(x.text); }).join('|')) changes++;
+                if (String(o.answer).toUpperCase() !== String(d.answer).toUpperCase()) changes++;
+                if (_tqNorm(o.explanation) !== _tqNorm(d.explanation)) changes++;
+            }
+            learn.typeApproved[d.type] = (learn.typeApproved[d.type] || 0) + 1;
+            if (d.type === 'choice' || d.type === 'multi') {
+                var n = (d.options || []).filter(function(x) { return String(x.text || '').trim(); }).length;
+                if (n) learn.optionCounts[n] = (learn.optionCounts[n] || 0) + 1;
+            }
+            var c = cases[String(d.sourceQc)];
+            if (c) {
+                var pat = _tqExtractPattern(d, c);
+                if (pat) {
+                    learn.stemPatternCounts[d.type] = learn.stemPatternCounts[d.type] || {};
+                    learn.stemPatternCounts[d.type][pat] = (learn.stemPatternCounts[d.type][pat] || 0) + 1;
+                }
+            }
+            learn.recentExamples.unshift({
+                type: d.type, question: d.question,
+                options: (d.options || []).map(function(x) { return x.text; }),
+                answer: d.answer, explanation: d.explanation, at: new Date().toISOString()
+            });
+        });
+        learn.recentExamples = learn.recentExamples.slice(0, 20);
+        learn.lastChanges = changes;
+        _tqLearnSave(learn);
+        return changes;
+    }
+
     // 生成 10 题（素材不足时 5~10）
     function _tqBuildDrafts(cases) {
         var valid = cases.filter(function(c) {
@@ -12035,6 +12193,14 @@ URL.revokeObjectURL(url);
         var issues = valid.map(function(c) { return { qc: c.qcCode, text: _tqNorm(c.issueDesc), len: _tqLen(c.issueDesc), c: c }; });
         var drafts = [];
 
+        // 2026-11-15：参考历史审核（题型配比 / 题干模板 / 选项个数）
+        var learn = _tqLearnLoad();
+        var plan = _tqTypePlan(learn);
+        var wantOpts = _tqPreferredOptionCount(learn);
+        var patJudge = _tqBestPattern(learn, 'judge');
+        var patChoice = _tqBestPattern(learn, 'choice');
+        var patMulti = _tqBestPattern(learn, 'multi');
+
         function pushJudge(c, isTrue) {
             var text = _tqNorm(c.correctDir);
             var other = null;
@@ -12045,10 +12211,12 @@ URL.revokeObjectURL(url);
                 text = other.text;
             }
             var im = _tqCaseImages(c);
+            var qJudge = _tqApplyPattern(patJudge, c, text, 'judge') ||
+                ('案例：' + _tqNorm(c.issueDesc) + '\n\n判断：以下处理方向是否正确？\n' + text);
             drafts.push({
                 type: 'judge',
-                question: '案例：' + _tqNorm(c.issueDesc) + '\n\n判断：以下处理方向是否正确？\n' + text,
-                options: [],
+                question: qJudge,
+                options: [{ key: 'A', text: '正确' }, { key: 'B', text: '错误' }],
                 answer: isTrue ? '正确' : '错误',
                 explanation: isTrue
                     ? '依据案例 ' + (c.qcCode || '') + ' 的正确方向：\n' + _tqNorm(c.correctDir)
@@ -12062,15 +12230,18 @@ URL.revokeObjectURL(url);
         function pushChoice(c) {
             var correct = _tqNorm(c.correctDir);
             var pool = dirs.filter(function(d) { return d.qc !== c.qcCode && d.text !== correct; });
-            var ds = _tqPickDirs(pool, [correct], 3, correct.length);
+            var need = Math.max(3, wantOpts - 1);
+            var ds = _tqPickDirs(pool, [correct], need, correct.length);
             if (ds.length < 3) return;
             var all = _tqShuffle([correct].concat(ds.map(function(d) { return d.text; })));
             var options = all.map(function(t, i) { return { key: _tqLetter(i), text: t }; });
             var ansIdx = all.indexOf(correct);
             var im = _tqCaseImages(c);
+            var qChoice = _tqApplyPattern(patChoice, c, correct, 'choice') ||
+                ('案例：' + _tqNorm(c.issueDesc) + '\n\n以下哪项是正确的处理方向？');
             drafts.push({
                 type: 'choice',
-                question: '案例：' + _tqNorm(c.issueDesc) + '\n\n以下哪项是正确的处理方向？',
+                question: qChoice,
                 options: options,
                 answer: _tqLetter(ansIdx),
                 explanation: '依据案例 ' + (c.qcCode || '') + ' 的正确方向：\n' + correct,
@@ -12086,7 +12257,8 @@ URL.revokeObjectURL(url);
             if (correctPool.length < 2) return;
             var correctTexts = correctPool.map(function(c) { return _tqNorm(c.correctDir); });
             var wrongPool = issues.filter(function(x) { return correctPool.every(function(c) { return c.qcCode !== x.qc; }); });
-            var wrongs = _tqPickDirs(wrongPool, correctTexts, 2, _tqLen(correctTexts[0]));
+            var wantWrong = Math.max(1, Math.min(4, wantOpts - correctTexts.length));
+            var wrongs = _tqPickDirs(wrongPool, correctTexts, wantWrong, _tqLen(correctTexts[0]));
             if (wrongs.length < 1) return;
             var all = _tqShuffle(correctTexts.concat(wrongs.map(function(w) { return w.text; })));
             var options = all.map(function(t, i) { return { key: _tqLetter(i), text: t }; });
@@ -12094,9 +12266,11 @@ URL.revokeObjectURL(url);
             correctTexts.forEach(function(t) { var i = all.indexOf(t); if (i >= 0) ans.push(_tqLetter(i)); });
             ans.sort();
             var im = _tqCaseImages(correctPool[0]);
+            var qMulti = _tqApplyPattern(patMulti, correctPool[0], correctTexts[0], 'multi') ||
+                '以下哪些是本期培训案例中的正确做法？（多选）';
             drafts.push({
                 type: 'multi',
-                question: '以下哪些是本期培训案例中的正确做法？（多选）',
+                question: qMulti,
                 options: options,
                 answer: ans.join(''),
                 explanation: '正确项来自案例：' + correctPool.map(function(c) { return c.qcCode || ''; }).join('、') + '；错误项是本期案例的问题描述。',
@@ -12106,13 +12280,10 @@ URL.revokeObjectURL(url);
             });
         }
 
-        // 判断 4（对错各 2）
-        for (var i = 0; i < 4; i++) pushJudge(valid[i % valid.length], i % 2 === 0);
-        // 单选 4
-        for (var j = 0; j < 4; j++) pushChoice(valid[(j + 4) % valid.length]);
-        // 多选 2
-        pushMulti(0);
-        pushMulti(3);
+        // 按学习到的配比出题（默认 判断4/单选4/多选2）
+        for (var i = 0; i < plan.judge; i++) pushJudge(valid[i % valid.length], i % 2 === 0);
+        for (var j = 0; j < plan.choice; j++) pushChoice(valid[(j + plan.judge) % valid.length]);
+        for (var k = 0; k < plan.multi; k++) pushMulti(k * 3);
 
         // 去重（题干 + 选项都完全一样才删；多选的两道题题干相同、选项不同，要保留）
         var seen = {};
@@ -12124,6 +12295,8 @@ URL.revokeObjectURL(url);
 
         // 素材不足时按实际数量出（5~10）
         if (drafts.length > TQ_TARGET) drafts = drafts.slice(0, TQ_TARGET);
+        var stamp = Date.now();
+        drafts.forEach(function(d, i) { if (!d.tmpId) d.tmpId = 'd' + i + '_' + stamp; });
         return drafts;
     }
 
@@ -12138,6 +12311,7 @@ URL.revokeObjectURL(url);
             return;
         }
         window._tqDrafts = drafts;
+        window._tqOriginalDrafts = JSON.parse(JSON.stringify(drafts));
         window._tqSourceCases = cases;
         _tqRenderReview(drafts, cases, targetId);
     }
@@ -12150,6 +12324,12 @@ URL.revokeObjectURL(url);
         var html = '<div class="report-box" style="margin-bottom:16px;">' +
             '<div class="report-title">🎓 培训题库草稿 · 审核</div>' +
             '<p style="font-size:0.85rem;color:#5e6f8d;">共 <b>' + drafts.length + '</b> 题。生成的是草稿，题型、题干、选项、答案都可以改；确认无误后点「入库」，写入飞书「培训案例生成」并同步到云端。</p>' +
+            (function() {
+                var l = _tqLearnLoad();
+                if (!l.reviews) return '';
+                var pl = _tqTypePlan(l);
+                return '<div style="margin-top:6px;font-size:0.78rem;color:#6d28d9;background:#f5f3ff;border:1px solid #ddd6fe;border-radius:10px;padding:6px 12px;">🧠 已参考你最近 ' + l.reviews + ' 次审核：本次计划 判断' + pl.judge + ' / 单选' + pl.choice + ' / 多选' + pl.multi + '，选项约 ' + _tqPreferredOptionCount(l) + ' 个</div>';
+            })() +
             '<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-top:10px;">' +
                 '<label style="font-weight:600;">套题名称：</label>' +
                 '<input id="tqSetName" type="text" value="' + escapeHtml(defName) + '" style="flex:1;min-width:220px;padding:8px 12px;border:1px solid #cbd5e1;border-radius:10px;font-size:0.9rem;">' +
@@ -12184,13 +12364,17 @@ URL.revokeObjectURL(url);
             var imgHtml = (d.images || []).map(function(tk) { return photoTag({ t: tk }, 80, 80); }).join('');
             var ansImgHtml = (d.analysisImages || []).map(function(tk) { return photoTag({ t: tk }, 80, 80); }).join('');
             var optHtml = '';
+            if (d.type === 'judge') {
+                optHtml = '<div style="margin-top:6px;font-size:0.78rem;color:#5e6f8d;">判断题选项：A. 正确　B. 错误</div>';
+            }
             if (d.type === 'choice' || d.type === 'multi') {
                 optHtml = '<div class="tq-options" style="margin-top:8px;">' + d.options.map(function(o, oi) {
                     return '<div style="display:flex;gap:6px;align-items:flex-start;margin:4px 0;">' +
                         '<b style="width:18px;flex:0 0 18px;">' + o.key + '</b>' +
                         '<textarea class="tq-opt" data-idx="' + i + '" data-oi="' + oi + '" rows="2" style="flex:1;padding:6px 8px;border:1px solid #cbd5e1;border-radius:8px;font-size:0.82rem;">' + escapeHtml(o.text) + '</textarea>' +
                     '</div>';
-                }).join('') + '</div>';
+                }).join('') + '</div>' +
+                (d.options.length < 6 ? '<button class="tq-add-opt" data-idx="' + i + '" style="margin-top:4px;background:#eef2ff;border:1px solid #cbd5e1;color:#2a5298;padding:4px 12px;border-radius:12px;cursor:pointer;font-size:0.75rem;">➕ 增加选项</button>' : '');
             }
             var ansHtml = d.type === 'judge'
                 ? '<select class="tq-answer-sel" data-idx="' + i + '" style="padding:6px 10px;border:1px solid #cbd5e1;border-radius:8px;"><option value="正确"' + (d.answer === '正确' ? ' selected' : '') + '>正确</option><option value="错误"' + (d.answer === '错误' ? ' selected' : '') + '>错误</option></select>'
@@ -12246,6 +12430,17 @@ URL.revokeObjectURL(url);
                 _tqPaintDrafts();
             };
         });
+        list.querySelectorAll('.tq-add-opt').forEach(function(btn) {
+            btn.onclick = function() {
+                var i = parseInt(btn.dataset.idx, 10);
+                _tqCollectDrafts();
+                var d = window._tqDrafts[i];
+                if (!d || !d.options) return;
+                if (d.options.length >= 6) { showToast('最多 6 个选项（A~F）', 'warning'); return; }
+                d.options.push({ key: _tqLetter(d.options.length), text: '' });
+                _tqPaintDrafts();
+            };
+        });
     }
 
     function _tqCollectDrafts() {
@@ -12293,8 +12488,7 @@ URL.revokeObjectURL(url);
     }
 
     function _tqTodayPrefix() {
-        var d = new Date();
-        return 'PX-' + d.getFullYear() + String(d.getMonth() + 1).padStart(2, '0') + String(d.getDate()).padStart(2, '0') + '-';
+        return 'PX-';
     }
 
     async function _tqEnsureRows(token, needRow) {
@@ -12319,7 +12513,7 @@ URL.revokeObjectURL(url);
 
     async function _tqReadSheet(token) {
         var url = 'https://open.feishu.cn/open-apis/sheets/v2/spreadsheets/' + TQ_SHEET_TOKEN +
-            '/values/' + TQ_SHEET_ID + '!A1:O2000?majorDimension=ROWS';
+            '/values/' + TQ_SHEET_ID + '!A1:Q2000?majorDimension=ROWS';
         var resp = await feishuApiFetch(url, { headers: { 'Authorization': 'Bearer ' + token } });
         var j = await resp.json();
         if (!j || j.code !== 0) throw new Error('读取培训题库表失败：' + ((j && j.msg) || '未知错误'));
@@ -12424,8 +12618,10 @@ URL.revokeObjectURL(url);
             var prefix = _tqTodayPrefix();
             var maxSeq = 0;
             existing.ids.forEach(function(id) {
-                if (String(id).indexOf(prefix) === 0) {
-                    var n = parseInt(String(id).slice(prefix.length), 10);
+                // 兼容旧格式 PX-20261115-001 和新格式 PX-001，取最后一段数字
+                var m = String(id).match(/^PX-(?:\d{8}-)?(\d+)$/);
+                if (m) {
+                    var n = parseInt(m[1], 10);
                     if (!isNaN(n) && n > maxSeq) maxSeq = n;
                 }
             });
@@ -12436,6 +12632,9 @@ URL.revokeObjectURL(url);
                 d._id = id;
                 d._seq = i + 1;
                 var optByKey = {};
+                if (d.type === 'judge' && (!d.options || !d.options.length)) {
+                    d.options = [{ key: 'A', text: '正确' }, { key: 'B', text: '错误' }];
+                }
                 (d.options || []).forEach(function(o) {
                     var t = String(o.text || '').trim();
                     if (t) optByKey[o.key] = t;
@@ -12443,7 +12642,7 @@ URL.revokeObjectURL(url);
                 return [
                     id, setName, i + 1, TQ_TYPE_LABEL[d.type] || '判断题',
                     String(d.question || '').trim(),
-                    optByKey['A'] || '', optByKey['B'] || '', optByKey['C'] || '', optByKey['D'] || '',
+                    optByKey['A'] || '', optByKey['B'] || '', optByKey['C'] || '', optByKey['D'] || '', optByKey['E'] || '', optByKey['F'] || '',
                     d.answer, String(d.explanation || '').trim(),
                     '', '', String(d.sourceQc || ''), nowIso
                 ];
@@ -12451,7 +12650,7 @@ URL.revokeObjectURL(url);
 
             if (status) status.textContent = '⏳ 正在写入 ' + rows.length + ' 条题目…';
             await _tqEnsureRows(token, startRow + rows.length - 1);
-            var body = { valueRanges: [{ range: TQ_SHEET_ID + '!A' + startRow + ':O' + (startRow + rows.length - 1), values: rows }] };
+            var body = { valueRanges: [{ range: TQ_SHEET_ID + '!A' + startRow + ':Q' + (startRow + rows.length - 1), values: rows }] };
             var wResp = await feishuApiFetch('https://open.feishu.cn/open-apis/sheets/v2/spreadsheets/' + TQ_SHEET_TOKEN + '/values_batch_update', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
@@ -12466,14 +12665,18 @@ URL.revokeObjectURL(url);
                 var d = drafts[i], row = startRow + i;
                 if (d.images && d.images[0]) {
                     if (status) status.textContent = '⏳ 正在上传图片 ' + (i + 1) + '/' + drafts.length + '…';
-                    try { await _tqWriteImageCell('L' + row, d.images[0], token); }
+                    try { await _tqWriteImageCell('N' + row, d.images[0], token); }
                     catch (e) { imgWarn.push('第 ' + (i + 1) + ' 题题目图：' + e.message); }
                 }
                 if (d.analysisImages && d.analysisImages[0]) {
-                    try { await _tqWriteImageCell('M' + row, d.analysisImages[0], token); }
+                    try { await _tqWriteImageCell('O' + row, d.analysisImages[0], token); }
                     catch (e) { imgWarn.push('第 ' + (i + 1) + ' 题解析图：' + e.message); }
                 }
             }
+
+            // 2026-11-15：入库成功后记录本次审核改动，供下次出题参考
+            var learnedChanges = 0;
+            try { learnedChanges = _tqLearnFromReview(drafts); } catch (e) {}
 
             // 更新本地/云端培训题库（周同步会按表重新对齐）
             var bank = _tqLoadBank();
@@ -12496,6 +12699,7 @@ URL.revokeObjectURL(url);
 
             if (status) {
                 status.innerHTML = '✅ 已入库：' + rows.length + ' 题（套题：' + escapeHtml(setName) + '）' +
+                    (learnedChanges ? '（已记录本次审核 ' + learnedChanges + ' 处修改）' : '') +
                     (imgWarn.length ? '<br><span style="color:#b45309;">⚠️ ' + imgWarn.length + ' 张图片没写进去：' + escapeHtml(imgWarn.slice(0, 3).join('；')) + '</span>' : '') +
                     '<br><a href="javascript:void(0)" onclick="switchNav(\'questionBank\')">👉 去题库查看「培训案例题库」</a>';
             }
@@ -12551,7 +12755,10 @@ URL.revokeObjectURL(url);
                     '<div class="qb-cat-name">' + escapeHtml(s.name) + '</div>' +
                     '<div class="qb-cat-count">' + qs.length + ' 题 · 判断' + cnt.judge + ' / 单选' + cnt.choice + ' / 多选' + cnt.multi + '</div>' +
                     '<div style="font-size:0.62rem;opacity:0.75;">' + escapeHtml(ts) + '</div>' +
-                    '<div class="qb-cat-actions"><button class="qb-card-btn" style="background:rgba(255,255,255,0.22);color:white;" onclick="event.stopPropagation();window._tqOpenSet(' + i + ')">👁️ 查看</button></div>' +
+                    '<div class="qb-cat-actions">' +
+                        '<button class="qb-card-btn" style="background:rgba(255,255,255,0.22);color:white;" onclick="event.stopPropagation();window._tqOpenSet(' + i + ')">👁️ 查看</button>' +
+                        (isAdminMode() ? '<button class="qb-card-btn" style="background:rgba(255,255,255,0.22);color:white;" onclick="event.stopPropagation();window._tqRewriteSetToSheet(' + i + ')">🛠️ 写回飞书</button>' : '') +
+                    '</div>' +
                 '</div>';
             }).join('');
             panel.innerHTML = '<div style="font-size:0.8rem;color:#5e6f8d;margin-bottom:12px;">本分区由飞书表「培训案例生成」每周同步，页面只读；要改题请到飞书表或案例库重新生成。</div>' +
@@ -12562,7 +12769,94 @@ URL.revokeObjectURL(url);
                 if (!s) return;
                 openQBDetailModal(s.name, s.questions || []);
             };
+            window._tqRewriteSetToSheet = function(i) {
+                var s = window._tqSetList[i];
+                if (s) _tqRewriteSetToSheet(s);
+            };
         });
+    }
+
+    // 2026-11-15：把本地培训题库里的整套题原样写回飞书（恢复/修复用）
+    async function _tqRewriteSetToSheet(set) {
+        if (!isAdminMode()) { showToast('🔒 请先登录管理员', 'warning'); return; }
+        var qs = (set && set.questions) || [];
+        if (!qs.length) { showToast('这套题是空的', 'warning'); return; }
+        if (!confirm('把「' + set.name + '」的 ' + qs.length + ' 道题写回飞书「培训案例生成」？\n\n只在表里缺这批题时使用：会按题目ID跳过表里已有的题，不会覆盖已有行。')) return;
+        var ov = document.createElement('div');
+        ov.className = 'modal-overlay'; ov.style.zIndex = '5000';
+        ov.innerHTML = '<div class="modal-container" style="max-width:480px;">' +
+            '<div class="modal-header">🛠️ 写回飞书<button class="modal-close-btn" id="tqRwClose">✕</button></div>' +
+            '<div class="modal-body" style="padding:20px;"><div id="tqRwStatus">⏳ 正在读取飞书表格…</div></div></div>';
+        document.body.appendChild(ov);
+        var st = ov.querySelector('#tqRwStatus');
+        function close() { ov.remove(); }
+        ov.querySelector('#tqRwClose').onclick = close;
+        ov.onclick = function(e) { if (e.target === ov) close(); };
+        try {
+            var token = await getFeishuToken();
+            if (!token) throw new Error('无法获取飞书应用令牌');
+            var existing = await _tqReadSheet(token);
+            var existingIds = {};
+            (existing.ids || []).forEach(function(id) { existingIds[String(id)] = 1; });
+            var toWrite = qs.filter(function(q) { return q && q.id && !existingIds[String(q.id)]; });
+            if (!toWrite.length) {
+                st.innerHTML = '✅ 表里已经有这些题（按题目ID判断），不需要写回。';
+                return;
+            }
+            var startRow = existing.lastRow + 1;
+            await _tqEnsureRows(token, startRow + toWrite.length - 1);
+            var rows = toWrite.map(function(q, i) {
+                var optByKey = {};
+                if (q.type === 'judge' && (!q.options || !q.options.length)) {
+                    optByKey.A = '正确'; optByKey.B = '错误';
+                } else {
+                    (q.options || []).forEach(function(o) {
+                        if (o && o.key && String(o.text || '').trim()) optByKey[o.key] = String(o.text).trim();
+                    });
+                }
+                return [
+                    q.id, set.name, q.seq || (i + 1), TQ_TYPE_LABEL[q.type] || '判断题',
+                    String(q.question || '').trim(),
+                    optByKey['A'] || '', optByKey['B'] || '', optByKey['C'] || '', optByKey['D'] || '', optByKey['E'] || '', optByKey['F'] || '',
+                    q.answer || '', String(q.explanation || '').trim(),
+                    '', '', String(q.sourceQc || ''), q.approvedAt || new Date().toISOString()
+                ];
+            });
+            st.textContent = '⏳ 正在写入 ' + rows.length + ' 道题…';
+            var body = { valueRanges: [{ range: TQ_SHEET_ID + '!A' + startRow + ':Q' + (startRow + rows.length - 1), values: rows }] };
+            var wResp = await feishuApiFetch('https://open.feishu.cn/open-apis/sheets/v2/spreadsheets/' + TQ_SHEET_TOKEN + '/values_batch_update', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
+                body: JSON.stringify(body)
+            });
+            var wj = await wResp.json();
+            if (!wj || wj.code !== 0) throw new Error('写入表格失败：' + ((wj && wj.msg) || '未知错误'));
+            var warn = [];
+            for (var i = 0; i < toWrite.length; i++) {
+                var q = toWrite[i], row = startRow + i;
+                if (q.images && q.images[0]) {
+                    st.textContent = '⏳ 正在上传图片 ' + (i + 1) + '/' + toWrite.length + '…';
+                    try { await _tqWriteImageCell('N' + row, q.images[0], token); }
+                    catch (e) { warn.push((q.id || '') + ' 题目图：' + e.message); }
+                }
+                if (q.analysisImages && q.analysisImages[0]) {
+                    try { await _tqWriteImageCell('O' + row, q.analysisImages[0], token); }
+                    catch (e) { warn.push((q.id || '') + ' 解析图：' + e.message); }
+                }
+            }
+            try { _tqSaveBank(_tqLoadBank()); } catch (e) {}
+            st.innerHTML = '✅ 已写回 ' + rows.length + ' 道题（套题：' + escapeHtml(set.name) + '）' +
+                (warn.length ? '<br><span style="color:#b45309;">⚠️ ' + warn.length + ' 张图片没写进去：' + escapeHtml(warn.slice(0, 3).join('；')) + '</span>' : '') +
+                '<br><button id="tqRwDone" style="margin-top:12px;background:#1f3a6b;color:#fff;border:none;padding:8px 18px;border-radius:18px;cursor:pointer;">关闭</button>';
+            var done = ov.querySelector('#tqRwDone');
+            if (done) done.onclick = close;
+            setTimeout(function() { try { _tqRenderTrainingBankPanel(); } catch (e) {} }, 400);
+        } catch (e) {
+            st.innerHTML = '<span style="color:#c0392b;">❌ 写回失败：' + escapeHtml(e.message || String(e)) + '</span>' +
+                '<br><button id="tqRwDone2" style="margin-top:12px;background:#f1f5f9;border:1px solid #cbd5e1;padding:8px 18px;border-radius:18px;cursor:pointer;">关闭</button>';
+            var d2 = ov.querySelector('#tqRwDone2');
+            if (d2) d2.onclick = close;
+        }
     }
 
     // ==================== 培训课件（翻页 + 已读 + 测验，2026-11-15） ====================
@@ -13074,7 +13368,9 @@ URL.revokeObjectURL(url);
             alert('没有找到待审草稿：可能已经入库，或链接已过期。');
             return;
         }
+        batch.drafts.forEach(function(d, i) { if (!d.tmpId) d.tmpId = "d" + i + "_" + Date.now(); });
         window._tqDrafts = batch.drafts;
+        window._tqOriginalDrafts = JSON.parse(JSON.stringify(batch.drafts));
         window._tqSourceCases = [];
         currentCaseHubTab = 'exam';
         switchNav('caseLibrary');
@@ -13092,33 +13388,103 @@ URL.revokeObjectURL(url);
     return 'w_' + monday.getFullYear() + String(monday.getMonth()+1).padStart(2,'0') + String(monday.getDate()).padStart(2,'0');
     }
     
-    function renderChecklist(prefix, defaults, allCases, currentWeekCases) {
-    const area = document.getElementById(prefix + 'ChecklistArea');
-    const filteredCases = (document.getElementById(prefix + 'WeekFilter')?.value || 'all') === 'all' ? allCases : allCases.filter(c => getCurrentWeekKeyFromTimestamp(c.createTime) === document.getElementById(prefix + 'WeekFilter')?.value);
-    const displayCases = filteredCases.length > 0 ? filteredCases : allCases;
-    const makeKey = (c) => c.qcCode + "|" + c.createTime;
-    const defaultKeys = new Set(defaults.map(c => makeKey(c)));
-    
-    let html = '<div class="report-box">';
-    if (allCases.length === 0) {
-        html += '<div class="empty-placeholder" style="padding:40px;">暂无案例数据，请先在"培训案例收集 - 手动录入"中添加案例</div>';
-    } else {
-        html += `<div style="margin-bottom:8px;color:#64748b;font-size:0.8rem;">显示 ${displayCases.length} / ${allCases.length} 条案例</div>`;
-        displayCases.forEach(c => {
-            const idx = allCases.findIndex(ac => makeKey(ac) === makeKey(c));
-            const checked = defaultKeys.has(makeKey(c)) ? 'checked' : '';
-            html += `<div class="checklist-item" style="display:flex;align-items:center;gap:12px;padding:10px 12px;border-bottom:1px solid #f1f5f9;">
-                <input type="checkbox" class="${prefix}-case-chk" data-idx="${idx}" ${checked}>
-                <div style="flex:1;">
-                    <strong>${escapeHtml(c.qcCode)}</strong>
-                    <div style="font-size:0.8rem;color:#64748b;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:500px;">${escapeHtml(c.issueDesc ? c.issueDesc.substring(0, 120) : '')}</div>
-                </div>
-                <span style="font-size:0.75rem;color:#94a3b8;">${new Date(c.createTime).toLocaleDateString('zh-CN')}</span>
-            </div>`;
-        });
+    function renderChecklist(prefix, defaults, allCases, currentWeekCases, opts) {
+        opts = opts || {};
+        const area = document.getElementById(prefix + 'ChecklistArea');
+        if (!area) return;
+        const filterEl = document.getElementById(prefix + 'WeekFilter');
+        const filterVal = filterEl ? filterEl.value : 'all';
+        const filteredCases = filterVal === 'all' ? allCases : allCases.filter(c => getCurrentWeekKeyFromTimestamp(c.createTime) === filterVal);
+        const displayCases = filteredCases.length > 0 ? filteredCases : allCases;
+        const makeKey = (c) => c.qcCode + "|" + c.createTime;
+        const defaultKeys = new Set(defaults.map(c => makeKey(c)));
+
+        // exam 页：选「全部案例」时每页 20 条
+        const paged = prefix === 'exam' && filterVal === 'all' && displayCases.length > 20;
+        if (prefix === 'exam') {
+            if (opts.resetSelection || !window._examSelected) {
+                window._examSelected = new Set(defaults.map(makeKey));
+            }
+            window._examChecklistArgs = { defaults: defaults, allCases: allCases, currentWeekCases: currentWeekCases };
+        }
+        let page = 1, totalPages = 1, pageCases = displayCases;
+        if (paged) {
+            totalPages = Math.ceil(displayCases.length / 20);
+            page = Math.max(1, Math.min(opts.page || window._examChecklistPage || 1, totalPages));
+            window._examChecklistPage = page;
+            pageCases = displayCases.slice((page - 1) * 20, page * 20);
+        } else {
+            window._examChecklistPage = 1;
+        }
+
+        let html = '<div class="report-box">';
+        if (allCases.length === 0) {
+            html += '<div class="empty-placeholder" style="padding:40px;">暂无案例数据，请先在"培训案例收集 - 手动录入"中添加案例</div>';
+        } else {
+            const rangeText = paged
+                ? ('第 ' + ((page - 1) * 20 + 1) + '~' + Math.min(page * 20, displayCases.length) + ' 条 / 共 ' + displayCases.length + ' 条')
+                : ('显示 ' + displayCases.length + ' / ' + allCases.length + ' 条案例');
+            html += '<div style="margin-bottom:8px;color:#64748b;font-size:0.8rem;display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;">' +
+                '<span>' + rangeText + '</span>' +
+                (prefix === 'exam' ? '<span id="examSelCount">已选 ' + (window._examSelected ? window._examSelected.size : 0) + ' 个</span>' : '') +
+            '</div>';
+            pageCases.forEach(c => {
+                const idx = allCases.findIndex(ac => makeKey(ac) === makeKey(c));
+                const key = makeKey(c);
+                const checked = prefix === 'exam'
+                    ? (window._examSelected && window._examSelected.has(key))
+                    : defaultKeys.has(key);
+                html += `<div class="checklist-item" style="display:flex;align-items:center;gap:12px;padding:10px 12px;border-bottom:1px solid #f1f5f9;">
+                    <input type="checkbox" class="${prefix}-case-chk" data-idx="${idx}" data-key="${escapeHtml(key)}" ${checked ? 'checked' : ''}>
+                    <div style="flex:1;">
+                        <strong>${escapeHtml(c.qcCode)}</strong>
+                        <div style="font-size:0.8rem;color:#64748b;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:500px;">${escapeHtml(c.issueDesc ? c.issueDesc.substring(0, 120) : '')}</div>
+                    </div>
+                    <span style="font-size:0.75rem;color:#94a3b8;">${new Date(c.createTime).toLocaleDateString('zh-CN')}</span>
+                </div>`;
+            });
+            if (paged) {
+                html += '<div style="display:flex;justify-content:center;align-items:center;gap:10px;margin-top:12px;flex-wrap:wrap;">' +
+                    '<button id="examPagePrev" ' + (page <= 1 ? 'disabled' : '') + ' style="padding:4px 14px;border:1px solid #cbd5e1;border-radius:14px;background:' + (page <= 1 ? '#f1f5f9' : '#fff') + ';cursor:' + (page <= 1 ? 'default' : 'pointer') + ';font-size:0.8rem;">◀ 上一页</button>' +
+                    '<span style="font-size:0.8rem;color:#5e6f8d;">第 ' + page + ' / ' + totalPages + ' 页</span>' +
+                    '<button id="examPageNext" ' + (page >= totalPages ? 'disabled' : '') + ' style="padding:4px 14px;border:1px solid #cbd5e1;border-radius:14px;background:' + (page >= totalPages ? '#f1f5f9' : '#fff') + ';cursor:' + (page >= totalPages ? 'default' : 'pointer') + ';font-size:0.8rem;">下一页 ▶</button>' +
+                '</div>';
+            }
+        }
+        html += '</div>';
+        area.innerHTML = html;
+
+        if (prefix === 'exam') {
+            area.querySelectorAll('.exam-case-chk').forEach(function(chk) {
+                chk.onchange = function() {
+                    var k = chk.getAttribute('data-key');
+                    if (!window._examSelected) window._examSelected = new Set();
+                    if (chk.checked) window._examSelected.add(k); else window._examSelected.delete(k);
+                    updateExamSelCount();
+                };
+            });
+            var prev = document.getElementById('examPagePrev');
+            var next = document.getElementById('examPageNext');
+            if (prev) prev.onclick = function() { window._examChecklistPage = page - 1; repaintExamChecklist(); };
+            if (next) next.onclick = function() { window._examChecklistPage = page + 1; repaintExamChecklist(); };
+            updateExamSelCount();
+        }
     }
-    html += '</div>';
-    area.innerHTML = html;
+
+    function updateExamSelCount() {
+        var el = document.getElementById('examSelCount');
+        if (el) el.textContent = '已选 ' + (window._examSelected ? window._examSelected.size : 0) + ' 个';
+        var allChk = document.getElementById('examSelectAll');
+        var items = document.querySelectorAll('.exam-case-chk');
+        if (allChk) {
+            allChk.checked = items.length > 0 && Array.from(items).every(function(c) { return c.checked; });
+        }
+    }
+
+    function repaintExamChecklist() {
+        var a = window._examChecklistArgs;
+        if (!a) return;
+        renderChecklist('exam', a.defaults, a.allCases, a.currentWeekCases, { page: window._examChecklistPage });
     }
 
     // ==================== 仪表盘模块 ====================
@@ -25589,6 +25955,7 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
     var YXT_KEY_REGISTRY = {
         questionBankData:          { guest: false, exam: false },  // 题库（约 0.9MB，绝不能给游客/学员）
         trainingQuestionBankData:  { guest: true,  exam: false },  // 培训案例题库（案例生成、审核入库；所有人可看）
+        trainingLearningData:      { guest: false, exam: false },  // 审核学习（题型配比/题干模板/选项个数），仅管理员
         generatedReports:          { guest: false, exam: false },  // 生成的报告 HTML
         // 2026-09-30 流量修复：失误看板缓存（云端实测 1.08MB，4719 条失误明细的快照）。
         //   已改成**只存本机、不上云**（见 saveErrorDashboardCache 那段），云端那份从此是死数据。
@@ -25701,6 +26068,15 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
         //   历史版本被 drainKV 回灌进了 Supabase，整份拉取会把 846KB~1MB 一条的报告正文写到本机 → 撑爆配额。
         //   这里再兜一道：即使拉取 URL 没排掉，也绝不落地。
         if (row.key.indexOf('report_') === 0) return false;
+        // 2026-11-15：培训题库恢复保护 —— 云端是空 sets、本机有题时，绝不让空值覆盖本机
+        //   （事故恢复期间，云端的 trainingQuestionBankData 被重置为空；本机还留着用户审核入库的那套题）
+        if (row.key === 'trainingQuestionBankData') {
+            var _localTQ = null, _cloudTQ = null;
+            try { _localTQ = JSON.parse(_realLS.getItem('trainingQuestionBankData') || 'null'); } catch (e) {}
+            try { _cloudTQ = JSON.parse(row.value); } catch (e) {}
+            if (_localTQ && Array.isArray(_localTQ.sets) && _localTQ.sets.length &&
+                (!_cloudTQ || !Array.isArray(_cloudTQ.sets) || !_cloudTQ.sets.length)) return false;
+        }
         if (row.key === 'feishu_token') {
             var localToken = null;
             try { localToken = JSON.parse(_realLS.getItem('feishu_token') || 'null'); } catch(e) {}
@@ -26090,7 +26466,7 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
         examSystem:      ['examHistoryData', 'trainingPushRecords', 'learnPlanPushRecords', 'reportedQuestions',
                           'feishuPushRecords', 'examDeletedIds'],   // 最后一个：删除墓碑，必须和考试数据一起对时，
                                                                     //   晚了会把已删的考试合并回来（2026-09-15）
-        questionBank:    ['reportedQuestions', 'trainingQuestionBankData'],
+        questionBank:    ['reportedQuestions'],
         caseLibrary:     ['biweeklyCases', 'knowledgeCases', 'manualCases', 'reportedTraining'],
         knowledgeBase:   ['knowledgeCases', 'adminPersonSiteMap',
                           'knowledgeBaseList'],            // renderKnowledgeBase → getKBList() 直接读它
