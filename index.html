@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <!-- 版本行：每次部署新代码必须 bump 此 content（YYYYMMDD.N），旧设备靠它自检静默升级 -->
-    <meta name="yxt-ver" content="20261115.7">
+    <meta name="yxt-ver" content="20261115.8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
     <title>优学堂</title>
     <script src="https://cdn.sheetjs.com/xlsx-0.20.2/package/dist/xlsx.full.min.js" defer></script>
@@ -14685,10 +14685,6 @@ URL.revokeObjectURL(url);
                     <button class="qb-btn-download admin-only" id="downloadQBBtn">📥 下载题库</button>
                 </div>
             </div>
-            <div id="qbMainTabs" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px;">
-                <button class="analysis-type-btn active" data-qbtab="normal" style="font-size:0.85rem;">📚 常规题库</button>
-                <button class="analysis-type-btn" data-qbtab="training" style="font-size:0.85rem;">🎓 培训案例题库</button>
-            </div>
             <div id="qbNormalPanel">
             <div class="qb-search-wrap">
                 <input type="text" id="qbGlobalSearch" placeholder="🔍 搜索题目（可按题目、答案、分类、解析搜索）..." autocomplete="off">
@@ -14709,27 +14705,19 @@ URL.revokeObjectURL(url);
                 ${catCards}
             </div>
             </div>
-            <div id="qbTrainingPanel" style="display:none;"></div>
+            <div style="margin:30px 0 14px;border-top:1px dashed #c8d6ca;padding-top:22px;">
+                <div style="font-size:1.08rem;font-weight:800;color:#2d5a3f;">🎓 培训案例题库</div>
+                <div style="font-size:0.8rem;color:#5e6f8d;margin-top:4px;">案例生成、审核入库；按套题展示，和上面的常规题库分开。</div>
+            </div>
+            <div id="qbTrainingPanel"></div>
             </div>
         `;
 
         setTimeout(() => {
             var qbSearchInput = document.getElementById('qbGlobalSearch');
             if(qbSearchInput){qbSearchInput.addEventListener('input',function(){handleQBGlobalSearch(this.value);});}
-            // 2026-11-15：常规题库 / 培训案例题库 切换
-            document.querySelectorAll('#qbMainTabs [data-qbtab]').forEach(function(btn) {
-                btn.onclick = function() {
-                    var tab = btn.getAttribute('data-qbtab');
-                    document.querySelectorAll('#qbMainTabs [data-qbtab]').forEach(function(b) {
-                        b.classList.toggle('active', b === btn);
-                    });
-                    var np = document.getElementById('qbNormalPanel');
-                    var tp = document.getElementById('qbTrainingPanel');
-                    if (np) np.style.display = tab === 'normal' ? '' : 'none';
-                    if (tp) tp.style.display = tab === 'training' ? '' : 'none';
-                    if (tab === 'training') _tqRenderTrainingBankPanel();
-                };
-            });
+            // 2026-11-15：培训案例题库固定显示在常规题库下方（不再是页签）
+            try { _tqRenderTrainingBankPanel(); } catch (e) {}
             document.getElementById('syncQBBtn').onclick = function() {
                 var btn = this;
                 btn.textContent = '⏳ 同步中…'; btn.disabled = true;
