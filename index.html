@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <!-- 版本行：每次部署新代码必须 bump 此 content（YYYYMMDD.N），旧设备靠它自检静默升级 -->
-    <meta name="yxt-ver" content="20261115.6">
+    <meta name="yxt-ver" content="20261115.7">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
     <title>优学堂</title>
     <script src="https://cdn.sheetjs.com/xlsx-0.20.2/package/dist/xlsx.full.min.js" defer></script>
@@ -11854,7 +11854,13 @@ URL.revokeObjectURL(url);
     targetId = targetId || 'mainContent';
     const container = document.getElementById(targetId);
     const allCases = getManualCasesFull();
-    try { _tqLearnPrefetch(); } catch (e) {}
+    try {
+        _tqLearnPrefetch();
+        _tqEnsureBankLoaded().then(function(bank) {
+            window._tqBankForTags = bank;
+            if (document.getElementById('examChecklistArea') && typeof repaintExamChecklist === 'function') repaintExamChecklist();
+        }).catch(function() {});
+    } catch (e) {}
 
     const weekSet = new Set();
     allCases.forEach(c => { weekSet.add(getCurrentWeekKeyFromTimestamp(c.createTime)); });
@@ -11917,9 +11923,28 @@ URL.revokeObjectURL(url);
     }
 
     // 2026-11-15：新增「生成培训题库草稿」——判断 / 单选 / 多选，审核后入库
-    document.getElementById('tqDraftBtn').addEventListener('click', function() {
-        const selected = _tqSelectedCases();
+    document.getElementById('tqDraftBtn').addEventListener('click', async function() {
+        let selected = _tqSelectedCases();
         if (selected.length === 0) { alert('请至少选择一个案例'); return; }
+
+        // 2026-11-15：这批案例以前出过题时，先问怎么处理，避免重复
+        try {
+            var bank = await _tqEnsureBankLoaded();
+            var counts = _tqCountBySource(bank);
+            var withQ = selected.filter(function(c) { return (counts[String(c.qcCode)] || 0) > 0; });
+            if (withQ.length) {
+                var choice = await _tqAskDuplicate(withQ, counts, bank);
+                if (choice === 'cancel') return;
+                if (choice === 'unasked') {
+                    selected = selected.filter(function(c) { return !(counts[String(c.qcCode)] || 0); });
+                    if (!selected.length) {
+                        alert('这批案例都已经有审核过的题了，不需要再生成。\n如果确实要重出，请选「仍然全部重新生成」。');
+                        return;
+                    }
+                }
+            }
+        } catch (e) {}
+
         if (selected.length < 4) {
             if (!confirm('只选了 ' + selected.length + ' 个案例，题目可能会重复。建议至少选 4 个，继续吗？')) return;
         }
@@ -12298,6 +12323,52 @@ URL.revokeObjectURL(url);
         var stamp = Date.now();
         drafts.forEach(function(d, i) { if (!d.tmpId) d.tmpId = 'd' + i + '_' + stamp; });
         return drafts;
+    }
+
+    function _tqCountBySource(bank) {
+        var m = {};
+        ((bank && bank.sets) || []).forEach(function(s) {
+            (s.questions || []).forEach(function(q) {
+                if (q.sourceQc) m[String(q.sourceQc)] = (m[String(q.sourceQc)] || 0) + 1;
+            });
+        });
+        return m;
+    }
+
+    // 这批案例已经出过题时，先问用户怎么处理
+    function _tqAskDuplicate(withQ, counts, bank) {
+        return new Promise(function(resolve) {
+            var total = withQ.reduce(function(a, c) { return a + (counts[String(c.qcCode)] || 0); }, 0);
+            var setNames = {};
+            ((bank && bank.sets) || []).forEach(function(s) {
+                (s.questions || []).forEach(function(q) {
+                    if (withQ.some(function(c) { return String(c.qcCode) === String(q.sourceQc); })) setNames[s.name] = 1;
+                });
+            });
+            var names = Object.keys(setNames);
+            var nameText = names.slice(0, 3).join('、') + (names.length > 3 ? ' 等 ' + names.length + ' 套' : '');
+            var ov = document.createElement('div');
+            ov.className = 'modal-overlay'; ov.style.zIndex = '5000';
+            ov.innerHTML = '<div class="modal-container" style="max-width:540px;">' +
+                '<div class="modal-header">⚠️ 这批案例已经出过题<button class="modal-close-btn" id="tqDupClose">✕</button></div>' +
+                '<div class="modal-body" style="padding:20px;font-size:0.88rem;">' +
+                    '<p>选中的案例里有 <b>' + withQ.length + '</b> 个已经有 <b>' + total + '</b> 道审核过的题' +
+                        (names.length ? '（套题：' + escapeHtml(nameText) + '）' : '') + '。</p>' +
+                    '<p style="color:#5e6f8d;font-size:0.8rem;">继续生成会产生重复题；推送时按质检码随机取 10 题，重复题会挤占名额。</p>' +
+                    '<div style="display:flex;flex-direction:column;gap:8px;margin-top:14px;">' +
+                        '<button id="tqDupUnasked" style="background:linear-gradient(135deg,#1f3a6b,#2a5298);color:#fff;border:none;padding:10px;border-radius:18px;cursor:pointer;font-weight:600;">只给还没有题的案例生成（推荐）</button>' +
+                        '<button id="tqDupAll" style="background:#fff7ed;border:1px solid #f6d7b3;color:#b45309;padding:10px;border-radius:18px;cursor:pointer;">仍然全部重新生成</button>' +
+                        '<button id="tqDupCancel" style="background:#f1f5f9;border:1px solid #cbd5e1;padding:10px;border-radius:18px;cursor:pointer;">取消</button>' +
+                    '</div>' +
+                '</div></div>';
+            document.body.appendChild(ov);
+            function done(v) { ov.remove(); resolve(v); }
+            ov.querySelector('#tqDupClose').onclick = function() { done('cancel'); };
+            ov.querySelector('#tqDupCancel').onclick = function() { done('cancel'); };
+            ov.querySelector('#tqDupUnasked').onclick = function() { done('unasked'); };
+            ov.querySelector('#tqDupAll').onclick = function() { done('all'); };
+            ov.onclick = function(e) { if (e.target === ov) done('cancel'); };
+        });
     }
 
     async function _tqGenerateFromCases(cases, targetId) {
@@ -13428,16 +13499,26 @@ URL.revokeObjectURL(url);
                 '<span>' + rangeText + '</span>' +
                 (prefix === 'exam' ? '<span id="examSelCount">已选 ' + (window._examSelected ? window._examSelected.size : 0) + ' 个</span>' : '') +
             '</div>';
+            var qCounts = {};
+            if (prefix === 'exam' && window._tqBankForTags) {
+                ((window._tqBankForTags.sets) || []).forEach(function(s) {
+                    (s.questions || []).forEach(function(q) {
+                        if (q.sourceQc) qCounts[String(q.sourceQc)] = (qCounts[String(q.sourceQc)] || 0) + 1;
+                    });
+                });
+            }
+            window._tqCaseQCounts = qCounts;
             pageCases.forEach(c => {
                 const idx = allCases.findIndex(ac => makeKey(ac) === makeKey(c));
                 const key = makeKey(c);
                 const checked = prefix === 'exam'
                     ? (window._examSelected && window._examSelected.has(key))
                     : defaultKeys.has(key);
+                const qn = prefix === 'exam' ? (qCounts[String(c.qcCode)] || 0) : 0;
                 html += `<div class="checklist-item" style="display:flex;align-items:center;gap:12px;padding:10px 12px;border-bottom:1px solid #f1f5f9;">
                     <input type="checkbox" class="${prefix}-case-chk" data-idx="${idx}" data-key="${escapeHtml(key)}" ${checked ? 'checked' : ''}>
                     <div style="flex:1;">
-                        <strong>${escapeHtml(c.qcCode)}</strong>
+                        <strong>${escapeHtml(c.qcCode)}</strong>${qn ? ' <span style="font-size:0.62rem;color:#6d28d9;background:#f5f3ff;border:1px solid #ddd6fe;border-radius:8px;padding:0 6px;">已有 ' + qn + ' 题</span>' : ''}
                         <div style="font-size:0.8rem;color:#64748b;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:500px;">${escapeHtml(c.issueDesc ? c.issueDesc.substring(0, 120) : '')}</div>
                     </div>
                     <span style="font-size:0.75rem;color:#94a3b8;">${new Date(c.createTime).toLocaleDateString('zh-CN')}</span>
