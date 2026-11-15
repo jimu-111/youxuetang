@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <!-- 版本行：每次部署新代码必须 bump 此 content（YYYYMMDD.N），旧设备靠它自检静默升级 -->
-    <meta name="yxt-ver" content="20261115.8">
+    <meta name="yxt-ver" content="20261115.9">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
     <title>优学堂</title>
     <script src="https://cdn.sheetjs.com/xlsx-0.20.2/package/dist/xlsx.full.min.js" defer></script>
@@ -12816,25 +12816,55 @@ URL.revokeObjectURL(url);
                     '<div style="font-size:0.85rem;">管理员可在「案例库 → 生成考题」里生成、审核并入库。</div></div>';
                 return;
             }
-            var cards = sets.map(function(s, i) {
+
+            var allQuestions = [];
+            sets.forEach(function(s) { allQuestions = allQuestions.concat(s.questions || []); });
+            window._tqAllTrainingQuestions = allQuestions;
+            window._tqSetList = sets;
+
+            // 每页 8 张卡：第 1 张「全部题目」+ 7 套题；多余的翻页
+            var PER_PAGE = 7;
+            var totalPages = Math.max(1, Math.ceil(sets.length / PER_PAGE));
+            var page = Math.min(Math.max(1, window._tqSetPage || 1), totalPages);
+            window._tqSetPage = page;
+            var pageSets = sets.slice((page - 1) * PER_PAGE, page * PER_PAGE);
+
+            var allCard = '<div class="qb-cat-card qb-all-card" style="cursor:pointer;" onclick="openQBDetailModal(\'培训案例题库 · 全部题目\', window._tqAllTrainingQuestions||[])">' +
+                '<div class="qb-cat-icon">📚</div>' +
+                '<div class="qb-cat-name">全部题目</div>' +
+                '<div class="qb-cat-count">' + allQuestions.length + ' 题</div>' +
+                '<div class="qb-cat-actions"><button class="qb-card-btn qb-card-view-all" onclick="event.stopPropagation();openQBDetailModal(\'培训案例题库 · 全部题目\', window._tqAllTrainingQuestions||[])">👁️ 查看</button></div>' +
+            '</div>';
+
+            var cards = pageSets.map(function(s, i) {
+                var gi = (page - 1) * PER_PAGE + i;
                 var qs = s.questions || [];
                 var cnt = { judge: 0, choice: 0, multi: 0 };
                 qs.forEach(function(q) { if (cnt[q.type] !== undefined) cnt[q.type]++; });
                 var ts = s.updatedAt ? new Date(s.updatedAt).toLocaleString('zh-CN') : '';
-                return '<div class="qb-cat-card" style="background:linear-gradient(135deg,#5b8def,#3b6fc4);cursor:pointer;" onclick="window._tqOpenSet(' + i + ')">' +
+                return '<div class="qb-cat-card" style="background:linear-gradient(135deg,#5b8def,#3b6fc4);cursor:pointer;" onclick="window._tqOpenSet(' + gi + ')">' +
                     '<div class="qb-cat-icon">🎓</div>' +
                     '<div class="qb-cat-name">' + escapeHtml(s.name) + '</div>' +
                     '<div class="qb-cat-count">' + qs.length + ' 题 · 判断' + cnt.judge + ' / 单选' + cnt.choice + ' / 多选' + cnt.multi + '</div>' +
                     '<div style="font-size:0.62rem;opacity:0.75;">' + escapeHtml(ts) + '</div>' +
                     '<div class="qb-cat-actions">' +
-                        '<button class="qb-card-btn" style="background:rgba(255,255,255,0.22);color:white;" onclick="event.stopPropagation();window._tqOpenSet(' + i + ')">👁️ 查看</button>' +
-                        (isAdminMode() ? '<button class="qb-card-btn" style="background:rgba(255,255,255,0.22);color:white;" onclick="event.stopPropagation();window._tqRewriteSetToSheet(' + i + ')">🛠️ 写回飞书</button>' : '') +
+                        '<button class="qb-card-btn" style="background:rgba(255,255,255,0.22);color:white;" onclick="event.stopPropagation();window._tqOpenSet(' + gi + ')">👁️ 查看</button>' +
+                        (isAdminMode() ? '<button class="qb-card-btn" style="background:rgba(255,255,255,0.22);color:white;" onclick="event.stopPropagation();window._tqRewriteSetToSheet(' + gi + ')">🛠️ 写回飞书</button>' : '') +
                     '</div>' +
                 '</div>';
             }).join('');
+
+            var pager = '';
+            if (totalPages > 1) {
+                pager = '<div style="display:flex;justify-content:center;align-items:center;gap:10px;margin-top:14px;flex-wrap:wrap;">' +
+                    '<button id="tqSetPrev" ' + (page <= 1 ? 'disabled' : '') + ' style="padding:4px 14px;border:1px solid #cbd5e1;border-radius:14px;background:' + (page <= 1 ? '#eef2f7' : '#fff') + ';cursor:' + (page <= 1 ? 'default' : 'pointer') + ';font-size:0.8rem;">◀ 上一页</button>' +
+                    '<span style="font-size:0.8rem;color:#5e6f8d;">第 ' + page + ' / ' + totalPages + ' 页</span>' +
+                    '<button id="tqSetNext" ' + (page >= totalPages ? 'disabled' : '') + ' style="padding:4px 14px;border:1px solid #cbd5e1;border-radius:14px;background:' + (page >= totalPages ? '#eef2f7' : '#fff') + ';cursor:' + (page >= totalPages ? 'default' : 'pointer') + ';font-size:0.8rem;">下一页 ▶</button>' +
+                '</div>';
+            }
+
             panel.innerHTML = '<div style="font-size:0.8rem;color:#5e6f8d;margin-bottom:12px;">本分区由飞书表「培训案例生成」每周同步，页面只读；要改题请到飞书表或案例库重新生成。</div>' +
-                '<div class="qb-cat-grid">' + cards + '</div>';
-            window._tqSetList = sets;
+                '<div class="qb-cat-grid">' + allCard + cards + '</div>' + pager;
             window._tqOpenSet = function(i) {
                 var s = window._tqSetList[i];
                 if (!s) return;
@@ -12844,6 +12874,10 @@ URL.revokeObjectURL(url);
                 var s = window._tqSetList[i];
                 if (s) _tqRewriteSetToSheet(s);
             };
+            var prev = document.getElementById('tqSetPrev');
+            var next = document.getElementById('tqSetNext');
+            if (prev) prev.onclick = function() { window._tqSetPage = page - 1; _tqRenderTrainingBankPanel(); };
+            if (next) next.onclick = function() { window._tqSetPage = page + 1; _tqRenderTrainingBankPanel(); };
         });
     }
 
@@ -14687,7 +14721,7 @@ URL.revokeObjectURL(url);
             </div>
             <div id="qbNormalPanel">
             <div class="qb-search-wrap">
-                <input type="text" id="qbGlobalSearch" placeholder="🔍 搜索题目（可按题目、答案、分类、解析搜索）..." autocomplete="off">
+                <input type="text" id="qbGlobalSearch" placeholder="🔍 搜索题目（常规 + 培训案例题库，可按题目、答案、分类、解析搜索）..." autocomplete="off">
             </div>
             <div class="qb-stats" id="qbStatsArea">
                 <div class="qb-stat-item"><div class="qb-stat-num">${uniqueQBQuestions.length}</div><div class="qb-stat-label">总题数（去重）</div></div>
@@ -14705,11 +14739,10 @@ URL.revokeObjectURL(url);
                 ${catCards}
             </div>
             </div>
-            <div style="margin:30px 0 14px;border-top:1px dashed #c8d6ca;padding-top:22px;">
-                <div style="font-size:1.08rem;font-weight:800;color:#2d5a3f;">🎓 培训案例题库</div>
-                <div style="font-size:0.8rem;color:#5e6f8d;margin-top:4px;">案例生成、审核入库；按套题展示，和上面的常规题库分开。</div>
             </div>
-            <div id="qbTrainingPanel"></div>
+            <div class="qb-wrap" style="margin-top:20px;background:linear-gradient(135deg,#e8eefb 0%,#dbe6f7 50%,#e9effa 100%);">
+                <div style="font-size:1.08rem;font-weight:800;color:#2d5a3f;">🎓 培训案例题库</div>
+                <div id="qbTrainingPanel"></div>
             </div>
         `;
 
@@ -14756,6 +14789,20 @@ URL.revokeObjectURL(url);
         const allQuestions = qb.questions || [];
         const uniqueQBQuestions = (function(qs){var seen=new Set();return qs.filter(function(q){var k=(q.question||'').trim().toLowerCase();if(seen.has(k))return false;seen.add(k);return true;});})(allQuestions);
         window._uniqueQBQuestions = uniqueQBQuestions;
+        // 2026-11-15：培训案例题库也参与顶部搜索
+        var trainAll = [];
+        try {
+            var tb = _tqLoadBank();
+            (tb.sets || []).forEach(function(s) {
+                (s.questions || []).forEach(function(q) {
+                    var c = Object.assign({}, q);
+                    c._src = 'training';
+                    c.category = s.name || '培训案例';
+                    trainAll.push(c);
+                });
+            });
+        } catch (e) {}
+        window._tqSearchQuestions = trainAll;
         const grid = document.getElementById('qbCatGrid');
         const stats = document.getElementById('qbStatsArea');
         const searchResults = document.getElementById('qbSearchResults');
@@ -14802,12 +14849,13 @@ URL.revokeObjectURL(url);
             return;
         }
 
-        // 搜索模式：隐藏分类卡片，显示搜索结果（去重）
+        // 搜索模式：隐藏分类卡片，显示搜索结果（常规 + 培训案例题库）
         const kw = keyword.trim().toLowerCase();
-        const results = uniqueQBQuestions.filter(q =>
+        const results = uniqueQBQuestions.concat(trainAll).filter(q =>
             (q.question && q.question.toLowerCase().includes(kw)) ||
             (q.answer && q.answer.toLowerCase().includes(kw)) ||
             (q.category && q.category.toLowerCase().includes(kw)) ||
+            (q.set && q.set.toLowerCase().includes(kw)) ||
             (q.explanation && q.explanation.toLowerCase().includes(kw)) ||
             (q.options && q.options.some(o => optText(o).toLowerCase().includes(kw)))
         );
@@ -14828,7 +14876,9 @@ URL.revokeObjectURL(url);
         } else {
             const maxShow = 50;
             const shown = results.slice(0, maxShow);
-            sr.innerHTML = '<div style="margin-bottom:8px;font-size:0.8rem;color:#5e6f8d;">🔍 找到 <strong>' + results.length + '</strong> 道匹配题目' + (results.length > maxShow ? '（仅显示前' + maxShow + '道）' : '') + '</div>' +
+            const regCount = results.filter(function(q) { return q._src !== 'training'; }).length;
+            const trCount = results.length - regCount;
+            sr.innerHTML = '<div style="margin-bottom:8px;font-size:0.8rem;color:#5e6f8d;">🔍 找到 <strong>' + results.length + '</strong> 道匹配题目（常规 ' + regCount + ' / 培训 ' + trCount + '）' + (results.length > maxShow ? '（仅显示前' + maxShow + '道）' : '') + '</div>' +
                 shown.map((q, i) => {
                     const typeLabel = q.type === 'choice' ? '选择题' : (q.type === 'multi' ? '多选题' : (q.type === 'judge' ? '判断题' : '问答题'));
                     const typeCls = q.type === 'choice' ? 'qb-tag-choice' : (q.type === 'multi' ? 'qb-tag-choice' : (q.type === 'judge' ? 'qb-tag-judge' : 'qb-tag-qa'));
@@ -14838,6 +14888,7 @@ URL.revokeObjectURL(url);
                         '<div style="flex:1;min-width:0;">' +
                         '<div style="margin-bottom:4px;"><span style="color:#94a3b8;font-size:0.7rem;">#' + (i+1) + '</span>' +
                         '<span class="qb-tag ' + typeCls + '">' + typeLabel + '</span>' +
+                        (q._src === 'training' ? '<span class="qb-tag" style="background:#f5f3ff;color:#6d28d9;">培训</span>' : '') +
                         '<span class="qb-tag category" style="background:#f1f5f9;color:#5e6f8d;">' + escapeHtml(q.category || '未分类') + '</span></div>' +
                         '<div style="font-weight:600;font-size:0.85rem;color:#1e2a3a;margin-bottom:4px;">' + escapeHtml(q.question) + '</div>' +
                         '<div style="font-size:0.72rem;color:#2a5298;">📌 ' + escapeHtml((q.answer||'').substring(0, 60)) + '</div>' +
@@ -14851,6 +14902,20 @@ URL.revokeObjectURL(url);
         // 找到点击的题目，弹窗显示详情（不自动清空搜索，由用户手动清）
         var allQ = getQuestionBank().questions || [];
         var t = allQ.find(function(q){ return q.id === qid; });
+        // 2026-11-15：常规题库找不到时，去培训案例题库里找
+        if (!t) {
+            try {
+                var tb = _tqLoadBank();
+                (tb.sets || []).forEach(function(s) {
+                    (s.questions || []).forEach(function(q) {
+                        if (!t && String(q.id) === String(qid)) {
+                            t = Object.assign({}, q);
+                            t.category = s.name || '培训案例';
+                        }
+                    });
+                });
+            } catch (e) {}
+        }
         if (!t) { showToast('未找到该题目', 'error'); return; }
         var qi = escapeJsInAttr(t.id||'');
         var tl = t.type==='choice'?'选择题':(t.type==='multi'?'多选题':(t.type==='judge'?'判断题':'问答题'));
