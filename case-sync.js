@@ -52,6 +52,10 @@ const APP_ID = 'cli_aab1fa4e87bbdbd3';
 const SHEET_TOKEN = 'Id6OsBKpWhYJm8ti08acihZbnNh';
 const SHEET_ID = 'dd29f7';
 
+// 培训题草稿：同步完给「还没有审核题」的新案例出草稿，卡片里带审核链接
+const SITE_URL = 'https://jimu-111.github.io/youxuetang/';
+const TRAIN_BANK_KEY = 'trainingQuestionBankData';
+
 const CLOUD_KEY = 'manualCases';
 const FEISHU_MARK = '_feishu';   // 1 = 这条是从飞书表同步来的（删除只认这个标记）
 const HASH_FIELD = '_syncH';     // 上一次从表里看到的各字段指纹
@@ -547,6 +551,161 @@ async function writeCloudManualCases(value) {
   }
 }
 
+// ---------------- 培训题草稿（2026-11-15） ----------------
+async function readCloudKey(key) {
+  assertSupabaseConfig();
+  const r = await requestJson(
+    SUPABASE_URL + '/rest/v1/app_data?select=value&key=eq.' + encodeURIComponent(key) + '&limit=1',
+    { headers: supabaseHeaders() }
+  );
+  if (r.status !== 200) return null;
+  return (Array.isArray(r.json) && r.json[0]) ? r.json[0].value : null;
+}
+async function writeCloudKey(key, value) {
+  assertSupabaseConfig();
+  const body = JSON.stringify({ key: key, value: value, updated_at: new Date().toISOString() });
+  const r = await requestJson(SUPABASE_URL + '/rest/v1/app_data', {
+    method: 'POST',
+    headers: supabaseHeaders({ 'Content-Type': 'application/json', 'Prefer': 'resolution=merge-duplicates' }),
+    body,
+    timeout: 30000
+  });
+  if (r.status < 200 || r.status >= 300) {
+    throw new Error('写入 ' + key + ' 失败：HTTP ' + r.status + ' ' + String(r.raw).slice(0, 200));
+  }
+}
+
+function tqNorm(s) {
+  return String(s == null ? '' : s)
+    .replace(/\r\n?/g, '\n').replace(/\u000b/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
+}
+function tqShuffle(a) {
+  const r = a.slice();
+  for (let i = r.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); const t = r[i]; r[i] = r[j]; r[j] = t; }
+  return r;
+}
+function tqLetter(i) { return String.fromCharCode(65 + i); }
+function tqPickDirs(pool, excludeTexts, count, targetLen) {
+  let cands = pool.filter(x => x && x.text && excludeTexts.indexOf(x.text) < 0);
+  const seen = {};
+  cands = cands.filter(x => { if (seen[x.text]) return false; seen[x.text] = 1; return true; });
+  cands.sort((a, b) => Math.abs(a.text.length - targetLen) - Math.abs(b.text.length - targetLen));
+  return tqShuffle(cands.slice(0, Math.max(count * 3, count))).slice(0, count);
+}
+function tqCaseImages(c) {
+  const images = [], analysisImages = [];
+  (c.issuePhotos || []).forEach(p => { if (p && p.t && images.length < 2) images.push(p.t); });
+  (c.dirPhotos || []).forEach(p => { if (p && p.t && analysisImages.length < 2) analysisImages.push(p.t); });
+  (c.dirExamplePhotos || []).forEach(p => { if (p && p.t && analysisImages.length < 2) analysisImages.push(p.t); });
+  return { images, analysisImages };
+}
+function buildTrainingDrafts(cases) {
+  let valid = cases.filter(c => tqNorm(c.issueDesc) && tqNorm(c.correctDir));
+  const seenQc = {};
+  valid = valid.filter(c => {
+    const k = String(c.qcCode || '') + '|' + tqNorm(c.issueDesc).slice(0, 30);
+    if (seenQc[k]) return false; seenQc[k] = 1; return true;
+  });
+  if (valid.length < 2) return [];
+
+  const dirs = valid.map(c => ({ qc: c.qcCode, text: tqNorm(c.correctDir), c }));
+  const issues = valid.map(c => ({ qc: c.qcCode, text: tqNorm(c.issueDesc), c }));
+  const drafts = [];
+
+  function pushJudge(c, isTrue) {
+    let text = tqNorm(c.correctDir);
+    if (!isTrue) {
+      const other = tqPickDirs(dirs.filter(d => d.qc !== c.qcCode && d.text !== text), [text], 1, text.length)[0];
+      if (!other) return;
+      text = other.text;
+    }
+    const im = tqCaseImages(c);
+    drafts.push({
+      type: 'judge',
+      question: '案例：' + tqNorm(c.issueDesc) + '\n\n判断：以下处理方向是否正确？\n' + text,
+      options: [], answer: isTrue ? '正确' : '错误',
+      explanation: isTrue
+        ? '依据案例 ' + (c.qcCode || '') + ' 的正确方向：\n' + tqNorm(c.correctDir)
+        : '本案例的正确方向是：\n' + tqNorm(c.correctDir) + '\n（选项中给出的是另一条案例的方向，因此不正确）',
+      images: im.images, analysisImages: im.analysisImages, sourceQc: String(c.qcCode || '')
+    });
+  }
+  function pushChoice(c) {
+    const correct = tqNorm(c.correctDir);
+    const ds = tqPickDirs(dirs.filter(d => d.qc !== c.qcCode && d.text !== correct), [correct], 3, correct.length);
+    if (ds.length < 3) return;
+    const all = tqShuffle([correct].concat(ds.map(d => d.text)));
+    const options = all.map((t, i) => ({ key: tqLetter(i), text: t }));
+    const im = tqCaseImages(c);
+    drafts.push({
+      type: 'choice',
+      question: '案例：' + tqNorm(c.issueDesc) + '\n\n以下哪项是正确的处理方向？',
+      options, answer: tqLetter(all.indexOf(correct)),
+      explanation: '依据案例 ' + (c.qcCode || '') + ' 的正确方向：\n' + correct,
+      images: im.images, analysisImages: im.analysisImages, sourceQc: String(c.qcCode || '')
+    });
+  }
+  function pushMulti(k) {
+    let correctPool = valid.slice(k, k + 3);
+    if (correctPool.length < 2) correctPool = valid.slice(0, 2);
+    if (correctPool.length < 2) return;
+    const correctTexts = correctPool.map(c => tqNorm(c.correctDir));
+    const wrongs = tqPickDirs(issues.filter(x => correctPool.every(c => String(c.qcCode) !== String(x.qc))), correctTexts, 2, correctTexts[0].length);
+    if (wrongs.length < 1) return;
+    const all = tqShuffle(correctTexts.concat(wrongs.map(w => w.text)));
+    const options = all.map((t, i) => ({ key: tqLetter(i), text: t }));
+    const ans = [];
+    correctTexts.forEach(t => { const i = all.indexOf(t); if (i >= 0) ans.push(tqLetter(i)); });
+    ans.sort();
+    const im = tqCaseImages(correctPool[0]);
+    drafts.push({
+      type: 'multi',
+      question: '以下哪些是本期培训案例中的正确做法？（多选）',
+      options, answer: ans.join(''),
+      explanation: '正确项来自案例：' + correctPool.map(c => c.qcCode || '').join('、') + '；错误项是本期案例的问题描述。',
+      images: im.images, analysisImages: im.analysisImages, sourceQc: String(correctPool[0].qcCode || '')
+    });
+  }
+
+  for (let i = 0; i < 4; i++) pushJudge(valid[i % valid.length], i % 2 === 0);
+  for (let j = 0; j < 4; j++) pushChoice(valid[(j + 4) % valid.length]);
+  pushMulti(0); pushMulti(3);
+
+  const seen = {};
+  return drafts.filter(d => {
+    const k = d.type + '|' + tqNorm(d.question) + '|' + (d.options || []).map(o => o.text).join('|');
+    if (seen[k]) return false;
+    seen[k] = 1; return true;
+  });
+}
+
+async function prepareTrainingDrafts(merged) {
+  const newCodes = (merged.addedCodes || []);
+  if (!newCodes.length) return null;
+  const cases = newCodes.map(code => merged.cases.find(c => String(c.qcCode) === String(code))).filter(Boolean);
+  if (!cases.length) return null;
+
+  // 已经有审核题的案例不重复出
+  const approved = {};
+  try {
+    const raw = await readCloudKey(TRAIN_BANK_KEY);
+    if (raw) {
+      const b = JSON.parse(raw);
+      (b.sets || []).forEach(s => (s.questions || []).forEach(q => { if (q.sourceQc) approved[String(q.sourceQc)] = 1; }));
+    }
+  } catch (e) { console.log('⚠️ 读取培训题库失败（按全部新案例出题）：' + e.message); }
+  const need = cases.filter(c => !approved[String(c.qcCode)]);
+  if (!need.length) return null;
+
+  const drafts = buildTrainingDrafts(need);
+  if (drafts.length < 5) return null;
+  const batchId = 'trb_' + Date.now().toString(36);
+  await writeCloudKey('trainingDraft_' + batchId, JSON.stringify({
+    id: batchId, createdAt: new Date().toISOString(), drafts: drafts
+  }));
+  return { count: drafts.length, batchId: batchId, url: SITE_URL + '?trainreview=' + encodeURIComponent(batchId) };
+}
+
 // ---------------- 飞书告警卡片 ----------------
 async function sendCard(title, msg, color) {
   if (process.env.NO_CARD === '1') { console.log('📨（NO_CARD=1，未发送飞书卡片）'); return; }
@@ -582,14 +741,24 @@ function listCodes(arr, max) {
   return arr.length > m ? s + ' …等 ' + arr.length + ' 条' : s;
 }
 
-function buildCardMessage(merged, dup, missing, firstRun) {
+function buildCardMessage(merged, dup, missing, firstRun, training) {
   const lines = [];
+  const total = (merged.cases || []).length;
+  lines.push('当前共 **' + total + '** 个培训案例');
   if (firstRun) lines.push('首次同步：认领 **' + merged.adopted + '** 条现有案例（内容未改）');
   if (merged.reused) lines.push('复用 **' + merged.reused + '** 条旧的「/」占位案例（内容保留，编号改为 ' + listCodes(merged.reusedCodes, 5) + '）');
   if (merged.added) lines.push('新增 **' + merged.added + '** 条：' + listCodes(merged.addedCodes, 10));
   if (merged.updatedCases) lines.push('更新 **' + merged.updatedCases + '** 条：' + listCodes(merged.updatedCodes, 10));
   if (merged.deleted) lines.push('删除 **' + merged.deleted + '** 条：' + listCodes(merged.deletedCodes, 10));
   if (!lines.length) lines.push('内容和上次一致，没有变化');
+  if (training) {
+    lines.push('');
+    lines.push('🎓 已初步生成 **' + training.count + '** 道题（判断 / 单选 / 多选），**等你审核后入库**。');
+    lines.push('👉 [去审核题目](' + training.url + ')');
+  } else if (merged.added) {
+    lines.push('');
+    lines.push('🎓 本次新增的案例都已有审核题，没有重复出题。');
+  }
   lines.push('');
   lines.push('规则：表里改了哪项就用表里的；网页手动改过、表里没变的项保留；手动录入的案例不动。');
   if (missing && missing.length) {
@@ -656,18 +825,24 @@ async function main() {
   }
   console.log('✅ 回读校验通过');
 
+  // 2026-11-15：给「还没有审核题」的新案例生成培训题草稿，卡片里带审核链接
+  let training = null;
+  try { training = await prepareTrainingDrafts(merged); }
+  catch (e) { console.log('⚠️ 生成培训题草稿失败（不影响案例同步）：' + e.message); }
+
   await sendCard(
     firstRun ? '✅ 培训案例自动同步已启用' : '✅ 培训案例已自动更新',
-    buildCardMessage(merged, parsed.dup, parsed.missing, firstRun),
+    buildCardMessage(merged, parsed.dup, parsed.missing, firstRun, training),
     'green'
   );
-  return { changed: true, merged };
+  return { changed: true, merged, training };
 }
 
 // ---------------- 入口 ----------------
 module.exports = {
   cellText, cellTokens, buildColMap, extractFields, parseCaseRows,
   fieldHash, fieldHashes, isTrainingCase, mergeCases, checkGates,
+  buildTrainingDrafts, tqNorm, prepareTrainingDrafts,
   CLOUD_KEY, FEISHU_MARK, HASH_FIELD
 };
 

@@ -694,7 +694,72 @@ async function main() {
     console.log('⚠️ 视频处理异常（题库已同步，不影响）：' + e.message);
   }
 
+  // 9. 培训案例题库（2026-11-15）：独立 sheet「培训案例生成」→ 独立云端 key。
+  //    和主题库完全分开：读失败/写失败只影响培训题库，不影响主题库同步结果。
+  await syncTrainingBank();
+
   console.log('\n🎉 同步完成' + (FORCE ? '（本次有闸门被 FORCE=1 越过，请确认结果符合预期）' : ''));
+}
+
+// —— 培训案例题库：读「培训案例生成」sheet，写 trainingQuestionBankData ——
+async function syncTrainingBank() {
+  console.log('\n========== 培训案例题库 ==========');
+  const TRAIN_SHEET_ID = '1K3owU';
+  try {
+    const v = await api('/sheets/v2/spreadsheets/' + SS_TOKEN + '/values/' + TRAIN_SHEET_ID + '!A1:O2000?majorDimension=ROWS');
+    if (v.status !== 200 || !v.json || v.json.code !== 0) {
+      console.log('⚠️ 读取培训题库表失败，跳过（不影响主题库）');
+      return;
+    }
+    const rows = (v.json.data && v.json.data.valueRange && v.json.data.valueRange.values) || [];
+    const setMap = {};
+    let total = 0;
+    for (let i = 1; i < rows.length; i++) {
+      const r = rows[i] || [];
+      const id = String(r[0] || '').trim();
+      const text = String(r[4] || '').trim();
+      if (!id || !text) continue;
+      const setName = String(r[1] || '').trim() || '未命名套题';
+      const options = [];
+      ['A', 'B', 'C', 'D'].forEach((k, oi) => {
+        const t = String(r[5 + oi] || '').trim();
+        if (t) options.push({ key: k, text: t, images: [] });
+      });
+      const q = {
+        id: id,
+        set: setName,
+        seq: Number(r[2]) || i,
+        type: inferType(r[3], r[9]),
+        question: text,
+        options: options,
+        answer: String(r[9] || '').trim(),
+        explanation: String(r[10] || '').trim(),
+        images: splitMediaCell(r[11]).images,
+        analysisImages: splitMediaCell(r[12]).images,
+        sourceQc: String(r[13] || '').trim(),
+        approvedAt: String(r[14] || '').trim()
+      };
+      if (!setMap[setName]) setMap[setName] = { name: setName, questions: [], updatedAt: '' };
+      setMap[setName].questions.push(q);
+      if (q.approvedAt > setMap[setName].updatedAt) setMap[setName].updatedAt = q.approvedAt;
+      total++;
+    }
+    const bank = { sets: Object.keys(setMap).map(k => setMap[k]), updatedAt: new Date().toISOString() };
+    console.log('  培训题库：' + total + ' 题 / ' + bank.sets.length + ' 套');
+    if (DRY_RUN) { console.log('  DRY_RUN：跳过写入'); return; }
+    if (!total) { console.log('  ℹ️ 培训题库为空，跳过写入'); return; }
+    const json = JSON.stringify(bank);
+    try {
+      await supabaseWrite('trainingQuestionBankData', json);
+      console.log('  ✅ 已写入 Supabase');
+    } catch (e) {
+      console.log('  ⚠️ Supabase 写入失败：' + e.message);
+      if (await kvWrite('trainingQuestionBankData', json)) console.log('  ✅ 已转存 KV');
+      else console.log('  ⚠️ KV 写入也失败（培训题库保持旧数据，主题库不受影响）');
+    }
+  } catch (e) {
+    console.log('⚠️ 培训题库同步异常（不影响主题库）：' + e.message);
+  }
 }
 
 // —— 飞书告警卡片（workflow 的失败兜底步骤调用：node qb-weekly-sync.js --alert-only "消息"）——
