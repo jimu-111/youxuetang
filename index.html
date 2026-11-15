@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <!-- 版本行：每次部署新代码必须 bump 此 content（YYYYMMDD.N），旧设备靠它自检静默升级 -->
-    <meta name="yxt-ver" content="20261115.9">
+    <meta name="yxt-ver" content="20261115.11">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
     <title>优学堂</title>
     <script src="https://cdn.sheetjs.com/xlsx-0.20.2/package/dist/xlsx.full.min.js" defer></script>
@@ -13236,6 +13236,11 @@ URL.revokeObjectURL(url);
             if (mc) mc.innerHTML = '<div style="padding:80px 20px;text-align:center;"><div style="font-size:2rem;">🔒</div><div style="color:#5e6f8d;margin-top:8px;">链接无效，请联系管理员重新推送</div></div>';
             return;
         }
+        var _tdCreated = Date.parse(session.createdAt || '') || 0;
+        if (_tdCreated && Date.now() - _tdCreated > 24 * 3600 * 1000) {
+            if (mc) mc.innerHTML = '<div style="padding:80px 20px;text-align:center;"><div style="font-size:2rem;">⌛</div><div style="font-weight:700;color:#b45309;margin-top:8px;">培训链接已过期</div><div style="color:#5e6f8d;margin-top:6px;">有效期 24 小时，请联系管理员重新推送</div></div>';
+            return;
+        }
         var cases = await _tdLoadCaseList(session.caseQcs);
         if (!cases.length) {
             if (mc) mc.innerHTML = '<div style="padding:80px 20px;text-align:center;"><div style="font-size:2rem;">⚠️</div><div style="color:#5e6f8d;margin-top:8px;">案例内容还没同步下来，请稍后刷新重试</div></div>';
@@ -13244,6 +13249,17 @@ URL.revokeObjectURL(url);
         var progress = null;
         try { progress = JSON.parse(await _tdSbGet(TD_PROGRESS_PREFIX + sid + '_' + token)); } catch (e) {}
         if (!progress || !Array.isArray(progress.pagesRead)) progress = { pagesRead: [] };
+        // 2026-11-16：本机进度比云端新（离线/云端写入失败）→ 以本机为准并补推云端
+        var localProgress = null;
+        try { localProgress = JSON.parse(_realLS.getItem(TD_PROGRESS_PREFIX + sid + '_' + token)); } catch (e) {}
+        if (localProgress && Array.isArray(localProgress.pagesRead)) {
+            var cloudAt = Date.parse(progress.lastAt || '') || 0;
+            var localAt = Date.parse(localProgress.lastAt || '') || 0;
+            if (localAt > cloudAt || (localProgress.pagesRead.length > progress.pagesRead.length && localAt >= cloudAt)) {
+                progress = localProgress;
+                try { _tdSbSet(TD_PROGRESS_PREFIX + sid + '_' + token, JSON.stringify(progress)).catch(function() {}); } catch (e) {}
+            }
+        }
         _tdRenderDeck(session, r, cases, progress);
     }
 
@@ -13255,37 +13271,70 @@ URL.revokeObjectURL(url);
         var idx = firstUnread >= total ? total - 1 : firstUnread;
         var doneAll = firstUnread >= total;
 
+        function _tdReportCaseByQc(qc, btn) {
+            var cases = [];
+            try { cases = getManualCasesFull(); } catch (e) {}
+            var idx = cases.findIndex(function(x) { return String(x.qcCode) === String(qc); });
+            if (idx < 0) { showToast("找不到该案例", "warning"); return; }
+            reportTrainingCaseByIdx(idx, btn);
+        }
+
         function shell(inner) {
-            mc.innerHTML = '<div style="min-height:100vh;background:#eef3fa;padding:18px 14px 30px;">' +
-                '<div style="max-width:920px;margin:0 auto;">' +
-                    '<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px;">' +
-                        '<div style="font-weight:800;color:#1f3a6b;font-size:1rem;">📖 ' + escapeHtml(session.title) + '</div>' +
-                        '<div id="tdPageNo" style="font-size:0.8rem;color:#5e6f8d;"></div>' +
+            mc.innerHTML = '<div style="min-height:100vh;background:#eef3fa;padding:22px 18px 36px;">' +
+                '<div style="max-width:1080px;margin:0 auto;">' +
+                    '<div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:12px;">' +
+                        '<div style="font-weight:800;color:#1f3a6b;font-size:20px;">📖 ' + escapeHtml(session.title) + '</div>' +
+                        '<div id="tdPageNo" style="font-size:15px;color:#5e6f8d;"></div>' +
                     '</div>' +
-                    '<div id="tdCard" style="background:#fff;border-radius:22px;box-shadow:0 8px 30px rgba(31,58,107,0.10);max-height:calc(100vh - 165px);overflow:auto;padding:24px 26px;">' + inner + '</div>' +
-                    '<div id="tdFoot" style="margin-top:12px;"></div>' +
+                    '<div id="tdCard" style="background:#fff;border-radius:24px;box-shadow:0 8px 30px rgba(31,58,107,0.10);max-height:calc(100vh - 190px);overflow:auto;padding:32px 36px;">' + inner + '</div>' +
+                    '<div id="tdFoot" style="margin-top:14px;"></div>' +
                 '</div></div>';
         }
 
         function imgRow(list, maxW, maxH) {
+            maxW = maxW || 460; maxH = maxH || 340;
             return (list || []).map(function(p) {
-                if (p && p.t) return photoTag({ t: p.t }, maxW || 260, maxH || 200);
-                if (typeof p === 'string' && p.indexOf('data:') === 0) return '<img src="' + p + '" style="max-width:' + (maxW || 260) + 'px;max-height:' + (maxH || 200) + 'px;border-radius:10px;border:1px solid #e2e8f0;margin:4px;">';
+                if (p && p.t) {
+                    return '<img data-td-img="' + escapeHtml(p.t) + '" alt="案例图片" style="max-width:' + maxW + 'px;max-height:' + maxH + 'px;min-height:80px;width:auto;border-radius:12px;border:1px solid #e2e8f0;margin:6px;background:#f8fafc;cursor:zoom-in;object-fit:contain;" onclick="showImageViewer(this.src)">';
+                }
+                if (typeof p === 'string' && p.indexOf('data:') === 0) {
+                    return '<img src="' + p + '" alt="案例图片" style="max-width:' + maxW + 'px;max-height:' + maxH + 'px;width:auto;border-radius:12px;border:1px solid #e2e8f0;margin:6px;cursor:zoom-in;object-fit:contain;" onclick="showImageViewer(this.src)">';
+                }
                 return '';
             }).join('');
         }
 
+        function hydrateImages(container) {
+            if (!container) return;
+            container.querySelectorAll('img[data-td-img]').forEach(function(img) {
+                var token = img.getAttribute('data-td-img');
+                if (!token) return;
+                var cached = (window._photoCache && window._photoCache[token]) ||
+                             (window._imageCache && window._imageCache['qbimg_' + token]);
+                if (cached) { img.src = cached; return; }
+                // 先取云端压缩图（约 900px，清晰且省流量），没有再下载飞书原图
+                Promise.resolve()
+                    .then(function() { return _qbImgGetFromKV(token); })
+                    .then(function(v) {
+                        if (v) { img.src = v; return null; }
+                        return fetchFeishuImage(token);
+                    })
+                    .then(function(url) { if (url && !img.src) { img.src = url; try { window._photoCache = window._photoCache || {}; window._photoCache[token] = url; } catch (e) {} } })
+                    .catch(function() {});
+            });
+        }
+
         function renderPage() {
             if (doneAll) {
-                shell('<div style="text-align:center;padding:30px 10px;">' +
-                    '<div style="font-size:2.4rem;">✅</div>' +
-                    '<div style="font-size:1.15rem;font-weight:800;color:#1f3a6b;margin-top:8px;">培训已完成阅读</div>' +
-                    '<div style="font-size:0.86rem;color:#5e6f8d;margin-top:6px;">' + (session.questions && session.questions.length ? '最后一步：完成 ' + session.questions.length + ' 道测验题。' : '本次培训没有配测验。') + '</div>' +
+                shell('<div style="text-align:center;padding:34px 12px;">' +
+                    '<div style="font-size:52px;">✅</div>' +
+                    '<div style="font-size:22px;font-weight:800;color:#1f3a6b;margin-top:8px;">培训已完成阅读</div>' +
+                    '<div style="font-size:16px;color:#5e6f8d;margin-top:8px;">' + (session.questions && session.questions.length ? '最后一步：完成 ' + session.questions.length + ' 道测验题。' : '本次培训没有配测验。') + '</div>' +
                     '</div>');
                 var foot = document.getElementById('tdFoot');
                 var html = '';
-                if (r.examCode) html += '<button id="tdQuizBtn" style="width:100%;background:linear-gradient(135deg,#1f3a6b,#2a5298);color:#fff;border:none;padding:14px;border-radius:22px;cursor:pointer;font-size:0.95rem;font-weight:700;">📝 开始测验（' + (session.questions || []).length + ' 题 · 可补考 1 次）</button>';
-                html += '<button id="tdReRead" style="width:100%;margin-top:8px;background:#f1f5f9;border:1px solid #cbd5e1;padding:10px;border-radius:18px;cursor:pointer;font-size:0.82rem;">重新阅读</button>';
+                if (r.examCode) html += '<button id="tdQuizBtn" style="width:100%;background:linear-gradient(135deg,#1f3a6b,#2a5298);color:#fff;border:none;padding:16px;border-radius:22px;cursor:pointer;font-size:17px;font-weight:700;">📝 开始测验（' + (session.questions || []).length + ' 题 · 可补考 1 次）</button>';
+                html += '<button id="tdReRead" style="width:100%;margin-top:10px;background:#f1f5f9;border:1px solid #cbd5e1;padding:12px;border-radius:18px;cursor:pointer;font-size:15px;">重新阅读</button>';
                 foot.innerHTML = html;
                 if (r.examCode) document.getElementById('tdQuizBtn').onclick = function() { location.href = DEPLOYED_URL + '?exam=' + encodeURIComponent(r.examCode); };
                 document.getElementById('tdReRead').onclick = function() { doneAll = false; idx = 0; renderPage(); };
@@ -13295,73 +13344,69 @@ URL.revokeObjectURL(url);
 
             var c = cases[idx];
             var confirmed = progress.pagesRead.indexOf(idx) >= 0;
-            var inner = '<div style="font-size:0.75rem;color:#94a3b8;margin-bottom:6px;">案例 ' + (idx + 1) + ' / ' + total + ' · 质检码 ' + escapeHtml(c.qcCode || '—') + '</div>' +
-                '<div style="font-size:0.95rem;font-weight:800;color:#1f3a6b;margin-bottom:6px;">⚠️ 问题描述</div>' +
-                '<div style="font-size:0.92rem;line-height:1.8;color:#33445f;">' + _tdFmt(c.issueDesc || '（暂无描述）') + '</div>' +
-                '<div style="margin:10px 0 18px;">' + imgRow(c.issuePhotos, 260, 200) + '</div>' +
-                '<div style="font-size:0.95rem;font-weight:800;color:#1b7f3b;margin-bottom:6px;">✅ 正确方向</div>' +
-                '<div style="font-size:0.92rem;line-height:1.8;color:#33445f;">' + _tdFmt(c.correctDir || '（暂无正确方向）') + '</div>' +
-                '<div style="margin:10px 0 4px;">' + imgRow((c.dirPhotos || []).concat(c.dirExamplePhotos || []), 260, 200) + '</div>' +
-                '<div style="height:30px;"></div>';   // 留一点底部空间，确保能滚到底
+            var isLast = idx === total - 1;
+            var inner = '<div style="font-size:14px;color:#94a3b8;margin-bottom:8px;">案例 ' + (idx + 1) + ' / ' + total + ' · 质检码 ' + escapeHtml(c.qcCode || '—') + '</div>' +
+                '<div style="font-size:20px;font-weight:800;color:#1f3a6b;margin-bottom:8px;">⚠️ 问题描述</div>' +
+                '<div style="font-size:17px;line-height:1.95;color:#33445f;">' + _tdFmt(c.issueDesc || '（暂无描述）') + '</div>' +
+                '<div style="margin:12px 0 22px;">' + imgRow(c.issuePhotos) + '</div>' +
+                '<div style="font-size:20px;font-weight:800;color:#1b7f3b;margin-bottom:8px;">✅ 正确方向</div>' +
+                '<div style="font-size:17px;line-height:1.95;color:#33445f;">' + _tdFmt(c.correctDir || '（暂无正确方向）') + '</div>' +
+                '<div style="margin:12px 0 4px;">' + imgRow((c.dirPhotos || []).concat(c.dirExamplePhotos || [])) + '</div>' +
+                '<div style="margin-top:22px;text-align:right;border-top:1px dashed #e2e8f0;padding-top:14px;">' +
+                    '<button onclick="_tdReportCaseByQc(\'' + escapeJsInAttr(c.qcCode || '') + '\', this)" style="background:#fff7ed;border:1px solid #f6d7b3;color:#b45309;padding:7px 16px;border-radius:16px;cursor:pointer;font-size:14px;">⚠️ 此案例有问题</button>' +
+                '</div>' +
+                '<div style="height:16px;"></div>';
             shell(inner);
             document.getElementById('tdPageNo').textContent = '第 ' + (idx + 1) + ' / ' + total + ' 页';
-
             var card = document.getElementById('tdCard');
+            hydrateImages(card);
+
             var foot = document.getElementById('tdFoot');
+            var btnText = isLast ? '完成阅读，去测验 →' : '下一页 →';
+            var btnBg = isLast ? 'linear-gradient(135deg,#1b7f3b,#27ae60)' : 'linear-gradient(135deg,#1f3a6b,#2a5298)';
+            foot.innerHTML = '<button id="tdNext" disabled style="width:100%;background:#cbd5e1;color:#fff;border:none;padding:16px;border-radius:22px;cursor:not-allowed;font-size:17px;font-weight:700;">' + btnText + '</button>' +
+                '<div id="tdHint" style="text-align:center;font-size:13px;color:#94a3b8;margin-top:8px;">请停留 5 秒…</div>';
+            var btn = document.getElementById('tdNext');
+            var hint = document.getElementById('tdHint');
+
+            function goNext() {
+                if (isLast) finish();
+                else { idx++; renderPage(); }
+            }
+
             if (confirmed) {
-                foot.innerHTML = (idx < total - 1
-                    ? '<button id="tdNext" style="width:100%;background:linear-gradient(135deg,#1f3a6b,#2a5298);color:#fff;border:none;padding:14px;border-radius:22px;cursor:pointer;font-size:0.95rem;font-weight:700;">下一页 →</button>'
-                    : '<button id="tdFinish" style="width:100%;background:linear-gradient(135deg,#1b7f3b,#27ae60);color:#fff;border:none;padding:14px;border-radius:22px;cursor:pointer;font-size:0.95rem;font-weight:700;">完成阅读，去测验 →</button>');
-                bindNext();
+                btn.disabled = false;
+                btn.style.background = btnBg;
+                btn.style.cursor = 'pointer';
+                hint.textContent = '';
+                btn.onclick = goNext;
                 return;
             }
-            foot.innerHTML = '<button id="tdConfirm" disabled style="width:100%;background:#cbd5e1;color:#fff;border:none;padding:14px;border-radius:22px;cursor:not-allowed;font-size:0.95rem;font-weight:700;">✅ 我已阅读本页</button>' +
-                '<div id="tdHint" style="text-align:center;font-size:0.76rem;color:#94a3b8;margin-top:6px;">请先滚动到本页底部</div>' +
-                '<div id="tdNextWrap" style="margin-top:8px;display:none;"><button id="tdNext" style="width:100%;background:linear-gradient(135deg,#1f3a6b,#2a5298);color:#fff;border:none;padding:14px;border-radius:22px;cursor:pointer;font-size:0.95rem;font-weight:700;">下一页 →</button></div>' +
-                '<div id="tdFinishWrap" style="margin-top:8px;display:none;"><button id="tdFinish" style="width:100%;background:linear-gradient(135deg,#1b7f3b,#27ae60);color:#fff;border:none;padding:14px;border-radius:22px;cursor:pointer;font-size:0.95rem;font-weight:700;">完成阅读，去测验 →</button></div>';
-            var confirmBtn = document.getElementById('tdConfirm');
-            var hint = document.getElementById('tdHint');
+
             var shownAt = Date.now();
-            var timer = setInterval(update, 400);
-            card.addEventListener('scroll', update);
-            function atBottom() {
-                return card.scrollHeight <= card.clientHeight + 6 || (card.scrollTop + card.clientHeight >= card.scrollHeight - 10);
-            }
+            var timer = setInterval(update, 300);
             function update() {
-                if (!document.body.contains(card)) { clearInterval(timer); return; }
+                if (!document.body.contains(btn)) { clearInterval(timer); return; }
                 var left = Math.max(0, 5 - Math.floor((Date.now() - shownAt) / 1000));
-                var ok = atBottom() && left <= 0;
-                confirmBtn.disabled = !ok;
-                confirmBtn.style.background = ok ? 'linear-gradient(135deg,#1f3a6b,#2a5298)' : '#cbd5e1';
-                confirmBtn.style.cursor = ok ? 'pointer' : 'not-allowed';
-                hint.textContent = !atBottom() ? '请先滚动到本页底部' : (left > 0 ? '请停留 ' + left + ' 秒…' : '可以确认了');
+                var ok = left <= 0;
+                btn.disabled = !ok;
+                btn.style.background = ok ? btnBg : '#cbd5e1';
+                btn.style.cursor = ok ? 'pointer' : 'not-allowed';
+                hint.textContent = ok ? '' : ('请停留 ' + left + ' 秒…');
             }
-            confirmBtn.onclick = async function() {
-                if (confirmBtn.disabled) return;
+            update();
+            btn.onclick = async function() {
+                if (btn.disabled) return;
                 clearInterval(timer);
                 if (progress.pagesRead.indexOf(idx) < 0) progress.pagesRead.push(idx);
-                if (idx === total - 1) progress.readDoneAt = new Date().toISOString();
-                confirmBtn.textContent = '✅ 已确认';
-                confirmBtn.disabled = true;
-                hint.textContent = '正在保存…';
+                if (isLast) progress.readDoneAt = new Date().toISOString();
+                btn.disabled = true;
+                btn.textContent = '正在保存…';
                 try { await _tdSaveProgress(session, r, progress); } catch (e) {}
-                hint.textContent = '';
-                if (idx === total - 1) {
-                    document.getElementById('tdFinishWrap').style.display = '';
-                    document.getElementById('tdFinish').onclick = finish;
-                } else {
-                    document.getElementById('tdNextWrap').style.display = '';
-                    bindNext();
-                }
+                goNext();
             };
         }
 
-        function bindNext() {
-            var n = document.getElementById('tdNext');
-            if (n) n.onclick = function() { idx++; renderPage(); };
-            var f = document.getElementById('tdFinish');
-            if (f) f.onclick = finish;
-        }
         async function finish() {
             if (!progress.readDoneAt) progress.readDoneAt = new Date().toISOString();
             try { await _tdSaveProgress(session, r, progress); } catch (e) {}
@@ -13386,11 +13431,38 @@ URL.revokeObjectURL(url);
         sessions.sort(function(a, b) { return String(b.createdAt || '').localeCompare(String(a.createdAt || '')); });
         sessions = sessions.slice(0, 50);
 
+        // 一次取全部阅读进度，按培训会话汇总「已读完 / 阅读中 / 未打开」
+        var progBySid = {};
+        try {
+            var pr = await fetch(SUPABASE_URL + '/rest/v1/app_data?key=like.' + encodeURIComponent(TD_PROGRESS_PREFIX + '*') + '&select=key,value', {
+                headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY }
+            });
+            var prows = await pr.json();
+            (Array.isArray(prows) ? prows : []).forEach(function(x) {
+                try {
+                    var p = JSON.parse(x.value);
+                    if (!p) return;
+                    var sid = String(x.key).slice(TD_PROGRESS_PREFIX.length).split('_')[0];
+                    (progBySid[sid] = progBySid[sid] || []).push(p);
+                } catch (e) {}
+            });
+        } catch (e) {}
+
         var listHtml = sessions.length ? sessions.map(function(s, i) {
             var ts = s.createdAt ? new Date(s.createdAt).toLocaleString('zh-CN') : '';
+            var ps = progBySid[s.id] || [];
+            var totalPages = (s.caseQcs || []).length;
+            var doneN = 0, readN = 0;
+            ps.forEach(function(p) {
+                var pg = p.pagesRead || [];
+                if (p.readDoneAt || pg.length >= totalPages) doneN++;
+                else if (pg.length) readN++;
+            });
+            var notN = Math.max(0, (s.recipients || []).length - doneN - readN);
             return '<div style="padding:10px 12px;border-bottom:1px solid #eef2f6;cursor:pointer;" class="td-session-row" data-idx="' + i + '">' +
                 '<div style="font-weight:600;color:#1f3a6b;font-size:0.88rem;">' + escapeHtml(s.title || s.id) + '</div>' +
                 '<div style="font-size:0.75rem;color:#94a3b8;">' + escapeHtml(s.site || '') + ' · ' + (s.recipients || []).length + ' 人 · 案例 ' + (s.caseQcs || []).length + ' 个 · 测验 ' + (s.questions || []).length + ' 题 · ' + escapeHtml(ts) + '</div>' +
+                '<div style="font-size:0.72rem;color:#2a5298;margin-top:2px;">已读完 ' + doneN + ' / 阅读中 ' + readN + ' / 未打开 ' + notN + '</div>' +
             '</div>';
         }).join('') : '<div style="padding:30px;text-align:center;color:#94a3b8;">还没有培训课件记录</div>';
 
@@ -13430,7 +13502,12 @@ URL.revokeObjectURL(url);
         var rowsHtml = (session.recipients || []).map(function(rr) {
             var p = byToken[rr.token];
             var st = '⚪ 未打开';
-            if (p && p.pagesRead && p.pagesRead.length) st = p.readDoneAt ? '✅ 已读完' : '📖 阅读中 ' + p.pagesRead.length + '/' + session.caseQcs.length;
+            var totalPages = (session.caseQcs || []).length;
+            if (p && p.pagesRead && p.pagesRead.length) {
+                // 2026-11-16：所有页都读过也算完成（防止最后一页没点「完成」但已读完）
+                var complete = p.readDoneAt || p.pagesRead.length >= totalPages;
+                st = complete ? '✅ 已读完' : '📖 阅读中 ' + p.pagesRead.length + '/' + totalPages;
+            }
             var exam = byCode[rr.examCode];
             var ex = '—';
             if (exam) {
@@ -24161,6 +24238,10 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
             document.body.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100vh;font-family:sans-serif;"><div style="text-align:center;"><h1 style="color:#c0392b;">❌ 考试不存在</h1><p>考试码无效或已过期</p></div></div>';
             return;
         }
+        if (_examExpired(exam)) {
+            document.body.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100vh;font-family:sans-serif;"><div style="text-align:center;"><h1 style="color:#b45309;">⌛ 考试已过期</h1><p>有效期 24 小时，请联系管理员重新出卷</p></div></div>';
+            return;
+        }
         if (exam.status === 'completed') {
             document.body.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100vh;font-family:sans-serif;"><div style="text-align:center;"><h1 style="color:#e67e22;">⚠️ 考试已结束</h1><p>该考试已完成（含补考）</p></div></div>';
             return;
@@ -24603,7 +24684,31 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
     }
 
     var isStandaloneExamView = location.search.indexOf('exam=') >= 0;
+    // 2026-11-16：考试 / 培训记录有效期 24 小时
+    var EXAM_VALID_MS = 24 * 3600 * 1000;
+    function _examExpired(e) {
+        if (!e) return false;
+        if (e.status === 'expired') return true;
+        if (e.status === 'completed') return false;
+        var t = Date.parse(e.generatedAt || e.startedAt || '') || 0;
+        return t > 0 && (Date.now() - t > EXAM_VALID_MS);
+    }
+    function _expireStaleExams() {
+        var h = getExamHistory();
+        var changed = false;
+        Object.keys(h).forEach(function(k) {
+            var e = h[k];
+            if (e && e.status !== 'completed' && e.status !== 'expired' && _examExpired(e)) {
+                e.status = 'expired';
+                e.expiredAt = new Date().toISOString();
+                changed = true;
+            }
+        });
+        if (changed) { try { saveExamHistory(h); } catch (e) {} }
+    }
+
     function renderExamRecordsTab(content) {
+        _expireStaleExams();
         const history = getExamHistory();
         var filterName = window._examFilterReviewer;
         var examList = Object.values(history).filter(function(e){
@@ -24611,13 +24716,14 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
         }).map(function(e){
             // 状态和颜色
             var isRetake = e.attempts > 0;
-            var isFailed = e._retakeFailed || (e.status==='completed' && e.attempts >= (e.maxAttempts||2) && (e.score||0)<100);
-            var isPassed = e.status==='completed' && (e.score||0)>=100;
-            var isInProgress = e.status==='in_progress';
-            var priority = isFailed ? 0 : (isRetake && !isPassed ? 1 : 2); // 0=置顶 1=补考 2=通过
-            var statusLabel = e._retakeFailed ? '❌ 补考未通过' : (isPassed ? '✅ 已通过' : (isInProgress ? '⏳ 考试中' : (isRetake ? '🔄 补考' : '📝 待考')));
-            var bgClass = isFailed ? 'exam-failed' : (isRetake && !isPassed ? 'exam-retake' : (isPassed ? 'exam-passed' : ''));
-            return { exam: e, isFailed: isFailed, isPassed: isPassed, isRetake: isRetake, isInProgress: isInProgress,
+            var isExpired = _examExpired(e);
+            var isFailed = !isExpired && (e._retakeFailed || (e.status==='completed' && e.attempts >= (e.maxAttempts||2) && (e.score||0)<100));
+            var isPassed = !isExpired && e.status==='completed' && (e.score||0)>=100;
+            var isInProgress = !isExpired && e.status==='in_progress';
+            var priority = isFailed ? 0 : (isExpired ? 1 : (isRetake && !isPassed ? 2 : 3)); // 0=置顶 1=过期 2=补考 3=通过/待考
+            var statusLabel = isExpired ? '⌛ 已过期' : (e._retakeFailed ? '❌ 补考未通过' : (isPassed ? '✅ 已通过' : (isInProgress ? '⏳ 考试中' : (isRetake ? '🔄 补考' : '📝 待考'))));
+            var bgClass = isExpired ? 'exam-expired' : (isFailed ? 'exam-failed' : (isRetake && !isPassed ? 'exam-retake' : (isPassed ? 'exam-passed' : '')));
+            return { exam: e, isFailed: isFailed, isPassed: isPassed, isRetake: isRetake, isInProgress: isInProgress, isExpired: isExpired,
                 priority: priority, statusLabel: statusLabel, bgClass: bgClass,
                 time: e.generatedAt, weekKey: getWeekKey(e.generatedAt) };
         }).sort(function(a,b){
@@ -24633,6 +24739,7 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
             {key:'all', label:'全部', count:examList.length},
             {key:'pending', label:'📝 待考', count:examList.filter(function(x){return !x.isRetake && !x.isPassed && !x.isInProgress && !x.isFailed;}).length},
             {key:'inprogress', label:'⏳ 考试中', count:examList.filter(function(x){return x.isInProgress;}).length},
+            {key:'expired', label:'⌛ 已过期', count:examList.filter(function(x){return x.isExpired;}).length},
             {key:'retake', label:'🔄 补考', count:examList.filter(function(x){return x.isRetake && !x.isPassed && !x.isFailed;}).length},
             {key:'passed', label:'✅ 已通过', count:examList.filter(function(x){return x.isPassed;}).length},
             {key:'failed', label:'❌ 未通过', count:examList.filter(function(x){return x.isFailed;}).length}
@@ -24660,11 +24767,12 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
         var filteredList = baseList;
         if (curFilter !== 'all') {
             filteredList = baseList.filter(function(x){
-                if (curFilter === 'pending') return !x.isRetake && !x.isPassed && !x.isInProgress && !x.isFailed;
+                if (curFilter === 'pending') return !x.isRetake && !x.isPassed && !x.isInProgress && !x.isFailed && !x.isExpired;
                 if (curFilter === 'inprogress') return x.isInProgress;
-                if (curFilter === 'retake') return x.isRetake && !x.isPassed && !x.isFailed;
+                if (curFilter === 'retake') return x.isRetake && !x.isPassed && !x.isFailed && !x.isExpired;
                 if (curFilter === 'passed') return x.isPassed;
                 if (curFilter === 'failed') return x.isFailed;
+                if (curFilter === 'expired') return x.isExpired;
                 return true;
             });
         }
@@ -24693,15 +24801,17 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
                             '<div style=\"background:'+statusBg+';color:'+statusColor+';padding:8px 12px;border-radius:12px;font-size:0.85rem;font-weight:700;\">'+item.statusLabel+'</div>' +
                         '</div>' +
                         '<div style=\"display:flex;gap:8px;flex-wrap:wrap;\">' +
-                            (e.status==='completed'
+                            (item.isExpired
+                                ? '<span style=\"display:inline-block;padding:6px 14px;border-radius:20px;font-size:0.78rem;background:#f1f5f9;color:#94a3b8;\">⌛ 已过期（24小时）</span>'
+                                : (e.status==='completed'
                                 ? '<button class=\"small-outline\" data-viewexam=\"'+e.id+'\">📊 查看详情</button>'
-                                : '<a class=\"primary\" href=\"?exam='+(e.examCode||'')+'\" target=\"_blank\" style=\"text-decoration:none;display:inline-block;padding:6px 16px;border-radius:20px;font-size:0.8rem;background:#2563eb;color:#fff;\">📝 开始考试</a>') +
+                                : '<a class=\"primary\" href=\"?exam='+(e.examCode||'')+'\" target=\"_blank\" style=\"text-decoration:none;display:inline-block;padding:6px 16px;border-radius:20px;font-size:0.8rem;background:#2563eb;color:#fff;\">📝 开始考试</a>')) +
                             (isStandaloneExamView ? '' : '<button class=\"action-btn danger admin-only\" data-delexam=\"'+e.id+'\">🗑️</button>') +
                         '</div></div>';
                 }).join('') +
                 '</div></div>';
         });
-        content.innerHTML = '<div class=\"report-box\"><style>.exam-failed{background:#fff0f0;border:1px solid #fecaca;}.exam-retake{background:#fffdf0;border:1px solid #fef08a;}.exam-passed{background:#f0fdf4;border:1px solid #bbf7d0;}</style>'+filterHtml+html+'</div>';
+        content.innerHTML = '<div class=\"report-box\"><style>.exam-failed{background:#fff0f0;border:1px solid #fecaca;}.exam-retake{background:#fffdf0;border:1px solid #fef08a;}.exam-passed{background:#f0fdf4;border:1px solid #bbf7d0;}.exam-expired{background:#f8fafc;border:1px solid #e2e8f0;}</style>'+filterHtml+html+'</div>';
         bindExamCardEvents(content);
     }
     function filterExamCards() {
@@ -24743,92 +24853,199 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
         });
     }
 
-    function renderTrainingPushesTab(content) {
+    async function renderTrainingPushesTab(content) {
         var pushes = getTrainingPushes();
         var filterName = window._examFilterReviewer;
         if (filterName) pushes = pushes.filter(function(p){ return p.reviewerName === filterName; });
-        var reports = JSON.parse(localStorage.getItem('generatedReports')||'{}');
         if (pushes.length === 0) {
-            content.innerHTML = '<div class=\"report-box\"><div class=\"empty-placeholder\" style=\"padding:40px;\">暂无培训推送记录</div></div>';
+            content.innerHTML = '<div class="report-box"><div class="empty-placeholder" style="padding:40px;">暂无培训推送记录</div></div>';
             return;
         }
-        var list = pushes.map(function(p, i){ p._sortTime = p.time; p._origIdx = i; return p; });
-        var groups = groupByWeek(list, 'time');
+
+        // 一次取培训会话 + 阅读进度，按会话汇总（2026-11-16）
+        var sessionMap = {}, progMap = {};
+        try {
+            var _hdr = { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY };
+            var _res = await Promise.all([
+                fetch(SUPABASE_URL + '/rest/v1/app_data?key=like.' + encodeURIComponent('trainsession_*') + '&select=key,value', { headers: _hdr }),
+                fetch(SUPABASE_URL + '/rest/v1/app_data?key=like.' + encodeURIComponent('trainprog_*') + '&select=key,value', { headers: _hdr })
+            ]);
+            var srows = await _res[0].json(), prows = await _res[1].json();
+            (Array.isArray(srows) ? srows : []).forEach(function(x) {
+                try { var s = JSON.parse(x.value); if (s && s.id) sessionMap[s.id] = s; } catch (e) {}
+            });
+            (Array.isArray(prows) ? prows : []).forEach(function(x) {
+                try {
+                    var p = JSON.parse(x.value);
+                    if (!p) return;
+                    var rest = String(x.key).replace(/^trainprog_/, '');
+                    var cut = rest.lastIndexOf('_');
+                    var sid = cut > 0 ? rest.slice(0, cut) : rest;
+                    (progMap[sid] = progMap[sid] || []).push(p);
+                } catch (e) {}
+            });
+        } catch (e) {}
+
+        var examHistory = getExamHistory();
+        var examByCode = {};
+        Object.keys(examHistory).forEach(function(k) { var e = examHistory[k]; if (e && e.examCode) examByCode[e.examCode] = e; });
+        var reports = {};
+        try { reports = JSON.parse(localStorage.getItem('generatedReports') || '{}'); } catch (e) {}
+
+        var now = Date.now();
+        var list = pushes.map(function(p, i) {
+            var sess = p.sessionId ? sessionMap[p.sessionId] : null;
+            var progs = sess ? (progMap[sess.id] || []) : [];
+            var totalPages = sess ? (sess.caseQcs || []).length : 0;
+            var doneN = 0, readN = 0;
+            progs.forEach(function(x) {
+                var pg = x.pagesRead || [];
+                if (x.readDoneAt || (totalPages && pg.length >= totalPages)) doneN++;
+                else if (pg.length) readN++;
+            });
+            var recips = sess ? (sess.recipients || []).length : 0;
+            var notN = sess ? Math.max(0, recips - doneN - readN) : 0;
+            var taken = 0, passedN = 0;
+            if (sess) {
+                (sess.recipients || []).forEach(function(rr) {
+                    var ex = rr.examCode ? examByCode[rr.examCode] : null;
+                    if (ex && ex.attempts > 0) {
+                        taken++;
+                        var wrong = (ex.wrongAnswers || []).length;
+                        var ok = ex.passRule === 'oneWrong' ? wrong <= 1 : (ex.score || 0) >= 100;
+                        if (ok) passedN++;
+                    }
+                });
+            }
+            var timeMs = Date.parse(p.time || '') || 0;
+            var expired = timeMs > 0 && (now - timeMs > 24 * 3600 * 1000);
+            var allDone = sess && recips > 0 && doneN >= recips;
+            var status = allDone ? 'done' : (expired ? 'expired' : 'active');
+            return { p: p, sess: sess, doneN: doneN, readN: readN, notN: notN, recips: recips,
+                totalPages: totalPages, taken: taken, passedN: passedN, status: status, time: p.time, _origIdx: i };
+        });
+
+        var filters = [
+            { key: 'all', label: '全部', count: list.length },
+            { key: 'active', label: '🟢 进行中', count: list.filter(function(x){ return x.status === 'active'; }).length },
+            { key: 'done', label: '✅ 已完成', count: list.filter(function(x){ return x.status === 'done'; }).length },
+            { key: 'expired', label: '⌛ 已过期', count: list.filter(function(x){ return x.status === 'expired'; }).length }
+        ];
+        var curFilter = window._trainPushFilter || 'all';
+        var filterHtml = '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px;">';
+        filters.forEach(function(f) {
+            var on = curFilter === f.key;
+            filterHtml += '<span class="train-push-filter" data-filter="' + f.key + '" style="cursor:pointer;padding:4px 12px;border-radius:14px;font-size:0.72rem;font-weight:600;' + (on ? 'background:#1f3a6b;color:#fff;' : 'background:#f1f5f9;color:#5e6f8d;') + '">' + f.label + ' (' + f.count + ')</span>';
+        });
+        filterHtml += '</div>';
+
+        var filtered = curFilter === 'all' ? list : list.filter(function(x){ return x.status === curFilter; });
+        var groups = groupByWeek(filtered, 'time');
         var html = '';
-        groups.forEach(function(g){
-            g.items.sort(function(a,b){ return new Date(b._sortTime||b.time) - new Date(a._sortTime||a.time); });
-            var disp2 = g.isCurrent ? "block" : "none";
-            html += '<div style=\"margin-bottom:12px;\">' +
-                '<div onclick=\"toggleWeekGroup(this)\" style=\"cursor:pointer;font-weight:700;color:#1f3a6b;font-size:0.85rem;padding:8px 12px;background:#f1f5f9;border-radius:8px;\">📅 '+(g.isCurrent?'本周':g.key)+'（'+g.items.length+'条） '+(g.isCurrent?'':'▸ 展开')+'</div>' +
-                '<div style=\"display:'+disp2+';\">' +
-                g.items.map(function(p){
+        groups.forEach(function(g) {
+            g.items.sort(function(a, b) { return new Date(b.time) - new Date(a.time); });
+            var disp = g.isCurrent ? 'block' : 'none';
+            html += '<div style="margin-bottom:12px;">' +
+                '<div onclick="toggleWeekGroup(this)" style="cursor:pointer;font-weight:700;color:#1f3a6b;font-size:0.85rem;padding:8px 12px;background:#f1f5f9;border-radius:8px;">📅 ' + (g.isCurrent ? '本周' : g.key) + '（' + g.items.length + '条） ' + (g.isCurrent ? '' : '▸ 展开') + '</div>' +
+                '<div style="display:' + disp + ';">' +
+                g.items.map(function(item) {
+                    var p = item.p;
+                    var isExam = p.type === 'exam';
+                    var isDeck = p.type === 'train_deck' || !!p.sessionId;
                     var hasReport = p.reportName && !!reports[p.reportName];
-                    var isExam = p.type === 'exam'; // 考试推送记录（2026-09-14 补录起）
                     var scopeLabel = p.scope || '培训资料';
-                    var titleText = isExam ? (p.title || (p.reviewerName+' 精准考试')) :
-                        scopeLabel.indexOf('个人')>=0 ? escapeHtml(p.reviewerName)+' 的培训资料' :
-                        (scopeLabel.indexOf('全站')>=0 ? '全站培训资料（'+(p.reviewerName||'').split(',').length+'人）' :
-                        scopeLabel.replace('站点培训资料','站点培训资料')+'（'+(p.reviewerName||'').split(',').length+'人）');
-                    var isPushed = isPushedThisPeriod(p.reviewerName, isExam ? 'exam' : 'train');
-                    var pushTag = isPushed ? '<span style=\"background:#d4edda;color:#166534;padding:2px 8px;border-radius:8px;font-size:0.65rem;\">✅ 已推送</span> ' : '';
-                    return '<div class=\"exam-card\" style=\"display:flex;gap:12px;align-items:center;flex-wrap:wrap;\">' +
-                        '<div style=\"flex:1;\"><div style=\"font-weight:700;\">'+(isExam?'📝 ':'📄 ')+pushTag+escapeHtml(titleText)+'</div>' +
-                        '<div style=\"font-size:0.75rem;color:#5e6f8d;\">'+new Date(p.time).toLocaleString('zh-CN')+(isExam
-                            ? ' | 考试码 '+escapeHtml(p.examCode||'—')+(p.questionCount?' | '+p.questionCount+'题':'')
-                            : ' | '+(p.caseCount||0)+'案例 | '+escapeHtml(scopeLabel))+'</div></div>' +
-                        '<div style=\"display:flex;gap:6px;flex-wrap:wrap;\">' +
-                            (isExam
-                                ? (p.examCode ? '<button class=\"primary\" data-openexam=\"'+escapeHtml(p.examCode)+'\">📝 打开考试</button>' : '')
-                                : hasReport
-                                ? '<button class=\"primary\" data-openreport=\"'+p.reportName+'\">👁️ 查看</button><button class=\"small-outline\" data-download=\"'+p.reportName+'\">📥 下载</button>'
-                                : '<span style=\"color:#94a3b8;font-size:0.7rem;\">'+(p.reportName?'📌 已清理':'📌 无报告')+'</span>') +
-                            '<button class=\"small-outline\" data-dltrain=\"'+(p.reportName||p.time)+'\">🗑️ 删除</button>' +
+                    var titleText;
+                    if (isDeck) titleText = item.sess ? item.sess.title : (scopeLabel || '培训课件');
+                    else if (isExam) titleText = p.title || (p.reviewerName + ' 精准考试');
+                    else if (scopeLabel.indexOf('个人') >= 0) titleText = p.reviewerName + ' 的培训资料';
+                    else if (scopeLabel.indexOf('全站') >= 0) titleText = '全站培训资料（' + (p.reviewerName || '').split(',').length + '人）';
+                    else titleText = scopeLabel + '（' + (p.reviewerName || '').split(',').length + '人）';
+
+                    var statusBadge = item.status === 'done'
+                        ? '<span style="background:#d4edda;color:#166534;padding:2px 8px;border-radius:8px;font-size:0.65rem;font-weight:700;">✅ 已完成</span>'
+                        : item.status === 'expired'
+                        ? '<span style="background:#f1f5f9;color:#94a3b8;padding:2px 8px;border-radius:8px;font-size:0.65rem;font-weight:700;">⌛ 已过期</span>'
+                        : '<span style="background:#e0f2fe;color:#0369a1;padding:2px 8px;border-radius:8px;font-size:0.65rem;font-weight:700;">🟢 进行中</span>';
+
+                    var progressLine = isDeck
+                        ? '<div style="font-size:0.75rem;color:#2a5298;margin-top:3px;">📖 已读完 <b>' + item.doneN + '</b> / 阅读中 <b>' + item.readN + '</b> / 未打开 <b>' + item.notN + '</b>' +
+                          ((item.sess && (item.sess.questions || []).length) ? ' ｜ 📝 已考 <b>' + item.taken + '</b> / 通过 <b>' + item.passedN + '</b>' : '') +
+                          '</div>'
+                        : '';
+
+                    var timeLine = new Date(p.time).toLocaleString('zh-CN') +
+                        (isDeck
+                            ? ' | 案例 ' + (p.caseCount || (item.sess ? item.sess.caseQcs.length : 0)) + ' 个' + (item.sess && (item.sess.questions || []).length ? ' | 测验 ' + item.sess.questions.length + ' 题' : '')
+                            : isExam
+                            ? ' | 考试码 ' + (p.examCode || '—') + (p.questionCount ? ' | ' + p.questionCount + '题' : '')
+                            : ' | ' + (p.caseCount || 0) + '案例 | ' + scopeLabel);
+
+                    var buttons = '';
+                    if (isDeck) {
+                        if (item.sess) buttons += '<button class="primary" data-openprogress="' + escapeHtml(item.sess.id) + '">📊 查看进度</button>';
+                    } else if (isExam) {
+                        if (p.examCode) buttons += '<button class="primary" data-openexam="' + escapeHtml(p.examCode) + '">📝 打开考试</button>';
+                    } else if (hasReport) {
+                        buttons += '<button class="primary" data-openreport="' + escapeHtml(p.reportName) + '">👁️ 查看</button><button class="small-outline" data-download="' + escapeHtml(p.reportName) + '">📥 下载</button>';
+                    } else {
+                        buttons += '<span style="color:#94a3b8;font-size:0.7rem;">' + (p.reportName ? '📌 已清理' : '📌 无报告') + '</span>';
+                    }
+                    buttons += '<button class="small-outline" data-dltrain="' + escapeHtml(p.sessionId || p.reportName || p.time) + '">🗑️ 删除</button>';
+
+                    return '<div class="exam-card" style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;">' +
+                        '<div style="flex:1;min-width:220px;">' +
+                            '<div style="font-weight:700;color:#1f3a6b;margin-bottom:2px;">' + (isDeck ? '📖 ' : isExam ? '📝 ' : '📄 ') + statusBadge + ' ' + escapeHtml(titleText) + '</div>' +
+                            '<div style="font-size:0.75rem;color:#5e6f8d;">' + timeLine + '</div>' +
+                            progressLine +
                         '</div>' +
+                        '<div style="display:flex;gap:6px;flex-wrap:wrap;">' + buttons + '</div>' +
                     '</div>';
                 }).join('') +
                 '</div></div>';
         });
-        content.innerHTML = '<div class=\"report-box\">'+html+'</div>';
+
+        content.innerHTML = '<div class="report-box">' + filterHtml +
+            (filtered.length ? html : '<div class="empty-placeholder" style="padding:30px;">该分类下暂无记录</div>') + '</div>';
+
+        content.querySelectorAll('.train-push-filter').forEach(function(btn) {
+            btn.onclick = function() { window._trainPushFilter = btn.dataset.filter; renderTrainingPushesTab(content); };
+        });
+        content.querySelectorAll('[data-openprogress]').forEach(function(btn) {
+            btn.onclick = function() {
+                var sess = sessionMap[btn.dataset.openprogress];
+                if (sess) _tdShowTracking(sess);
+                else showToast('找不到这次培训的会话数据', 'warning');
+            };
+        });
         content.querySelectorAll('[data-openreport]').forEach(function(btn){ btn.onclick = function(){ openTrainingReport(btn.dataset.openreport); }; });
-        content.querySelectorAll('[data-openexam]').forEach(function(btn){ btn.onclick = function(){ window.open(location.origin+location.pathname+'?exam='+btn.dataset.openexam, '_blank'); }; });
-        content.querySelectorAll('[data-download]').forEach(function(btn){
-            btn.onclick = function(){
-                var reports = JSON.parse(localStorage.getItem('generatedReports')||'{}');
-                var html = reports[btn.dataset.download];
+        content.querySelectorAll('[data-openexam]').forEach(function(btn){ btn.onclick = function(){ window.open(location.origin + location.pathname + '?exam=' + btn.dataset.openexam, '_blank'); }; });
+        content.querySelectorAll('[data-download]').forEach(function(btn) {
+            btn.onclick = function() {
+                var reps = JSON.parse(localStorage.getItem('generatedReports') || '{}');
+                var html = reps[btn.dataset.download];
                 if (!html) return;
-                var blob = new Blob([html], {type:'text/html;charset=UTF-8'});
+                var blob = new Blob([html], { type: 'text/html;charset=UTF-8' });
                 var a = document.createElement('a');
                 a.href = URL.createObjectURL(blob);
                 a.download = btn.dataset.download + '.html';
                 a.click();
             };
         });
-        content.querySelectorAll('[data-dltrain]').forEach(function(btn){
-            btn.onclick = async function(){
+        content.querySelectorAll('[data-dltrain]').forEach(function(btn) {
+            btn.onclick = async function() {
                 if (!await confirmDelete('该培训推送记录')) return;
                 var dltVal = btn.dataset.dltrain;
-                if (dltVal) deleteReport(dltVal);
-                var tp = getTrainingPushes().filter(function(r){
+                var recs = getTrainingPushes();
+                var rec = recs.find(function(r) { return (r.sessionId || r.reportName || r.time) === dltVal; });
+                if (rec && rec.reportName) { try { deleteReport(rec.reportName); } catch (e) {} }
+                var tp = recs.filter(function(r) {
+                    if (r.sessionId && r.sessionId === dltVal) return false;
                     if (r.reportName && r.reportName === dltVal) return false;
-                    if (!r.reportName && r.time === dltVal) return false;
+                    if (!r.reportName && !r.sessionId && r.time === dltVal) return false;
                     return true;
                 });
                 saveTrainingPushes(tp);
-                // 直接移除 DOM，保持展开状态
-                var card = btn.closest('.exam-card');
-                if (card) {
-                    var weekGroup = card.closest('[style*=\"display:\"]');
-                    card.remove();
-                    if (weekGroup) {
-                        var parentBlock = weekGroup.parentElement;
-                        var header = parentBlock.querySelector('[onclick*=\"toggleWeekGroup\"]');
-                        if (header) {
-                            var remaining = weekGroup.querySelectorAll('.exam-card').length;
-                            if (remaining === 0) { parentBlock.remove(); }
-                            else { header.textContent = header.textContent.replace(/（\d+条）/, '（'+remaining+'条）'); }
-                        }
-                    }
-                }
+                renderTrainingPushesTab(content);
             };
         });
     }
@@ -25080,6 +25297,12 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
         const history = getExamHistory();
         const exam = history[examId];
         if (!exam) { alert('试卷不存在'); return; }
+        if (_examExpired(exam)) {
+            exam.status = 'expired';
+            try { saveExamHistory(history); } catch (e) {}
+            alert('考试已过期（有效期 24 小时），请联系管理员重新出卷');
+            return;
+        }
         currentExamId = examId;
         currentExamAnswers = { _questions: [] };
         if (!exam.attempts) exam.attempts = 0;
