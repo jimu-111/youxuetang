@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <!-- 版本行：每次部署新代码必须 bump 此 content（YYYYMMDD.N），旧设备靠它自检静默升级 -->
-    <meta name="yxt-ver" content="20261118.1">
+    <meta name="yxt-ver" content="20261118.2">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
     <title>优学堂</title>
     <script src="https://cdn.sheetjs.com/xlsx-0.20.2/package/dist/xlsx.full.min.js" defer></script>
@@ -12801,15 +12801,40 @@ URL.revokeObjectURL(url);
         return bank;
     }
 
+    function _tqInferType(typeLabel, answer) {
+        var t = String(typeLabel || '').trim();
+        var a = String(answer || '').trim();
+        if (/判断|judge/i.test(t) || /^(正确|错误|对|错|√|✓|×|✗|true|false)[。.]?$/i.test(a)) return 'judge';
+        if (/^[A-Fa-f\s,，、;；]+$/.test(a)) {
+            var letters = (a.match(/[A-Fa-f]/g) || []);
+            if (letters.length === 1) return 'choice';
+            if (letters.length >= 2) return 'multi';
+        }
+        return 'qa';
+    }
+    function _tqCellTokens(cell) {
+        var out = [];
+        (function walk(x) {
+            if (!x) return;
+            if (Array.isArray(x)) { x.forEach(walk); return; }
+            if (typeof x === 'object' && x.fileToken) out.push(x.fileToken);
+        })(cell);
+        return out;
+    }
+
     function _tqRenderTrainingBankPanel() {
         var panel = document.getElementById('qbTrainingPanel');
         if (!panel) return;
         panel.innerHTML = '<div style="text-align:center;padding:30px;color:#94a3b8;">⏳ 正在加载培训题库…</div>';
         _tqEnsureBankLoaded().then(function(bank) {
-            var sets = (bank.sets || []).slice().sort(function(a, b) {
+            var allQuestions = [];
+            (bank.sets || []).forEach(function(s) { allQuestions = allQuestions.concat(s.questions || []); });
+            window._tqAllTrainingQuestions = allQuestions;
+            window._tqSetList = (bank.sets || []).slice().sort(function(a, b) {
                 return String(b.updatedAt || '') > String(a.updatedAt || '') ? 1 : -1;
             });
-            if (!sets.length) {
+
+            if (!allQuestions.length) {
                 panel.innerHTML = '<div style="background:#fff;border:1px dashed #cbd5e1;border-radius:16px;padding:36px;text-align:center;color:#5e6f8d;">' +
                     '<div style="font-size:2rem;margin-bottom:8px;">🎓</div>' +
                     '<div style="font-weight:700;color:#1f3a6b;margin-bottom:6px;">暂无培训案例题库</div>' +
@@ -12817,17 +12842,17 @@ URL.revokeObjectURL(url);
                 return;
             }
 
-            var allQuestions = [];
-            sets.forEach(function(s) { allQuestions = allQuestions.concat(s.questions || []); });
-            window._tqAllTrainingQuestions = allQuestions;
-            window._tqSetList = sets;
+            var counts = { judge: 0, choice: 0, multi: 0 };
+            allQuestions.forEach(function(q) { if (counts[q.type] !== undefined) counts[q.type]++; });
 
-            // 每页 8 张卡：第 1 张「全部题目」+ 7 套题；多余的翻页
-            var PER_PAGE = 7;
-            var totalPages = Math.max(1, Math.ceil(sets.length / PER_PAGE));
-            var page = Math.min(Math.max(1, window._tqSetPage || 1), totalPages);
-            window._tqSetPage = page;
-            var pageSets = sets.slice((page - 1) * PER_PAGE, page * PER_PAGE);
+            function typeCard(type, label, icon, count, bg) {
+                return '<div class="qb-cat-card" style="background:' + bg + ';cursor:pointer;" onclick="openQBDetailModal(\'培训案例题库 · ' + label + '\', (window._tqAllTrainingQuestions||[]).filter(function(q){ return q.type===\'' + type + '\'; }))">' +
+                    '<div class="qb-cat-icon">' + icon + '</div>' +
+                    '<div class="qb-cat-name">' + label + '</div>' +
+                    '<div class="qb-cat-count">' + count + ' 题</div>' +
+                    '<div class="qb-cat-actions"><button class="qb-card-btn" style="background:rgba(255,255,255,0.22);color:white;" onclick="event.stopPropagation();openQBDetailModal(\'培训案例题库 · ' + label + '\', (window._tqAllTrainingQuestions||[]).filter(function(q){ return q.type===\'' + type + '\'; }))">👁️ 查看</button></div>' +
+                '</div>';
+            }
 
             var allCard = '<div class="qb-cat-card qb-all-card" style="cursor:pointer;" onclick="openQBDetailModal(\'培训案例题库 · 全部题目\', window._tqAllTrainingQuestions||[])">' +
                 '<div class="qb-cat-icon">📚</div>' +
@@ -12836,49 +12861,96 @@ URL.revokeObjectURL(url);
                 '<div class="qb-cat-actions"><button class="qb-card-btn qb-card-view-all" onclick="event.stopPropagation();openQBDetailModal(\'培训案例题库 · 全部题目\', window._tqAllTrainingQuestions||[])">👁️ 查看</button></div>' +
             '</div>';
 
-            var cards = pageSets.map(function(s, i) {
-                var gi = (page - 1) * PER_PAGE + i;
-                var qs = s.questions || [];
-                var cnt = { judge: 0, choice: 0, multi: 0 };
-                qs.forEach(function(q) { if (cnt[q.type] !== undefined) cnt[q.type]++; });
-                var ts = s.updatedAt ? new Date(s.updatedAt).toLocaleString('zh-CN') : '';
-                return '<div class="qb-cat-card" style="background:linear-gradient(135deg,#5b8def,#3b6fc4);cursor:pointer;" onclick="window._tqOpenSet(' + gi + ')">' +
-                    '<div class="qb-cat-icon">🎓</div>' +
-                    '<div class="qb-cat-name">' + escapeHtml(s.name) + '</div>' +
-                    '<div class="qb-cat-count">' + qs.length + ' 题 · 判断' + cnt.judge + ' / 单选' + cnt.choice + ' / 多选' + cnt.multi + '</div>' +
-                    '<div style="font-size:0.62rem;opacity:0.75;">' + escapeHtml(ts) + '</div>' +
-                    '<div class="qb-cat-actions">' +
-                        '<button class="qb-card-btn" style="background:rgba(255,255,255,0.22);color:white;" onclick="event.stopPropagation();window._tqOpenSet(' + gi + ')">👁️ 查看</button>' +
-                        (isAdminMode() ? '<button class="qb-card-btn" style="background:rgba(255,255,255,0.22);color:white;" onclick="event.stopPropagation();window._tqRewriteSetToSheet(' + gi + ')">🛠️ 写回飞书</button>' : '') +
-                    '</div>' +
-                '</div>';
-            }).join('');
+            var cards = allCard +
+                typeCard('judge', '判断题', '✅', counts.judge, 'linear-gradient(135deg,#5b8def,#3b6fc4)') +
+                typeCard('choice', '单选题', '🔘', counts.choice, 'linear-gradient(135deg,#5aa9e6,#2f7fbf)') +
+                typeCard('multi', '多选题', '☑️', counts.multi, 'linear-gradient(135deg,#7c8ff0,#4f5fd0)');
 
-            var pager = '';
-            if (totalPages > 1) {
-                pager = '<div style="display:flex;justify-content:center;align-items:center;gap:10px;margin-top:14px;flex-wrap:wrap;">' +
-                    '<button id="tqSetPrev" ' + (page <= 1 ? 'disabled' : '') + ' style="padding:4px 14px;border:1px solid #cbd5e1;border-radius:14px;background:' + (page <= 1 ? '#eef2f7' : '#fff') + ';cursor:' + (page <= 1 ? 'default' : 'pointer') + ';font-size:0.8rem;">◀ 上一页</button>' +
-                    '<span style="font-size:0.8rem;color:#5e6f8d;">第 ' + page + ' / ' + totalPages + ' 页</span>' +
-                    '<button id="tqSetNext" ' + (page >= totalPages ? 'disabled' : '') + ' style="padding:4px 14px;border:1px solid #cbd5e1;border-radius:14px;background:' + (page >= totalPages ? '#eef2f7' : '#fff') + ';cursor:' + (page >= totalPages ? 'default' : 'pointer') + ';font-size:0.8rem;">下一页 ▶</button>' +
+            var adminBtns = '';
+            if (isAdminMode()) {
+                adminBtns = '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-left:auto;">' +
+                    '<button id="tqSyncFeishuBtn" style="background:#eef2ff;border:1px solid #c7d8f7;color:#2a5298;padding:5px 12px;border-radius:16px;cursor:pointer;font-size:0.76rem;font-weight:600;">🔄 从飞书更新</button>' +
+                    '<button id="tqRewriteBtn" style="background:#f5f3ff;border:1px solid #ddd6fe;color:#6d28d9;padding:5px 12px;border-radius:16px;cursor:pointer;font-size:0.76rem;font-weight:600;">🛠️ 写回飞书</button>' +
                 '</div>';
             }
 
-            panel.innerHTML = '<div style="font-size:0.8rem;color:#5e6f8d;margin-bottom:12px;">本分区由飞书表「培训案例生成」每周同步，页面只读；要改题请到飞书表或案例库重新生成。</div>' +
-                '<div class="qb-cat-grid">' + allCard + cards + '</div>' + pager;
-            window._tqOpenSet = function(i) {
-                var s = window._tqSetList[i];
-                if (!s) return;
-                openQBDetailModal(s.name, s.questions || []);
+            panel.innerHTML = '<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:12px;">' +
+                '<div style="font-size:0.8rem;color:#5e6f8d;">本分区由飞书表「培训案例生成」同步，按题型展示；页面只读。</div>' + adminBtns +
+            '</div>' +
+            '<div class="qb-cat-grid">' + cards + '</div>';
+
+            var syncBtn = document.getElementById('tqSyncFeishuBtn');
+            if (syncBtn) syncBtn.onclick = function() { _tqSyncFromFeishu(); };
+            var rwBtn = document.getElementById('tqRewriteBtn');
+            if (rwBtn) rwBtn.onclick = function() {
+                var sets = window._tqSetList || [];
+                if (!sets.length) { showToast('本地没有培训题库', 'warning'); return; }
+                var lines = sets.map(function(s, i) { return (i + 1) + '. ' + s.name + '（' + (s.questions || []).length + ' 题）'; }).join('\n');
+                var pick = prompt('输入要写回飞书的套题序号：\n' + lines, '1');
+                if (pick === null) return;
+                var idx = parseInt(pick, 10) - 1;
+                if (isNaN(idx) || idx < 0 || idx >= sets.length) { alert('序号不对'); return; }
+                _tqRewriteSetToSheet(sets[idx]);
             };
-            window._tqRewriteSetToSheet = function(i) {
-                var s = window._tqSetList[i];
-                if (s) _tqRewriteSetToSheet(s);
-            };
-            var prev = document.getElementById('tqSetPrev');
-            var next = document.getElementById('tqSetNext');
-            if (prev) prev.onclick = function() { window._tqSetPage = page - 1; _tqRenderTrainingBankPanel(); };
-            if (next) next.onclick = function() { window._tqSetPage = page + 1; _tqRenderTrainingBankPanel(); };
         });
+    }
+
+    // 2026-11-18：手动从飞书表同步培训题库（不用等周日自动同步）
+    async function _tqSyncFromFeishu() {
+        if (!isAdminMode()) { showToast('🔒 请先登录管理员', 'warning'); return; }
+        var btn = document.getElementById('tqSyncFeishuBtn');
+        if (btn) { btn.disabled = true; btn.textContent = '⏳ 正在读取…'; }
+        try {
+            var token = await getFeishuToken();
+            if (!token) throw new Error('无法获取飞书应用令牌');
+            var sheet = await _tqReadSheet(token);
+            var rows = sheet.rows || [];
+            var setMap = {};
+            var total = 0;
+            for (var i = 1; i < rows.length; i++) {
+                var r = rows[i] || [];
+                var id = String(r[0] || '').trim();
+                var text = String(r[4] || '').trim();
+                if (!id || !text) continue;
+                var setName = String(r[1] || '').trim() || '未命名套题';
+                var options = [];
+                ['A', 'B', 'C', 'D', 'E', 'F'].forEach(function(k, oi) {
+                    var t = String(r[5 + oi] || '').trim();
+                    if (t) options.push({ key: k, text: t, images: [] });
+                });
+                var q = {
+                    id: id, set: setName, seq: Number(r[2]) || i,
+                    type: _tqInferType(r[3], r[11]),
+                    question: text,
+                    options: options,
+                    answer: String(r[11] || '').trim(),
+                    explanation: String(r[12] || '').trim(),
+                    images: _tqCellTokens(r[13]),
+                    analysisImages: _tqCellTokens(r[14]),
+                    sourceQc: String(r[15] || '').trim(),
+                    approvedAt: String(r[16] || '').trim()
+                };
+                if (!setMap[setName]) setMap[setName] = { name: setName, questions: [], updatedAt: '' };
+                setMap[setName].questions.push(q);
+                if (q.approvedAt > setMap[setName].updatedAt) setMap[setName].updatedAt = q.approvedAt;
+                total++;
+            }
+            if (!total) {
+                if (!confirm('飞书表里没有题目。继续会把本地/云端的培训题库清空，确定吗？')) {
+                    if (btn) { btn.disabled = false; btn.textContent = '🔄 从飞书更新'; }
+                    return;
+                }
+            }
+            var bank = { sets: Object.keys(setMap).map(function(k) { return setMap[k]; }), updatedAt: new Date().toISOString() };
+            _tqSaveBank(bank);
+            showToast('✅ 已从飞书更新 ' + total + ' 题', 'success');
+            _tqRenderTrainingBankPanel();
+        } catch (e) {
+            alert('❌ 更新失败：' + (e.message || e));
+        } finally {
+            var b = document.getElementById('tqSyncFeishuBtn');
+            if (b) { b.disabled = false; b.textContent = '🔄 从飞书更新'; }
+        }
     }
 
     // 2026-11-15：把本地培训题库里的整套题原样写回飞书（恢复/修复用）
