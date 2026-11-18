@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <!-- 版本行：每次部署新代码必须 bump 此 content（YYYYMMDD.N），旧设备靠它自检静默升级 -->
-    <meta name="yxt-ver" content="20261115.11">
+    <meta name="yxt-ver" content="20261118.1">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
     <title>优学堂</title>
     <script src="https://cdn.sheetjs.com/xlsx-0.20.2/package/dist/xlsx.full.min.js" defer></script>
@@ -24812,6 +24812,7 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
                 '</div></div>';
         });
         content.innerHTML = '<div class=\"report-box\"><style>.exam-failed{background:#fff0f0;border:1px solid #fecaca;}.exam-retake{background:#fffdf0;border:1px solid #fef08a;}.exam-passed{background:#f0fdf4;border:1px solid #bbf7d0;}.exam-expired{background:#f8fafc;border:1px solid #e2e8f0;}</style>'+filterHtml+html+'</div>';
+        _applyWeekGroupState(content, groups, 'exam');
         bindExamCardEvents(content);
     }
     function filterExamCards() {
@@ -24834,7 +24835,7 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
             if (savedVal && searchInput.value !== savedVal) {
                 searchInput.value = savedVal;
             }
-            searchInput.focus();
+            // 2026-11-18：不再自动 focus 搜索框 —— 每次重画都 focus 会把页面滚到顶部，像是「展开的记录自己合上」
         }
         content.querySelectorAll('.exam-filter').forEach(function(btn){
             btn.onclick = function(){ window._examStatusFilter = btn.dataset.filter; renderExamRecordsTab(document.getElementById('examTabContent')); };
@@ -25007,6 +25008,7 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
         content.innerHTML = '<div class="report-box">' + filterHtml +
             (filtered.length ? html : '<div class="empty-placeholder" style="padding:30px;">该分类下暂无记录</div>') + '</div>';
 
+        _applyWeekGroupState(content, groups, 'trainpush');
         content.querySelectorAll('.train-push-filter').forEach(function(btn) {
             btn.onclick = function() { window._trainPushFilter = btn.dataset.filter; renderTrainingPushesTab(content); };
         });
@@ -25081,6 +25083,7 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
                 '</div></div>';
         });
         content.innerHTML = '<div class=\"report-box\">'+html+'</div>';
+        _applyWeekGroupState(content, groups, 'learnpush');
         content.querySelectorAll('[data-openplan]').forEach(function(btn){
             btn.onclick = function(){ window.open(location.origin+location.pathname+'?learnPlan='+btn.dataset.openplan, '_blank'); };
         });
@@ -25286,7 +25289,46 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
         };
     }
 
-    function toggleWeekGroup(el) { var n = el.nextElementSibling; if (n) n.style.display = n.style.display === "none" ? "" : "none"; }
+    function toggleWeekGroup(el) {
+        var n = el.nextElementSibling;
+        if (!n) return;
+        var willOpen = n.style.display === "none";
+        n.style.display = willOpen ? "" : "none";
+        // 2026-11-18：记住展开状态，面板自动刷新后不再自己合上
+        var k = el.getAttribute('data-week-key');
+        if (k) {
+            window._weekGroupOpen = window._weekGroupOpen || {};
+            window._weekGroupOpen[k] = willOpen;
+        }
+        var arrow = el.querySelector('.week-arrow');
+        if (arrow) arrow.textContent = willOpen ? '' : '▸ 展开';
+    }
+
+    // 2026-11-18：渲染后按记住的状态恢复周分组，避免自动刷新把展开的组分合上
+    function _applyWeekGroupState(content, groups, prefix) {
+        if (!content || !groups) return;
+        var headers = content.querySelectorAll('.week-toggle');
+        headers.forEach(function(h, i) {
+            var g = groups[i];
+            if (!g) return;
+            var key = prefix + ':' + (g.isCurrent ? '__current__' : g.key);
+            h.setAttribute('data-week-key', key);
+            if (!h.querySelector('.week-arrow')) {
+                var html = h.innerHTML;
+                if (html.indexOf('▸ 展开') >= 0) {
+                    h.innerHTML = html.replace(/▸ 展开/g, '<span class="week-arrow">▸ 展开</span>');
+                } else {
+                    h.innerHTML = html + ' <span class="week-arrow"></span>';
+                }
+            }
+            var stored = window._weekGroupOpen ? window._weekGroupOpen[key] : undefined;
+            var open = stored === undefined ? g.isCurrent : stored;
+            var body = h.nextElementSibling;
+            if (body) body.style.display = open ? '' : 'none';
+            var arrow = h.querySelector('.week-arrow');
+            if (arrow) arrow.textContent = open ? '' : '▸ 展开';
+        });
+    }
     function openTrainingReport(name) {
         // 与分享链接一致：整页直开展示（含云端兜底）
         openSharedReport(name);
