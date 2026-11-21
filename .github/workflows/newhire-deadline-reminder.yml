@@ -1,0 +1,44 @@
+name: 新人纳期提醒
+
+# 2026-11-21 建。
+# 每天 09:30（北京时间 = UTC 1:30）读云端学员数据、站点配置、纳期配置，
+# 按「阶段开始日 + 第几天」算每一项的纳期：
+#   · 到期当天发一次；
+#   · 逾期后发一次（不重复）；
+#   · 收件人 = 站点负责人 + 学员本人（有邮箱才发）。
+#
+# 手动触发可勾 dry_run：只打印计划，不发消息、不写发送记录。
+# 准点靠 GitHub Actions schedule；GitHub 的定时可能晚几分钟到几小时，
+# 纳期提醒对时间不敏感，晚一点仍会发。要严格准点再加 Cloudflare 闹钟。
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: '只读演练（不发消息、不写记录）'
+        default: 'false'
+  # 每天 09:30 北京时间 = UTC 1:30（GitHub Actions cron 用 UTC）
+  schedule:
+    - cron: "30 1 * * *"
+
+jobs:
+  remind:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    concurrency:
+      group: newhire-deadline-reminder
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: 检查纳期并发送提醒
+        run: node newhire-deadline-reminder.js
+        env:
+          DRY_RUN: ${{ github.event.inputs.dry_run || 'false' }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          FEISHU_APP_SECRET: ${{ secrets.FEISHU_APP_SECRET }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
