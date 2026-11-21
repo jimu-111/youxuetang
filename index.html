@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <!-- 版本行：每次部署新代码必须 bump 此 content（YYYYMMDD.N），旧设备靠它自检静默升级 -->
-    <meta name="yxt-ver" content="20261118.2">
+    <meta name="yxt-ver" content="20261121.1">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
     <title>优学堂</title>
     <script src="https://cdn.sheetjs.com/xlsx-0.20.2/package/dist/xlsx.full.min.js" defer></script>
@@ -44,6 +44,9 @@
         .student-name { font-weight: 600; font-size: 0.95rem; }
         .metrics { font-size: 0.7rem; color: #4b556b; margin-top: 4px; display: flex; flex-wrap: wrap; gap: 6px; }
         .smart-summary { font-size: 0.65rem; color: #2a5298; background: #eef2ff; padding: 4px 8px; border-radius: 16px; margin-top: 6px; display: inline-block; }
+        .deadline-line { font-size: 0.68rem; color: #0369a1; margin-top: 4px; line-height: 1.4; }
+        .deadline-line.overdue { color: #dc2626; font-weight: 600; }
+        .deadline-line.due-today { color: #d97706; font-weight: 600; }
         .empty-placeholder { text-align: center; padding: 40px; color: #94a3b8; }
         .panorama-card { background: white; border-radius: 32px; padding: 20px 24px; margin-top: 20px; box-shadow: 0 8px 20px rgba(0,0,0,0.05); border: 1px solid #eef2f6; }
         .panorama-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; flex-wrap: wrap; gap: 12px; }
@@ -310,6 +313,7 @@
         .error-dashboard .site-tag.sz { background:#e3f2fd; color:#1565c0; }
         .error-dashboard .site-tag.qd { background:#fff3e0; color:#e67e22; }
         .error-dashboard .site-tag.cd { background:#e8f5e9; color:#2e7d32; }
+        .error-dashboard .site-tag.other { background:#f1f5f9; color:#5e6f8d; }
         .error-dashboard .product-tag { display:inline-block; padding:2px 8px; border-radius:10px; font-size:0.7rem; font-weight:500; }
         .error-dashboard tr.row-low { background:#fff0f0; }
         .error-dashboard tr.row-low td { color:#2d3748; }
@@ -1263,8 +1267,225 @@
     let currentFilterResult = null; // 当前时间范围筛选结果
     let currentDateRange = null; // 当前分析的时间范围
     const WEEK_TARGETS = [{week:1,minEff:40,maxError:10},{week:2,minEff:70,maxError:7},{week:3,minEff:90,maxError:6},{week:4,minEff:110,maxError:5},{week:5,minEff:130,maxError:5},{week:6,minEff:150,maxError:5}];
-    const STAGES_LIMIT_DAYS = [5,5,2,2,42];
-    
+    // 阶段时限已移到 DEFAULT_DEADLINE_CONFIG（管理后台可改，见下方纳期配置）
+
+    // ==================== 站点配置（2026-11-21）====================
+    // 站点不再写死：管理后台「站点配置」维护，所有模块读这一份。
+    var SITE_CONFIG_KEY = 'siteConfigData';
+    var DEFAULT_SITE_CONFIG = {
+        version: 1,
+        sites: [
+            { name: '成都', icon: '🐼', color: '#f0fdf4', supervisor: '徐行', supervisorEmail: '', enabled: true },
+            { name: '青岛', icon: '🌊', color: '#eff6ff', supervisor: '孙伟', supervisorEmail: '', enabled: true },
+            { name: '深圳', icon: '📱', color: '#fefce8', supervisor: '孙俊', supervisorEmail: '', enabled: true }
+        ]
+    };
+    function getSiteConfig() {
+        try {
+            var raw = localStorage.getItem(SITE_CONFIG_KEY);
+            if (raw) {
+                var c = JSON.parse(raw);
+                if (c && Array.isArray(c.sites) && c.sites.length) {
+                    var seen = {};
+                    var sites = [];
+                    c.sites.forEach(function(s) {
+                        if (!s || typeof s !== 'object') return;
+                        var name = String(s.name || '').trim();
+                        if (!name || seen[name]) return;
+                        seen[name] = 1;
+                        sites.push({
+                            name: name,
+                            icon: String(s.icon || '📍').trim() || '📍',
+                            color: String(s.color || '#f8fafc').trim() || '#f8fafc',
+                            supervisor: String(s.supervisor || '').trim(),
+                            supervisorEmail: String(s.supervisorEmail || '').trim(),
+                            enabled: s.enabled !== false
+                        });
+                    });
+                    if (sites.length) return { version: 1, sites: sites };
+                }
+            }
+        } catch (e) {}
+        return JSON.parse(JSON.stringify(DEFAULT_SITE_CONFIG));
+    }
+    function saveSiteConfig(cfg) {
+        var c = cfg && Array.isArray(cfg.sites) ? cfg : DEFAULT_SITE_CONFIG;
+        localStorage.setItem(SITE_CONFIG_KEY, JSON.stringify({ version: 1, sites: c.sites }));
+    }
+    function getEnabledSites() {
+        var all = getSiteConfig().sites;
+        var enabled = all.filter(function(s) { return s.enabled !== false; });
+        return enabled.length ? enabled : all;   // 防御：云端配置万一全禁用，退回全部站点，避免页面无站点可用
+    }
+    function getEnabledSiteNames() {
+        return getEnabledSites().map(function(s) { return s.name; });
+    }
+    function getSiteByName(name) {
+        var list = getSiteConfig().sites;
+        for (var i = 0; i < list.length; i++) if (list[i].name === name) return list[i];
+        return null;
+    }
+    function getSiteIcon(name) { var s = getSiteByName(name); return s && s.icon ? s.icon : '📍'; }
+    function getSiteColor(name) { var s = getSiteByName(name); return s && s.color ? s.color : '#f8fafc'; }
+    function getSiteSupervisor(name) { var s = getSiteByName(name); return s ? s.supervisor : ''; }
+    function renderCityTabsHtml() {
+        var html = '<div class="city-tabs" id="cityTabsRender"><button class="city-btn ' + (currentCity === 'all' ? 'active' : '') + '" data-city="all">🌍 全站点</button>';
+        getEnabledSites().forEach(function(s) {
+            html += '<button class="city-btn ' + (currentCity === s.name ? 'active' : '') + '" data-city="' + escapeHtml(s.name) + '">' + escapeHtml(s.icon || '📍') + ' ' + escapeHtml(s.name) + '</button>';
+        });
+        return html + '</div>';
+    }
+    function renderSiteOptionsHtml(selected) {
+        return getEnabledSites().map(function(s) {
+            return '<option value="' + escapeHtml(s.name) + '"' + (selected === s.name ? ' selected' : '') + '>' + escapeHtml(s.icon || '📍') + ' ' + escapeHtml(s.name) + '</option>';
+        }).join('');
+    }
+
+    // ==================== 纳期配置（2026-11-21）====================
+    // 统一规则：纳期 = 阶段开始日 + 第几天；管理后台可改天数，不用改代码。
+    var DEADLINE_CONFIG_KEY = 'newhireDeadlineConfig';
+    var DEFAULT_DEADLINE_CONFIG = {
+        version: 1,
+        stages: {
+            '0': { limitDays: 5, items: [
+                { key: 'theory', label: '理论学习', offsetDays: 2 },
+                { key: 'online', label: '线上考试', offsetDays: 4 },
+                { key: 'practical', label: '实操考试', offsetDays: 5 }
+            ]},
+            '1': { limitDays: 5, items: [
+                { key: 'manhattan', label: '曼哈顿系统', offsetDays: 2 },
+                { key: 'athena', label: '雅典娜系统', offsetDays: 3 },
+                { key: 'responsibility', label: '责任方详解', offsetDays: 4 },
+                { key: 'judgment', label: '判责详解', offsetDays: 5 }
+            ]},
+            '2': { limitDays: 2, items: [
+                { key: 'fullCheck', label: '实操全检考试', offsetDays: 2 }
+            ]},
+            '3': { limitDays: 2, items: [
+                { key: 'mock', label: '模拟判责', offsetDays: 2 }
+            ]},
+            '4': { limitDays: 42, items: [
+                { key: 'formal', label: '正式判责', offsetDays: 42 }
+            ]}
+        }
+    };
+    function getDeadlineConfig() {
+        try {
+            var raw = localStorage.getItem(DEADLINE_CONFIG_KEY);
+            if (raw) {
+                var c = JSON.parse(raw);
+                if (c && c.stages && typeof c.stages === 'object') {
+                    var out = { version: 1, stages: {} };
+                    Object.keys(DEFAULT_DEADLINE_CONFIG.stages).forEach(function(sid) {
+                        var def = DEFAULT_DEADLINE_CONFIG.stages[sid];
+                        var cur = c.stages[sid] || {};
+                        var items = Array.isArray(cur.items) && cur.items.length ? cur.items : def.items;
+                        out.stages[sid] = {
+                            limitDays: Math.max(1, parseInt(cur.limitDays, 10) || def.limitDays),
+                            items: items.map(function(it, idx) {
+                                var di = def.items[idx] || def.items[0] || {};
+                                return {
+                                    key: String(it.key || di.key || ('item' + idx)),
+                                    label: String(it.label || di.label || ('项目' + (idx + 1))),
+                                    offsetDays: Math.max(0, parseInt(it.offsetDays, 10) || 0)
+                                };
+                            })
+                        };
+                    });
+                    return out;
+                }
+            }
+        } catch (e) {}
+        return JSON.parse(JSON.stringify(DEFAULT_DEADLINE_CONFIG));
+    }
+    function saveDeadlineConfig(cfg) {
+        var c = cfg && cfg.stages ? cfg : DEFAULT_DEADLINE_CONFIG;
+        localStorage.setItem(DEADLINE_CONFIG_KEY, JSON.stringify({ version: 1, stages: c.stages }));
+    }
+    function getStageDeadlineConfig(stageId) {
+        var cfg = getDeadlineConfig();
+        return cfg.stages[String(stageId)] || DEFAULT_DEADLINE_CONFIG.stages[String(stageId)] || { limitDays: 1, items: [] };
+    }
+    function getStageDeadlineItems(stageId) {
+        return getStageDeadlineConfig(stageId).items || [];
+    }
+    function getStageLimitDays(stageId) {
+        return getStageDeadlineConfig(stageId).limitDays;
+    }
+    function _yxtDateOnly(s) {
+        if (!s) return null;
+        var m = String(s).match(/^(\d{4})-(\d{2})-(\d{2})/);
+        if (!m) return null;
+        var d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+        return isNaN(d.getTime()) ? null : d;
+    }
+    function _yxtTodayDate() {
+        var d = new Date();
+        d.setHours(0, 0, 0, 0);
+        return d;
+    }
+    function fmtShortDate(d) {
+        if (!d) return '';
+        var m = d.getMonth() + 1, day = d.getDate();
+        return (m < 10 ? '0' : '') + m + '-' + (day < 10 ? '0' : '') + day;
+    }
+    function isDeadlineItemPassed(student, stageId, itemKey) {
+        var sp = (student && student.stageProgress) || {};
+        if (stageId === 0) return !!sp[itemKey + 'Passed'];
+        if (stageId === 1) return !!sp.mentorComplete || !!sp[itemKey];
+        if (stageId === 2) return !!sp.fullCheckPassed;
+        if (stageId === 3) return !!sp.mockPassed;
+        if (stageId === 4) return !!sp.graduatedFormal;
+        return false;
+    }
+    function getDeadlineDate(student, stageId, itemKey) {
+        var item = null;
+        getStageDeadlineItems(stageId).forEach(function(it) { if (it.key === itemKey) item = it; });
+        var start = _yxtDateOnly(student && student.stageStartDate) || _yxtDateOnly(student && student.joinDate);
+        if (!item || !start) return null;
+        var d = new Date(start.getTime());
+        d.setDate(d.getDate() + (parseInt(item.offsetDays, 10) || 0));
+        return d;
+    }
+    function getDeadlineStatus(student, stageId, itemKey) {
+        var due = getDeadlineDate(student, stageId, itemKey);
+        if (!due) return null;
+        var today = _yxtTodayDate();
+        var diff = Math.round((due - today) / 86400000);
+        var passed = isDeadlineItemPassed(student, stageId, itemKey);
+        return { due: due, diff: diff, passed: passed, overdue: !passed && diff < 0, dueToday: !passed && diff === 0 };
+    }
+    function deadlineStatusText(st) {
+        if (!st) return '';
+        if (st.passed) return '已完成';
+        if (st.overdue) return '已逾期 ' + Math.abs(st.diff) + ' 天';
+        if (st.dueToday) return '今天到期';
+        return '剩 ' + st.diff + ' 天';
+    }
+    function buildDeadlineHint(student, stageId) {
+        var parts = [];
+        getStageDeadlineItems(stageId).forEach(function(it) {
+            var st = getDeadlineStatus(student, stageId, it.key);
+            if (!st) return;
+            var color = st.passed ? '#16a34a' : (st.overdue ? '#dc2626' : (st.dueToday ? '#d97706' : '#0369a1'));
+            parts.push('<span style="color:' + color + ';font-weight:600;">' + escapeHtml(it.label) + ' ' + fmtShortDate(st.due) + '（' + deadlineStatusText(st) + '）</span>');
+        });
+        if (!parts.length) return '';
+        return '<div class="rule-hint" style="background:#f0f9ff;border-color:#bae6fd;"><span>📅 纳期：' + parts.join('　｜　') + '</span></div>';
+    }
+    function renderStudentDeadlineLine(student, stageId) {
+        var pending = [];
+        getStageDeadlineItems(stageId).forEach(function(it) {
+            var st = getDeadlineStatus(student, stageId, it.key);
+            if (st && !st.passed) pending.push({ item: it, st: st });
+        });
+        if (!pending.length) return '';
+        pending.sort(function(a, b) { return a.st.due - b.st.due; });
+        var x = pending[0];
+        var cls = x.st.overdue ? ' overdue' : (x.st.dueToday ? ' due-today' : '');
+        return '<div class="deadline-line' + cls + '">📅 最近纳期：' + escapeHtml(x.item.label) + ' ' + fmtShortDate(x.st.due) + '（' + deadlineStatusText(x.st) + '）</div>';
+    }
+
     const STAGES_DETAIL = [
         { id:0, name:"一、学习地图SOP", sub:"理论/线上/实操考试", weight:0.2, standards:"理论100% + 线上≥90 + 实操≥90", returnRule:"无退回机制", tableHeaders:["考核项目","标准要求","成绩","是否通过"], getRows:s=>[
             {key:"theory",item:"理论学习",standard:"完成率100%",value:s.stageProgress.theoryPercent??(s.stageProgress.theoryPassed?100:0),unit:"%",passed:s.stageProgress.theoryPassed},
@@ -1315,7 +1536,7 @@
             this.graduatedToArchive=false;
         }
         getUsedDays(){return Math.max(1,Math.floor((new Date()-new Date(this.joinDate))/86400000));}
-        getStageRemainingDays(){ return Math.max(0, STAGES_LIMIT_DAYS[this.stage] - Math.max(0, Math.floor((new Date()-new Date(this.stageStartDate))/86400000))); }
+        getStageRemainingDays(){ return Math.max(0, getStageLimitDays(this.stage) - Math.max(0, Math.floor((new Date()-new Date(this.stageStartDate))/86400000))); }
         getOverallProgress(){let c=0; if(STAGES_DETAIL[0].checkCompletion(this))c++; if(STAGES_DETAIL[1].checkCompletion(this))c++; if(STAGES_DETAIL[2].checkCompletion(this))c++; if(STAGES_DETAIL[3].checkCompletion(this))c++; if(this.stageProgress.graduatedFormal)c++; return (c/5)*100;}
         getTotalScore(){ let total=0; for(let i=0;i<5;i++) total+=STAGES_DETAIL[i].getScore(this)*STAGES_DETAIL[i].weight; return Math.round(total); }
         getStageResults(){ return STAGES_DETAIL.map(s=>({name:s.name, score:s.getScore(this), passed:s.checkCompletion?.(this)??false })); }
@@ -1347,6 +1568,7 @@
 
     function tryAdvanceStudent(s){
         let cur=s.stage;
+        const _oldStage = s.stage;
         if(cur===0 && STAGES_DETAIL[0].checkCompletion(s)) s.stage=1;
         else if(cur===1 && STAGES_DETAIL[1].checkCompletion(s)){ s.stage=2; s.stageProgress.fullCheckAttempts=0; s.stageProgress.fullCheckPassed=false; s.stageProgress.fullCheckScores=[]; s.returnReason=null; }
         else if(cur===2 && STAGES_DETAIL[2].checkCompletion(s)){ s.stage=3; s.stageProgress.mockAttempts=0; s.stageProgress.mockPassed=false; s.stageProgress.mockScores=[]; }
@@ -1354,10 +1576,11 @@
         if(s.stage===4 && !s.stageProgress.graduatedFormal){
             const wk=s.stageProgress.formalWeek;
             const maxWeek = s.stageProgress.maxWeek || 6;
-            if(wk<=3 && s.stageProgress.consecutiveFailWeeks>=2 && s.stageProgress.returnFlag){ s.stage=3; s.stageProgress.mockPassed=false; s.stageProgress.fullCheckPassed=true; s.stageProgress.consecutiveFailWeeks=0; s.stageProgress.formalWeek=1; s.stageProgress.currentEfficiency=0; s.stageProgress.currentMistakes=0; return; }
+            if(wk<=3 && s.stageProgress.consecutiveFailWeeks>=2 && s.stageProgress.returnFlag){ s.stage=3; s.stageStartDate=new Date().toISOString().slice(0,10); s.stageProgress.mockPassed=false; s.stageProgress.fullCheckPassed=true; s.stageProgress.consecutiveFailWeeks=0; s.stageProgress.formalWeek=1; s.stageProgress.currentEfficiency=0; s.stageProgress.currentMistakes=0; return; }
             if(wk >= maxWeek && s.stageProgress.currentEfficiency>=WEEK_TARGETS[maxWeek-1]?.minEff && s.stageProgress.currentMistakes<=WEEK_TARGETS[maxWeek-1]?.maxError) s.stageProgress.graduatedFormal=true;
             else if(wk < maxWeek && s.stageProgress.currentEfficiency>=WEEK_TARGETS[wk-1]?.minEff && s.stageProgress.currentMistakes<=WEEK_TARGETS[wk-1]?.maxError && wk < maxWeek) { s.stageProgress.formalWeek++; s.stageProgress.currentEfficiency=null; s.stageProgress.currentMistakes=null; }
         }
+        if (s.stage !== _oldStage) s.stageStartDate = new Date().toISOString().slice(0,10);
         if(s.checkAllStagesComplete() && !s.graduatedToArchive){ s.graduatedToArchive=true; s.graduatedDate=new Date().toISOString().slice(0,10); }
     }
 
@@ -1516,7 +1739,7 @@
         const suggestions = generateStageSuggestions(student, stageId);
         
         const modalId = 'stageModal_' + Date.now() + '_' + Math.random().toString(36).substr(2, 6);
-        const modalHtml=`<div class="modal-overlay" id="${modalId}"><div class="modal-container"><div class="modal-header"><span>📋 ${stage.name} · ${student.name} (${student.site})${isReadOnly?' · 档案查看':''}</span><div style="display:flex;gap:8px;"><button class="modal-close-btn">✕</button></div></div><div class="modal-body"><div class="rule-hint"><span>📌 考评标准：${stage.standards}</span></div><div class="rule-hint"><span>🔄 退回机制：${stage.returnRule}</span></div>${tableHtml}<div class="advice-split"><div class="advice-box"><label>⚠️ 问题点${isReadOnly?'':'（可编辑）'}</label><textarea id="issuesTextarea" rows="2"${isReadOnly?' readonly':''}>${issues}</textarea></div><div class="advice-box"><label>💡 改善建议${isReadOnly?'':'（可编辑）'}</label><textarea id="suggestionsTextarea" rows="2"${isReadOnly?' readonly':''}>${suggestions}</textarea></div></div>${!isReadOnly?`<div style="margin-top:12px; text-align:right;"><button id="saveModalBtn" class="primary">💾 保存修改</button></div>`:''}</div></div></div>`;
+        const modalHtml=`<div class="modal-overlay" id="${modalId}"><div class="modal-container"><div class="modal-header"><span>📋 ${stage.name} · ${student.name} (${student.site})${isReadOnly?' · 档案查看':''}</span><div style="display:flex;gap:8px;"><button class="modal-close-btn">✕</button></div></div><div class="modal-body"><div class="rule-hint"><span>📌 考评标准：${stage.standards}</span></div><div class="rule-hint"><span>🔄 退回机制：${stage.returnRule}</span></div>${buildDeadlineHint(student, stageId)}${tableHtml}<div class="advice-split"><div class="advice-box"><label>⚠️ 问题点${isReadOnly?'':'（可编辑）'}</label><textarea id="issuesTextarea" rows="2"${isReadOnly?' readonly':''}>${issues}</textarea></div><div class="advice-box"><label>💡 改善建议${isReadOnly?'':'（可编辑）'}</label><textarea id="suggestionsTextarea" rows="2"${isReadOnly?' readonly':''}>${suggestions}</textarea></div></div>${!isReadOnly?`<div style="margin-top:12px; text-align:right;"><button id="saveModalBtn" class="primary">💾 保存修改</button></div>`:''}</div></div></div>`;
         document.body.insertAdjacentHTML('beforeend',modalHtml);
         const modalElement = document.getElementById(modalId);
         modalElement.querySelector('.modal-close-btn').onclick = () => modalElement.remove();
@@ -1736,7 +1959,7 @@
     function renderFrontend(){
         const container = document.getElementById('mainContent');
         const filtered = getFilteredStudents();
-        const cityHtml = `<div class="city-tabs" id="cityTabsRender"><button class="city-btn ${currentCity==='all'?'active':''}" data-city="all">🌍 全站点</button><button class="city-btn ${currentCity==='成都'?'active':''}" data-city="成都">🐼 成都</button><button class="city-btn ${currentCity==='青岛'?'active':''}" data-city="青岛">🌊 青岛</button><button class="city-btn ${currentCity==='深圳'?'active':''}" data-city="深圳">📱 深圳</button></div>`;
+        const cityHtml = renderCityTabsHtml();
         let stagesHtml = `<div class="stages-grid">`;
         for(let idx=0;idx<5;idx++){
             const stageStudents = filtered.filter(s=>s.stage===idx && !s.graduatedToArchive);
@@ -1757,6 +1980,7 @@
                         <div class="student-info">
                             <div class="student-name">${s.name} (${s.site})</div>
                             <div class="metrics">${metricsText}</div>
+                            ${renderStudentDeadlineLine(s, idx)}
                             <div class="smart-summary">${s.getStageStatusText(idx)}</div>
                         </div>
                     </div>`;
@@ -1870,9 +2094,10 @@
     function showFrontendAdminModal(){
         if(!isAdminMode()){showToast('❌ 请先登录管理员','warning');return;}
         const filtered = getFilteredStudents();
-        const cityOpts = ['all','成都','青岛','深圳'];
-        const cityLabels = ['🌍 全站点','🐼 成都','🌊 青岛','📱 深圳'];
-        let cityBtns = cityOpts.map((c,i)=>`<button class="city-btn ${currentCity===c?'active':''}" data-city="${c}">${cityLabels[i]}</button>`).join('');
+        const _siteList = getEnabledSites();
+        const cityOpts = ['all'].concat(_siteList.map(s=>s.name));
+        const cityLabels = ['🌍 全站点'].concat(_siteList.map(s=>(s.icon||'📍')+' '+s.name));
+        let cityBtns = cityOpts.map((c,i)=>`<button class="city-btn ${currentCity===c?'active':''}" data-city="${escapeHtml(c)}">${escapeHtml(cityLabels[i])}</button>`).join('');
         let tableRows = filtered.map(s=>`<tr><td><img class="fe-admin-avatar" data-id="${s.id}" src="${s.avatar}" style="width:36px;height:36px;border-radius:50%;cursor:pointer;border:2px solid #e2e8f0;" title="点击管理头像"></td><td>${s.name}</td><td>${s.site}</td><td>${s.joinDate}</td><td>阶段${s.stage+1}${s.graduatedToArchive?'🎓已毕业':''}</td><td><button class="action-btn edit-student" data-id="${s.id}">✏️ 编辑</button><button class="action-btn danger delete-student" data-id="${s.id}">🗑️ 删除</button></td></tr>`).join('');
         const overlay = document.createElement('div');
         overlay.className = 'modal-overlay';
@@ -2057,9 +2282,7 @@
                 <div style="margin-bottom:14px;"><label style="font-weight:600;color:#1f3a6b;display:block;margin-bottom:4px;">姓名 *</label><input id="addStuName" type="text" placeholder="输入学员姓名" style="width:100%;padding:10px 14px;border:2px solid #e2e8f0;border-radius:10px;font-size:0.95rem;"></div>
                 <div style="margin-bottom:14px;"><label style="font-weight:600;color:#1f3a6b;display:block;margin-bottom:4px;">站点 *</label>
                     <select id="addStuSite" style="width:100%;padding:10px 14px;border:2px solid #e2e8f0;border-radius:10px;font-size:0.95rem;">
-                        <option value="成都">🐼 成都</option>
-                        <option value="青岛">🌊 青岛</option>
-                        <option value="深圳">📱 深圳</option>
+                        ${renderSiteOptionsHtml('')}
                     </select>
                 </div>
                 <div style="margin-bottom:14px;"><label style="font-weight:600;color:#1f3a6b;display:block;margin-bottom:4px;">入职日期 *</label><input id="addStuJoinDate" type="date" value="${new Date().toISOString().slice(0,10)}" style="width:100%;padding:10px 14px;border:2px solid #e2e8f0;border-radius:10px;font-size:0.95rem;"></div>
@@ -2176,7 +2399,7 @@
         <div style="max-width:500px;margin:80px auto;text-align:center;">
             <div style="background:white;border-radius:24px;padding:40px;box-shadow:0 4px 20px rgba(0,0,0,0.08);">
                 <div style="font-size:3rem;margin-bottom:16px;">🔒</div>
-                <h2 style="color:#1f3a6b;margin-bottom:8px;">数据备份管理</h2>
+                <h2 style="color:#1f3a6b;margin-bottom:8px;">管理后台</h2>
                 <p style="color:#94a3b8;margin-bottom:24px;font-size:0.9rem;">请输入管理密码以进入</p>
                 <input id="adminPwdInput" type="password" placeholder="输入密码" style="width:100%;padding:12px 16px;border:2px solid #e2e8f0;border-radius:12px;font-size:1rem;text-align:center;letter-spacing:4px;margin-bottom:16px;" maxlength="8">
                 <button id="adminPwdConfirmBtn" class="primary" style="width:100%;padding:12px;border-radius:12px;font-size:1rem;">确 认</button>
@@ -2203,11 +2426,15 @@
     }
 
     function renderAdminPanel(container) {
+        var siteFilterBtns = '<button class="site-filter-btn" data-site="" style="background:#1f3a6b;color:white;border:1px solid #1f3a6b;padding:4px 14px;border-radius:16px;cursor:pointer;font-size:0.78rem;font-weight:600;">全部 <span class="site-filter-count" style="opacity:0.85;">0</span></button>'
+            + getEnabledSites().map(function(s) {
+                return '<button class="site-filter-btn" data-site="' + escapeHtml(s.name) + '" style="background:#f1f5f9;color:#5e6f8d;border:1px solid #cbd5e1;padding:4px 14px;border-radius:16px;cursor:pointer;font-size:0.78rem;font-weight:600;">' + escapeHtml(s.icon || '📍') + ' ' + escapeHtml(s.name) + ' <span class="site-filter-count" style="opacity:0.85;">0</span></button>';
+            }).join('');
         container.innerHTML = `
-        <div style="max-width:700px;margin:0 auto;">
+        <div style="max-width:980px;margin:0 auto;">
             <div class="report-box" style="margin-bottom:20px;">
-                <div class="report-title">🔒 数据备份管理</div>
-                <p style="color:#64748b;font-size:0.9rem;margin:8px 0 20px;">导出当前所有数据为备份文件，或导入备份文件恢复数据</p>
+                <div class="report-title">⚙️ 管理后台</div>
+                <p style="color:#64748b;font-size:0.9rem;margin:8px 0 20px;">数据备份、人员、邮箱、站点和纳期配置</p>
                 <div style="display:flex;gap:20px;flex-wrap:wrap;justify-content:center;">
                     <div style="flex:1;min-width:250px;background:#f0fdf4;border:2px solid #bbf7d0;border-radius:16px;padding:24px;text-align:center;">
                         <div style="font-size:2.5rem;margin-bottom:8px;">📤</div>
@@ -2270,6 +2497,24 @@
                     <div class="stat-card-value" id="siteCount">--</div>
                     <div class="stat-card-label">人员管理</div>
                 </div>
+                <!-- 站点配置卡片 -->
+                <div class="stat-card" id="siteConfigCard" style="cursor:pointer;" onclick="toggleAdminDetail('siteConfigDetail')">
+                    <div class="stat-card-header">
+                        <div class="stat-card-icon" style="background:#ecfeff;">🌐</div>
+                        <span class="stat-card-trend up" id="siteConfigBadge">--</span>
+                    </div>
+                    <div class="stat-card-value" id="siteConfigCount">--</div>
+                    <div class="stat-card-label">站点配置</div>
+                </div>
+                <!-- 纳期配置卡片 -->
+                <div class="stat-card" id="deadlineConfigCard" style="cursor:pointer;" onclick="toggleAdminDetail('deadlineConfigDetail')">
+                    <div class="stat-card-header">
+                        <div class="stat-card-icon" style="background:#f0f9ff;">📅</div>
+                        <span class="stat-card-trend up" id="deadlineConfigBadge">--</span>
+                    </div>
+                    <div class="stat-card-value" id="deadlineConfigCount">--</div>
+                    <div class="stat-card-label">纳期配置</div>
+                </div>
             </div>
             <!-- 判责量详情 -->
             <div id="panzeDetail" class="report-box" style="display:none;margin-top:16px;">
@@ -2314,10 +2559,7 @@
                 <div class="report-title" style="display:flex;justify-content:space-between;align-items:center;">👤 人员管理 <span style="font-size:0.7rem;color:#94a3b8;cursor:pointer;" onclick="toggleAdminDetail('siteDetail')">收起 ▲</span></div>
                 <p style="color:#64748b;font-size:0.85rem;margin:8px 0 12px;">维护人员姓名与所属站点，<b>所有模块的站点归属以这里为准</b>。站点下拉直接修改即时保存。</p>
                 <div style="margin-bottom:8px;display:flex;gap:6px;flex-wrap:wrap;align-items:center;">
-                    <button class="site-filter-btn" data-site="" style="background:#1f3a6b;color:white;border:1px solid #1f3a6b;padding:4px 14px;border-radius:16px;cursor:pointer;font-size:0.78rem;font-weight:600;">全部 <span class="site-filter-count" style="opacity:0.85;">0</span></button>
-                    <button class="site-filter-btn" data-site="深圳" style="background:#f1f5f9;color:#5e6f8d;border:1px solid #cbd5e1;padding:4px 14px;border-radius:16px;cursor:pointer;font-size:0.78rem;font-weight:600;">深圳 <span class="site-filter-count" style="opacity:0.85;">0</span></button>
-                    <button class="site-filter-btn" data-site="青岛" style="background:#f1f5f9;color:#5e6f8d;border:1px solid #cbd5e1;padding:4px 14px;border-radius:16px;cursor:pointer;font-size:0.78rem;font-weight:600;">青岛 <span class="site-filter-count" style="opacity:0.85;">0</span></button>
-                    <button class="site-filter-btn" data-site="成都" style="background:#f1f5f9;color:#5e6f8d;border:1px solid #cbd5e1;padding:4px 14px;border-radius:16px;cursor:pointer;font-size:0.78rem;font-weight:600;">成都 <span class="site-filter-count" style="opacity:0.85;">0</span></button>
+                    ${siteFilterBtns}
                 </div>
                 <div style="margin-bottom:8px;display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
                     <input id="siteSearchInput" type="text" placeholder="🔍 搜索姓名或站点..." oninput="window.refreshAdminSiteTable&&window.refreshAdminSiteTable(this.value)" style="flex:1;min-width:160px;padding:6px 12px;border:1px solid #cbd5e1;border-radius:8px;font-size:0.8rem;">
@@ -2328,10 +2570,57 @@
                 <table id="adminSiteTable" style="width:100%;border-collapse:collapse;border:1px solid #e2e8f0;"><thead><tr style="background:#f8fafc;"><th style="text-align:center;padding:8px;font-size:0.8rem;color:#5e6f8d;width:40%;border:1px solid #e2e8f0;">姓名</th><th style="text-align:center;padding:8px;font-size:0.8rem;color:#5e6f8d;border:1px solid #e2e8f0;">站点</th><th style="text-align:center;width:60px;border:1px solid #e2e8f0;">删除</th></tr></thead><tbody id="adminSiteBody"><tr><td colspan="3" style="text-align:center;color:#94a3b8;padding:20px;">加载中...</td></tr></tbody></table>
                 </div>
             </div>
+            <!-- 站点配置详情 -->
+            <div id="siteConfigDetail" class="report-box" style="display:none;margin-top:16px;">
+                <div class="report-title" style="display:flex;justify-content:space-between;align-items:center;">🌐 站点配置 <span style="font-size:0.7rem;color:#94a3b8;cursor:pointer;" onclick="toggleAdminDetail('siteConfigDetail')">收起 ▲</span></div>
+                <p style="color:#64748b;font-size:0.85rem;margin:8px 0 12px;">维护站点名称、图标、颜色和负责人；保存后所有模块自动使用这份配置，<b>新增站点不用改代码</b>。</p>
+                <div style="margin-bottom:8px;display:flex;gap:8px;flex-wrap:wrap;">
+                    <button id="addSiteConfigBtn" style="background:#f1f5f9;border:1px solid #cbd5e1;padding:6px 16px;border-radius:8px;cursor:pointer;font-size:0.8rem;">➕ 添加站点</button>
+                    <button id="saveSiteConfigBtn" class="primary" style="background:#27ae60;border-radius:20px;padding:6px 20px;">💾 保存站点配置</button>
+                    <button id="resetSiteConfigBtn" style="background:#fef3c7;border:1px solid #f59e0b;color:#b45309;padding:6px 16px;border-radius:8px;cursor:pointer;font-size:0.8rem;">↩ 恢复默认</button>
+                </div>
+                <div style="max-height:360px;overflow:auto;">
+                    <table style="width:100%;border-collapse:collapse;border:1px solid #e2e8f0;font-size:0.78rem;">
+                        <thead><tr style="background:#f8fafc;">
+                            <th style="padding:6px;border:1px solid #e2e8f0;width:44px;">启用</th>
+                            <th style="padding:6px;border:1px solid #e2e8f0;">站点名称</th>
+                            <th style="padding:6px;border:1px solid #e2e8f0;width:60px;">图标</th>
+                            <th style="padding:6px;border:1px solid #e2e8f0;width:56px;">颜色</th>
+                            <th style="padding:6px;border:1px solid #e2e8f0;">负责人</th>
+                            <th style="padding:6px;border:1px solid #e2e8f0;">负责人邮箱</th>
+                            <th style="padding:6px;border:1px solid #e2e8f0;width:50px;">删除</th>
+                        </tr></thead>
+                        <tbody id="siteConfigBody"></tbody>
+                    </table>
+                </div>
+                <p style="color:#94a3b8;font-size:0.72rem;margin:8px 0 0;">删除站点不会改学员数据；如果该站点还有学员，建议先把人员转到其他站点。改站点名称也不会自动改已有学员的站点，改名后请在「人员管理」里把人转到新名称。负责人邮箱不填，就用「邮箱地址管理」里的邮箱。</p>
+            </div>
+            <!-- 纳期配置详情 -->
+            <div id="deadlineConfigDetail" class="report-box" style="display:none;margin-top:16px;">
+                <div class="report-title" style="display:flex;justify-content:space-between;align-items:center;">📅 纳期配置 <span style="font-size:0.7rem;color:#94a3b8;cursor:pointer;" onclick="toggleAdminDetail('deadlineConfigDetail')">收起 ▲</span></div>
+                <p style="color:#64748b;font-size:0.85rem;margin:8px 0 12px;">按「阶段开始日 + 第几天」自动算纳期；阶段时限也在这里改。保存后新人进度、阶段弹窗和飞书提醒都按这份配置走。</p>
+                <div style="margin-bottom:8px;display:flex;gap:8px;flex-wrap:wrap;">
+                    <button id="saveDeadlineConfigBtn" class="primary" style="background:#27ae60;border-radius:20px;padding:6px 20px;">💾 保存纳期配置</button>
+                    <button id="resetDeadlineConfigBtn" style="background:#fef3c7;border:1px solid #f59e0b;color:#b45309;padding:6px 16px;border-radius:8px;cursor:pointer;font-size:0.8rem;">↩ 恢复默认</button>
+                </div>
+                <div style="max-height:420px;overflow:auto;">
+                    <table style="width:100%;border-collapse:collapse;border:1px solid #e2e8f0;font-size:0.78rem;table-layout:fixed;">
+                        <colgroup><col style="width:170px;"><col><col style="width:92px;"><col style="width:92px;"></colgroup>
+                        <thead><tr style="background:#f8fafc;">
+                            <th style="padding:6px;border:1px solid #e2e8f0;">阶段</th>
+                            <th style="padding:6px;border:1px solid #e2e8f0;">模块 / 项目</th>
+                            <th style="padding:6px;border:1px solid #e2e8f0;width:90px;">阶段时限（天）</th>
+                            <th style="padding:6px;border:1px solid #e2e8f0;width:90px;">纳期（第几天）</th>
+                        </tr></thead>
+                        <tbody id="deadlineConfigBody"></tbody>
+                    </table>
+                </div>
+                <p style="color:#94a3b8;font-size:0.72rem;margin:8px 0 0;">纳期必须小于等于阶段时限；到期当天和逾期后各提醒一次，发给站点负责人和学员本人。</p>
+            </div>
         </div>`;
 
         // 站点选项必须声明在任何调用之前（updateAdminCards→updateSiteCard 在函数体顶层立即执行）
-        const ADMIN_SITE_OPTIONS = ['深圳', '青岛', '成都'];
+        const ADMIN_SITE_OPTIONS = getEnabledSiteNames();
 
         function refreshHRCombinedList() {
             var list = document.getElementById('hrCombinedList'); if (!list) return;
@@ -2361,7 +2650,7 @@
             var el = document.getElementById(id);
             if (!el) return;
             // 先收起其他详情
-            ['hrDetail','emailDetail','auditDetail','panzeDetail','siteDetail'].forEach(function(d){
+            ['hrDetail','emailDetail','auditDetail','panzeDetail','siteDetail','siteConfigDetail','deadlineConfigDetail'].forEach(function(d){
                 if (d !== id) { var other = document.getElementById(d); if (other) other.style.display = 'none'; }
             });
             el.style.display = el.style.display === 'none' ? 'block' : 'none';
@@ -2370,6 +2659,8 @@
             if (id === 'auditDetail' && el.style.display === 'block') refreshAuditLog();
             if (id === 'panzeDetail' && el.style.display === 'block') refreshPanzeStatus();
             if (id === 'siteDetail' && el.style.display === 'block') refreshAdminSiteTable();
+            if (id === 'siteConfigDetail' && el.style.display === 'block') refreshSiteConfigTable();
+            if (id === 'deadlineConfigDetail' && el.style.display === 'block') refreshDeadlineConfigTable();
         };
         // 更新卡片数字
         window._panzeAllData = [];
@@ -2666,6 +2957,19 @@
                 if (ab) ab.textContent = n2 + '条';
             }
             updateSiteCard();
+            var scc = document.getElementById('siteConfigCount'), scb = document.getElementById('siteConfigBadge');
+            if (scc) {
+                var siteList = getEnabledSites();
+                scc.textContent = siteList.length || '0';
+                if (scb) scb.textContent = siteList.map(function(s) { return s.icon || '📍'; }).join(' ');
+            }
+            var dcc = document.getElementById('deadlineConfigCount'), dcb = document.getElementById('deadlineConfigBadge');
+            if (dcc) {
+                var dcfg = getDeadlineConfig(), dn = 0;
+                Object.keys(dcfg.stages).forEach(function(sid) { dn += (dcfg.stages[sid].items || []).length; });
+                dcc.textContent = dn || '0';
+                if (dcb) dcb.textContent = '项';
+            }
             refreshPanzeStatus();
         }
         var _auditPage = 0, _auditPageSize = 50;
@@ -2712,7 +3016,8 @@
             if (!tbody) return;
             var map = getAdminPersonSiteMap();
             // 筛选按钮：更新人数 + 高亮当前选中
-            var counts = { '': 0, '深圳': 0, '青岛': 0, '成都': 0 };
+            var counts = { '': 0 };
+            ADMIN_SITE_OPTIONS.forEach(function(s) { counts[s] = 0; });
             Object.keys(map).forEach(function(n) { counts[map[n]] = (counts[map[n]] || 0) + 1; counts['']++; });
             document.querySelectorAll('.site-filter-btn').forEach(function(b) {
                 var s = b.getAttribute('data-site') || '';
@@ -2772,6 +3077,146 @@
             });
         }
         window.refreshAdminSiteTable = refreshAdminSiteTable;
+
+        // ===== 站点配置（管理后台可改，不用改代码）=====
+        function refreshSiteConfigTable() {
+            var tbody = document.getElementById('siteConfigBody');
+            if (!tbody) return;
+            var cfg = getSiteConfig();
+            tbody.innerHTML = cfg.sites.map(function(s) {
+                return '<tr>' +
+                    '<td style="text-align:center;border:1px solid #eef2f6;"><input type="checkbox" class="sc-enabled" ' + (s.enabled !== false ? 'checked' : '') + '></td>' +
+                    '<td style="border:1px solid #eef2f6;"><input class="sc-name" value="' + escapeHtml(s.name) + '" style="width:100%;padding:4px 6px;border:1px solid #cbd5e1;border-radius:6px;font-size:0.78rem;"></td>' +
+                    '<td style="border:1px solid #eef2f6;"><input class="sc-icon" value="' + escapeHtml(s.icon || '📍') + '" maxlength="4" style="width:100%;padding:4px 2px;border:1px solid #cbd5e1;border-radius:6px;font-size:0.9rem;text-align:center;"></td>' +
+                    '<td style="border:1px solid #eef2f6;text-align:center;"><input type="color" class="sc-color" value="' + escapeHtml(s.color || '#f8fafc') + '" style="width:36px;height:26px;border:none;background:none;cursor:pointer;"></td>' +
+                    '<td style="border:1px solid #eef2f6;"><input class="sc-supervisor" value="' + escapeHtml(s.supervisor || '') + '" style="width:100%;padding:4px 6px;border:1px solid #cbd5e1;border-radius:6px;font-size:0.78rem;"></td>' +
+                    '<td style="border:1px solid #eef2f6;"><input class="sc-email" value="' + escapeHtml(s.supervisorEmail || '') + '" placeholder="可选" style="width:100%;padding:4px 6px;border:1px solid #cbd5e1;border-radius:6px;font-size:0.78rem;"></td>' +
+                    '<td style="text-align:center;border:1px solid #eef2f6;"><button class="sc-del" style="background:#ffedea;color:#c0392b;border:none;padding:3px 8px;border-radius:6px;cursor:pointer;font-size:0.7rem;">🗑️</button></td>' +
+                    '</tr>';
+            }).join('') || '<tr><td colspan="7" style="text-align:center;color:#94a3b8;padding:20px;">暂无站点</td></tr>';
+            tbody.querySelectorAll('.sc-del').forEach(function(btn) {
+                btn.onclick = function() {
+                    var tr = this.closest('tr');
+                    if (tr) tr.remove();
+                };
+            });
+        }
+        function _addSiteConfigRow() {
+            var tbody = document.getElementById('siteConfigBody');
+            if (!tbody) return;
+            var tr = document.createElement('tr');
+            tr.innerHTML = '<td style="text-align:center;border:1px solid #eef2f6;"><input type="checkbox" class="sc-enabled" checked></td>' +
+                '<td style="border:1px solid #eef2f6;"><input class="sc-name" placeholder="站点名称" style="width:100%;padding:4px 6px;border:1px solid #cbd5e1;border-radius:6px;font-size:0.78rem;"></td>' +
+                '<td style="border:1px solid #eef2f6;"><input class="sc-icon" value="📍" maxlength="4" style="width:100%;padding:4px 2px;border:1px solid #cbd5e1;border-radius:6px;font-size:0.9rem;text-align:center;"></td>' +
+                '<td style="border:1px solid #eef2f6;text-align:center;"><input type="color" class="sc-color" value="#f8fafc" style="width:36px;height:26px;border:none;background:none;cursor:pointer;"></td>' +
+                '<td style="border:1px solid #eef2f6;"><input class="sc-supervisor" placeholder="负责人" style="width:100%;padding:4px 6px;border:1px solid #cbd5e1;border-radius:6px;font-size:0.78rem;"></td>' +
+                '<td style="border:1px solid #eef2f6;"><input class="sc-email" placeholder="可选" style="width:100%;padding:4px 6px;border:1px solid #cbd5e1;border-radius:6px;font-size:0.78rem;"></td>' +
+                '<td style="text-align:center;border:1px solid #eef2f6;"><button class="sc-del" style="background:#ffedea;color:#c0392b;border:none;padding:3px 8px;border-radius:6px;cursor:pointer;font-size:0.7rem;">🗑️</button></td>';
+            tbody.appendChild(tr);
+            tr.querySelector('.sc-del').onclick = function() { tr.remove(); };
+            var nameInput = tr.querySelector('.sc-name');
+            if (nameInput) nameInput.focus();
+        }
+        function _readSiteConfigFromTable() {
+            var rows = document.querySelectorAll('#siteConfigBody tr');
+            var sites = [], seen = {}, errors = [];
+            rows.forEach(function(tr) {
+                var nameEl = tr.querySelector('.sc-name');
+                if (!nameEl) return;
+                var name = nameEl.value.trim();
+                if (!name) return;
+                if (seen[name]) { errors.push('站点名称重复：' + name); return; }
+                seen[name] = 1;
+                var supEmail = tr.querySelector('.sc-email').value.trim();
+                if (supEmail && supEmail.indexOf('@') < 0) errors.push('站点「' + name + '」的负责人邮箱格式不对');
+                sites.push({
+                    name: name,
+                    icon: (tr.querySelector('.sc-icon').value || '📍').trim() || '📍',
+                    color: tr.querySelector('.sc-color').value || '#f8fafc',
+                    supervisor: tr.querySelector('.sc-supervisor').value.trim(),
+                    supervisorEmail: supEmail,
+                    enabled: !!tr.querySelector('.sc-enabled').checked
+                });
+            });
+            return { sites: sites, errors: errors };
+        }
+        document.getElementById('addSiteConfigBtn').onclick = _addSiteConfigRow;
+        document.getElementById('saveSiteConfigBtn').onclick = function() {
+            var r = _readSiteConfigFromTable();
+            if (r.errors.length) { alert(r.errors.join('\n')); return; }
+            if (!r.sites.length) { alert('至少保留一个站点'); return; }
+            if (!r.sites.some(function(s) { return s.enabled; })) { alert('至少启用一个站点'); return; }
+            saveSiteConfig({ version: 1, sites: r.sites });
+            showToast('✅ 站点配置已保存，所有模块将使用新配置', 'success');
+            setTimeout(function() { renderAdminPanel(document.getElementById('mainContent')); }, 300);
+        };
+        document.getElementById('resetSiteConfigBtn').onclick = function() {
+            showConfirm('恢复默认站点（成都 / 青岛 / 深圳）？当前配置会被覆盖。', '↩', true).then(function(ok) {
+                if (!ok) return;
+                saveSiteConfig(DEFAULT_SITE_CONFIG);
+                showToast('✅ 已恢复默认站点', 'success');
+                renderAdminPanel(document.getElementById('mainContent'));
+            });
+        };
+
+        // ===== 纳期配置（管理后台可改，不用改代码）=====
+        function refreshDeadlineConfigTable() {
+            var tbody = document.getElementById('deadlineConfigBody');
+            if (!tbody) return;
+            var cfg = getDeadlineConfig();
+            var html = '';
+            for (var sid = 0; sid <= 4; sid++) {
+                var stage = STAGES_DETAIL[sid];
+                var sc = cfg.stages[String(sid)] || { limitDays: 1, items: [] };
+                var items = sc.items && sc.items.length ? sc.items : [{ key: 'item', label: '项目', offsetDays: 0 }];
+                items.forEach(function(it, idx) {
+                    html += '<tr>';
+                    if (idx === 0) {
+                        html += '<td rowspan="' + items.length + '" style="border:1px solid #eef2f6;padding:6px;vertical-align:top;font-weight:600;">' + escapeHtml(stage.name) + '</td>';
+                    }
+                    html += '<td style="border:1px solid #eef2f6;padding:6px;">' + escapeHtml(it.label) + '</td>';
+                    if (idx === 0) {
+                        html += '<td rowspan="' + items.length + '" style="border:1px solid #eef2f6;padding:6px;text-align:center;"><input type="number" class="dc-limit" data-stage="' + sid + '" value="' + sc.limitDays + '" min="1" max="365" style="width:70px;padding:3px 6px;border:1px solid #cbd5e1;border-radius:6px;text-align:center;"></td>';
+                    }
+                    html += '<td style="border:1px solid #eef2f6;padding:6px;text-align:center;"><input type="number" class="dc-offset" data-stage="' + sid + '" data-key="' + escapeHtml(it.key) + '" value="' + it.offsetDays + '" min="0" max="365" style="width:70px;padding:3px 6px;border:1px solid #cbd5e1;border-radius:6px;text-align:center;"></td>';
+                    html += '</tr>';
+                });
+            }
+            tbody.innerHTML = html;
+        }
+        document.getElementById('saveDeadlineConfigBtn').onclick = function() {
+            var cfg = getDeadlineConfig();
+            var errors = [];
+            document.querySelectorAll('#deadlineConfigBody .dc-limit').forEach(function(inp) {
+                var sid = inp.getAttribute('data-stage');
+                var v = parseInt(inp.value, 10);
+                if (!(v > 0)) { errors.push('阶段 ' + (Number(sid) + 1) + ' 的时限必须大于 0'); return; }
+                cfg.stages[sid].limitDays = v;
+            });
+            document.querySelectorAll('#deadlineConfigBody .dc-offset').forEach(function(inp) {
+                var sid = inp.getAttribute('data-stage');
+                var key = inp.getAttribute('data-key');
+                var v = parseInt(inp.value, 10);
+                var limit = cfg.stages[sid].limitDays;
+                if (!(v >= 0)) { errors.push('阶段 ' + (Number(sid) + 1) + ' 的纳期不能小于 0'); return; }
+                if (v > limit) { errors.push('阶段 ' + (Number(sid) + 1) + ' 的纳期不能超过阶段时限（' + limit + ' 天）'); return; }
+                var item = (cfg.stages[sid].items || []).find(function(x) { return x.key === key; });
+                if (item) item.offsetDays = v;
+            });
+            if (errors.length) { alert(errors.join('\n')); return; }
+            saveDeadlineConfig(cfg);
+            showToast('✅ 纳期配置已保存', 'success');
+            setTimeout(function() { renderAdminPanel(document.getElementById('mainContent')); }, 300);
+        };
+        document.getElementById('resetDeadlineConfigBtn').onclick = function() {
+            showConfirm('恢复默认纳期配置？当前天数会被覆盖。', '↩', true).then(function(ok) {
+                if (!ok) return;
+                saveDeadlineConfig(DEFAULT_DEADLINE_CONFIG);
+                showToast('✅ 已恢复默认纳期', 'success');
+                renderAdminPanel(document.getElementById('mainContent'));
+            });
+        };
+
         function updateSiteCard() {
             var sc = document.getElementById('siteCount'), sb = document.getElementById('siteBadge');
             if (sc) {
@@ -2780,7 +3225,7 @@
                 sc.textContent = n || '0';
                 // 按站点统计（深/青/成）
                 var cnt = {}; Object.keys(m).forEach(function(k) { var s = m[k]; if (s) cnt[s] = (cnt[s] || 0) + 1; });
-                if (sb) sb.textContent = ADMIN_SITE_OPTIONS.map(function(s) { return s.charAt(0) + (cnt[s] || 0); }).join(' ');
+                if (sb) sb.textContent = ADMIN_SITE_OPTIONS.map(function(s) { return (getSiteIcon(s) || s.charAt(0)) + (cnt[s] || 0); }).join(' ');
             }
         }
         // 先移除旧监听器再绑定，避免反复进入管理后台导致事件累积
@@ -9224,8 +9669,8 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
 
         // 当前选中的分析类型
         let pendingAnalysisType = 'week';
-        // 当前站点筛选状态（成都/青岛/深圳）
-        let selectedSites = ['成都', '青岛', '深圳'];
+        // 当前站点筛选状态（从站点配置读取）
+        let selectedSites = getEnabledSiteNames();
 
         // 分析类型按钮事件 → 弹出站点选择弹窗
         document.addEventListener('click', (e) => {
@@ -9245,7 +9690,7 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
             const old = document.getElementById('siteSelectModal');
             if (old) old.remove();
 
-            const allSites = ['成都', '青岛', '深圳'];
+            const allSites = getEnabledSiteNames();
             const overlay = document.createElement('div');
             overlay.id = 'siteSelectModal';
             overlay.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.4);display:flex;align-items:center;justify-content:center;z-index:10000;';
@@ -9253,9 +9698,9 @@ ${(() => { try { if (!siteColumn) return ''; const sm = {}; allRows.forEach(row 
                 '<div style="background:#1f3a6b;color:white;padding:16px 20px;font-weight:700;font-size:1rem;">🏢 选择分析站点</div>' +
                 '<div style="padding:24px 20px;text-align:center;">' +
                 '<div style="display:flex;gap:12px;flex-wrap:wrap;justify-content:center;margin-bottom:16px;">' +
-                allSites.map(s => '<button class="site-modal-btn" data-site="' + s + '" style="' +
+                allSites.map(s => '<button class="site-modal-btn" data-site="' + escapeHtml(s) + '" style="' +
                     (selectedSites.includes(s) ? 'background:#2a5298;color:white;' : 'background:#f1f5f9;color:#1e2a3a;') +
-                    'border:none;padding:10px 24px;border-radius:30px;cursor:pointer;font-size:0.9rem;font-weight:500;transition:0.15s;">' + (s === '成都' ? '🐼 ' : s === '青岛' ? '🌊 ' : '📱 ') + s + '</button>').join('') +
+                    'border:none;padding:10px 24px;border-radius:30px;cursor:pointer;font-size:0.9rem;font-weight:500;transition:0.15s;">' + escapeHtml((getSiteIcon(s) || '📍') + ' ' + s) + '</button>').join('') +
                 '</div>' +
                 '<button id="siteModalToggleAll" style="background:#eef2ff;border:1px solid #cbd5e1;padding:6px 16px;border-radius:20px;cursor:pointer;font-size:0.78rem;margin-bottom:20px;">🌍 全选/取消</button>' +
                 '<div style="display:flex;gap:10px;justify-content:center;">' +
@@ -13972,12 +14417,12 @@ URL.revokeObjectURL(url);
                 <div class="report-box" onclick="showDashboardDetail('city', '各城市学员分布', null, false, true)" style="cursor:pointer;">
                     <div class="report-title">🏙️ 各城市学员分布</div>
                     <div style="margin-top:16px;display:flex;gap:16px;flex-wrap:wrap;">
-                        ${['成都','青岛','深圳'].map((city, cityIdx) => {
+                        ${getEnabledSiteNames().map((city, cityIdx) => {
                             const cityStudents = students.filter(s => s.site === city);
                             const percent = totalStudents > 0 ? Math.round(cityStudents.length / totalStudents * 100) : 0;
-                            return `<div style="flex:1;min-width:100px;background:#f8fafc;border-radius:16px;padding:16px;text-align:center;">
+                            return `<div style="flex:1;min-width:100px;background:${getSiteColor(city)};border-radius:16px;padding:16px;text-align:center;">
                                 <div style="font-size:1.6rem;font-weight:700;color:#1f3a6b;">${cityStudents.length}</div>
-                                <div style="font-size:0.85rem;color:#5e6f8d;">${city==='成都'?'🐼':(city==='青岛'?'🌊':'📱')} ${city}</div>
+                                <div style="font-size:0.85rem;color:#5e6f8d;">${getSiteIcon(city)} ${city}</div>
                                 <div style="margin-top:4px;">${renderPercentBar(percent)}</div>
                             </div>`;
                         }).join('')}
@@ -14070,10 +14515,10 @@ URL.revokeObjectURL(url);
         if (showCity) {
             // 城市分布详情
             content = `<div style="padding:20px;">
-                ${['成都','青岛','深圳'].map(city => {
+                ${getEnabledSiteNames().map(city => {
                     const cityStudents = students.filter(s => s.site === city);
                     return `<div style="background:#f8fafc;border-radius:16px;padding:20px;margin-bottom:16px;">
-                        <h4 style="margin:0 0 12px 0;color:#1f3a6b;">🐼 ${city} - ${cityStudents.length}人</h4>
+                        <h4 style="margin:0 0 12px 0;color:#1f3a6b;">${getSiteIcon(city)} ${city} - ${cityStudents.length}人</h4>
                         ${cityStudents.length === 0 ? '<div style="color:#94a3b8;">暂无学员</div>' : `<table style="width:100%;font-size:0.85rem;">
                             <thead><tr style="border-bottom:1px solid #eef2f6;"><th style="padding:8px;text-align:left;">姓名</th><th style="padding:8px;text-align:left;">阶段</th><th style="padding:8px;text-align:left;">进度</th></tr></thead>
                             <tbody>${cityStudents.slice(0,10).map(s => `<tr style="border-bottom:1px solid #eef2f6;"><td style="padding:8px;">${s.name}</td><td style="padding:8px;">${s.graduatedToArchive ? '🎓已毕业' : '阶段' + (s.stage + 1)}</td><td style="padding:8px;">${Math.round(s.getOverallProgress())}%</td></tr>`).join('')}</tbody>
@@ -18051,7 +18496,6 @@ URL.revokeObjectURL(url);
         if (filtered.length === 0) { el.innerHTML = '<div style="text-align:center;color:#94a3b8;padding:20px;">无匹配记录</div>'; return; }
         var catNames = ['手机','平板','笔记本','手表','耳机','相机','手写笔','游戏机'];
         if (catFilter !== 'all') catNames = [catFilter];
-        var siteColors = {'成都':'#f0fdf4','青岛':'#eff6ff','深圳':'#fefce8'};
         var html = '<table style="width:100%;border-collapse:collapse;font-size:0.78rem;table-layout:fixed;"><colgroup>';
         html += '<col style="width:8%"><col style="width:5%">';
         catNames.forEach(function(){ html += '<col style="width:7%">'; });
@@ -18061,7 +18505,7 @@ URL.revokeObjectURL(url);
         catNames.forEach(function(c) { html += '<th style="padding:4px 6px;text-align:center;position:sticky;top:0;background:#f8fafc;">' + c + '</th>'; });
         html += '<th style="padding:6px 8px;text-align:center;position:sticky;top:0;background:#f8fafc;">完成进度</th></tr></thead><tbody>';
         filtered.forEach(function(d) {
-            var bg = siteColors[d.site] || '#fff';
+            var bg = getSiteColor(d.site);
             html += '<tr style="border-bottom:1px solid #eef2f6;background:' + bg + ';">';
             html += '<td style="padding:6px 8px;text-align:center;font-weight:600;">' + escapeHtml(d.name) + '</td>';
             html += '<td style="padding:6px 8px;text-align:center;font-size:0.7rem;color:#5e6f8d;">' + d.site + '</td>';
@@ -18354,7 +18798,8 @@ URL.revokeObjectURL(url);
                 }
             }
             // 拉取线上和实物数据
-            var selSites = (window._selectedSites && window._selectedSites.length > 0 && window._selectedSites.length < 3) ? window._selectedSites : ['成都','青岛','深圳'];
+            var _enabledSiteNames = getEnabledSiteNames();
+            var selSites = (window._selectedSites && window._selectedSites.length > 0 && window._selectedSites.length < _enabledSiteNames.length) ? window._selectedSites : _enabledSiteNames;
             var onlineWeekCounts = [], physicalWeekCounts = [], errWeekCounts = [];
             for (var wi = 0; wi < numCols; wi++) {
                 onlineWeekCounts.push(0); physicalWeekCounts.push(0); errWeekCounts.push(0);
@@ -20729,7 +21174,7 @@ URL.revokeObjectURL(url);
                 var rbg = '';
                 if (e.category === '低级/投诉失误' || e.category === '低级失误' || e.category === '投诉失误') rbg = ' style="background:#f5c6cb;"';
                 else if (e.category === '明显失误' || e.category === '扣错项·明显失误') rbg = ' style="background:#fde8e8;"';
-                html += '<tr' + rbg + '><td>' + e.dateStr + '</td><td><span class="site-tag ' + ({'深圳':'sz','青岛':'qd','成都':'cd'}[e.site]||'') + '">' + escapeHtml(e.site) + '</span></td><td><span class="product-tag" style="' + getProductStyle(e.product) + '">' + escapeHtml(e.product || '-') + '</span></td><td><span class="source-tag ' + srcTag + '">' + e.source + '</span></td><td>' + escapeHtml(e.category) + '</td><td>' + escapeHtml(e.reviewer) + '</td><td style="max-width:300px;font-size:0.78rem;">' + escapeHtml(e.note) + '</td><td style="font-size:0.7rem;">' + escapeHtml(e.qcCode) + '</td></tr>';
+                html += '<tr' + rbg + '><td>' + e.dateStr + '</td><td><span class="site-tag ' + ({'深圳':'sz','青岛':'qd','成都':'cd'}[e.site]||'other') + '">' + escapeHtml(e.site) + '</span></td><td><span class="product-tag" style="' + getProductStyle(e.product) + '">' + escapeHtml(e.product || '-') + '</span></td><td><span class="source-tag ' + srcTag + '">' + e.source + '</span></td><td>' + escapeHtml(e.category) + '</td><td>' + escapeHtml(e.reviewer) + '</td><td style="max-width:300px;font-size:0.78rem;">' + escapeHtml(e.note) + '</td><td style="font-size:0.7rem;">' + escapeHtml(e.qcCode) + '</td></tr>';
             }
             if (!html) html = '<tr><td colspan="8" style="padding:30px;color:#94a3b8;">暂无匹配的失误记录</td></tr>';
             tbody.innerHTML = html;
@@ -20774,7 +21219,7 @@ URL.revokeObjectURL(url);
             var allFiltered = getFilteredErrors();
             var curStats = {}; allFiltered.forEach(function(e){ curStats[e.site] = (curStats[e.site]||0)+1; });
             var totalAll = allFiltered.length;
-            var sites = ['深圳','青岛','成都'];
+            var sites = getEnabledSiteNames();
             var list = sites.map(function(s){ return {name:s, count:curStats[s]||0}; }).sort(function(a,b){return b.count-a.count;});
             var max = Math.max(1, list[0].count);
             var html = '<span class="site-stat-btn" data-site="all" style="cursor:pointer;padding:3px 8px;border-radius:8px;font-size:0.65rem;font-weight:600;white-space:nowrap;background:'+(f.site==='all'?'#1f3a6b':'#f1f5f9')+';color:'+(f.site==='all'?'#fff':'#5e6f8d')+';">🌐 全部 '+totalAll+'</span>';
@@ -20787,7 +21232,7 @@ URL.revokeObjectURL(url);
                 var bgColor = item.count===0 ? '#d4edda' : 'hsl('+h+','+sat+'%,'+lit+'%)';
                 var txtColor = item.count===0 ? '#166534' : '#2d3748';
                 var isActive = f.site === item.name;
-                return '<span class="site-stat-btn" data-site="'+item.name+'" style="cursor:pointer;padding:3px 8px;border-radius:8px;font-size:0.65rem;font-weight:600;white-space:nowrap;background:'+bgColor+';color:'+txtColor+';'+(isActive?'border:2px solid #1f3a6b;':'')+'">📍 '+item.name+' '+item.count+'<span style="font-size:0.55rem;opacity:0.8;">('+pct+'%)</span></span>';
+                return '<span class="site-stat-btn" data-site="'+escapeHtml(item.name)+'" style="cursor:pointer;padding:3px 8px;border-radius:8px;font-size:0.65rem;font-weight:600;white-space:nowrap;background:'+bgColor+';color:'+txtColor+';'+(isActive?'border:2px solid #1f3a6b;':'')+'">'+escapeHtml(getSiteIcon(item.name))+' '+escapeHtml(item.name)+' '+item.count+'<span style="font-size:0.55rem;opacity:0.8;">('+pct+'%)</span></span>';
             }).join('');
             el.innerHTML = html;
         }
@@ -20836,7 +21281,7 @@ URL.revokeObjectURL(url);
             // 逆拆词：单关键词时尝试按已知值拆分
             if (_searchKeywords && _searchKeywords.length === 1) {
                 var kw = _searchKeywords[0];
-                var known = ['深圳','青岛','成都','初审','抽检','qa','手机','平板','3c多品类','功能问题','拆修浸液','外观问题','配件问题'];
+                var known = getEnabledSiteNames().concat(['初审','抽检','qa','手机','平板','3c多品类','功能问题','拆修浸液','外观问题','配件问题']);
                 var parts = []; var remain = kw;
                 known.sort(function(a,b){ return b.length - a.length; });
                 var changed = true, maxLoop = 20;
@@ -21230,7 +21675,7 @@ URL.revokeObjectURL(url);
                 "<div style=\"display:flex;flex-direction:column;gap:10px;\">" +
                     "<button id=\"trainPersonal\" style=\"background:#2563eb;color:white;border:none;padding:14px;border-radius:14px;cursor:pointer;font-size:0.9rem;font-weight:600;\">👤 个人培训资料<br><span style=\"font-size:0.7rem;opacity:0.8;\">精准匹配该人员的失误案例</span></button>" +
                     "<button id=\"trainSite\" style=\"background:#e67e22;color:white;border:none;padding:14px;border-radius:14px;cursor:pointer;font-size:0.9rem;font-weight:600;\">📍 单站点培训资料<br><span style=\"font-size:0.7rem;opacity:0.8;\">综合该站点所有需培训人员</span></button>" +
-                    "<button id=\"trainAll\" style=\"background:#8e44ad;color:white;border:none;padding:14px;border-radius:14px;cursor:pointer;font-size:0.9rem;font-weight:600;\">🌐 全站培训资料<br><span style=\"font-size:0.7rem;opacity:0.8;\">综合三站点所有需培训人员</span></button>" +
+                    "<button id=\"trainAll\" style=\"background:#8e44ad;color:white;border:none;padding:14px;border-radius:14px;cursor:pointer;font-size:0.9rem;font-weight:600;\">🌐 全站培训资料<br><span style=\"font-size:0.7rem;opacity:0.8;\">综合全部站点所有需培训人员</span></button>" +
                 "</div>" +
             "</div></div>";
         document.body.appendChild(selOverlay);
@@ -21240,7 +21685,7 @@ URL.revokeObjectURL(url);
         selOverlay.querySelector("#trainSite").onclick = function(){
             selOverlay.remove();
             // 显示三站点选择
-            var allSites = ['深圳','青岛','成都'];
+            var allSites = getEnabledSiteNames();
             var siteOverlay = document.createElement('div');
             siteOverlay.className = 'modal-overlay'; siteOverlay.style.zIndex = '2001';
             var siteBtns = '';
@@ -21298,9 +21743,9 @@ URL.revokeObjectURL(url);
     // ==================== 站点培训案例联动推送（2026-09-12） ====================
     // 案例库「培训案例」卡片 → 选站点 + 周(周一~周日) → 取该站点该周失误 ≥6 次的人员
     // → 用他们的失误类别 + 失误备注关键词匹配案例 → 生成站点培训案例 → 推给站点品控 + 本人
-    var SITE_CASE_SITES = ['成都', '青岛', '深圳'];
+    function getSiteCaseSites() { return getEnabledSiteNames(); }
     var SITE_CASE_TRAIN_MIN = 6;                                 // 失误 > 5
-    var SITE_QC_SUPERVISOR = { '成都': '徐行', '青岛': '孙伟', '深圳': '孙俊' };
+    function getSiteQcSupervisor(site) { return getSiteSupervisor(site) || ''; }
 
     // 失误备注关键词 → 失误类别（只加不减：不改动现有「失误类别」匹配，只把备注命中的类别额外纳入）
     // not = 排除词（2026-09-12 加）：备注命中本组任一关键词、但同时含任一排除词 → 本组整组不计，
@@ -21638,7 +22083,7 @@ URL.revokeObjectURL(url);
         if (!isAdminMode()) { showToast('❌ 请先登录管理员', 'warning'); return; }
         if (!_siteCaseEnsureData()) { showAlert('看板数据正在从飞书拉取。\n\n请等 3~5 秒后再点一次「📤 推送」。\n（若反复不行，请先打开「失误分析看板」确认飞书授权正常。）', '⏳'); return; }
         var dataTime = errorDashboardLastRefresh ? errorDashboardLastRefresh.toLocaleString('zh-CN') : '未知';
-        var curSite = SITE_CASE_SITES[0];
+        var curSite = getSiteCaseSites()[0];
         var ov = document.createElement('div');
         ov.className = 'modal-overlay'; ov.style.zIndex = '3000';
         ov.innerHTML = '<div class="modal-container" style="max-width:520px;">' +
@@ -21680,7 +22125,7 @@ URL.revokeObjectURL(url);
         _scpPaintChans();
 
         function renderSites() {
-            ov.querySelector('#scpSites').innerHTML = SITE_CASE_SITES.map(function(s) {
+            ov.querySelector('#scpSites').innerHTML = getSiteCaseSites().map(function(s) {
                 var on = s === curSite;
                 return '<button data-site="' + s + '" style="flex:1;padding:10px;border-radius:12px;cursor:pointer;font-weight:600;font-size:0.85rem;' +
                     (on ? 'background:#1f3a6b;color:#fff;border:1px solid #1f3a6b;' : 'background:#f8fafc;color:#1f3a6b;border:1px solid #e2e8f0;') + '">' + s + '</button>';
@@ -21722,7 +22167,7 @@ URL.revokeObjectURL(url);
         var people = getSiteWeekTrainPeople(errors, SITE_CASE_TRAIN_MIN);
         if (people.length === 0) { showAlert(site + ' 站点 ' + weekLabel + ' 无失误 ≥' + SITE_CASE_TRAIN_MIN + ' 次的人员', '⚠️'); return; }
         var reviewerNames = people.map(function(p) { return p.name; });
-        var siteQc = SITE_QC_SUPERVISOR[site] || '';
+        var siteQc = getSiteQcSupervisor(site) || '';
         var titleLabel = site + '站点培训案例';
         var scopeText = site + ' · ' + weekLabel + '（' + formatShortDate(monday) + '~' + formatShortDate(sunday) + '）· ' + people.length + '人失误≥' + SITE_CASE_TRAIN_MIN + '次';
         var buildOpts = {
@@ -21950,7 +22395,7 @@ URL.revokeObjectURL(url);
 
     // 渲染「按失误类别」通道（挂进推送弹窗的第二个 tab）
     function _sccRenderChannel(box) {
-        var st = { site: SITE_CASE_SITES[0], mode: 'week' };
+        var st = { site: getSiteCaseSites()[0], mode: 'week' };
         var items = [];
 
         function rangeBtn(i, label, brief) {
@@ -21963,7 +22408,7 @@ URL.revokeObjectURL(url);
         function paintSites() {
             var el = box.querySelector('#sccSites');
             if (!el) return;
-            el.innerHTML = SITE_CASE_SITES.map(function(s) {
+            el.innerHTML = getSiteCaseSites().map(function(s) {
                 var on = s === st.site;
                 return '<button data-site="' + s + '" style="flex:1;padding:10px;border-radius:12px;cursor:pointer;font-weight:600;font-size:0.85rem;' +
                     (on ? 'background:#1f3a6b;color:#fff;border:1px solid #1f3a6b;' : 'background:#f8fafc;color:#1f3a6b;border:1px solid #e2e8f0;') + '">' + s + '</button>';
@@ -22197,7 +22642,7 @@ URL.revokeObjectURL(url);
             monday: ctx.start,
             sunday: ctx.end,
             cases: (pick.picked || []).map(function(x) { return x && x.c ? x.c : x; }).filter(Boolean),
-            siteQc: SITE_QC_SUPERVISOR[site] || '',
+            siteQc: getSiteQcSupervisor(site) || '',
             thresholdPeople: [],
             titleLabel: site + '站点培训案例 · 按失误类别',
             scopeText: site + ' · ' + ctx.rangeLabel,
@@ -22736,7 +23181,7 @@ URL.revokeObjectURL(url);
                 var rbg = '';
                 if (e.category === '低级/投诉失误' || e.category === '低级失误' || e.category === '投诉失误') rbg = ' style="background:#f5c6cb;"';
                 else if (e.category === '明显失误' || e.category === '扣错项·明显失误') rbg = ' style="background:#fde8e8;"';
-                tableRows += '<tr' + rbg + '><td>' + e.dateStr + '</td><td>' + '<span class="site-tag ' + ({'深圳':'sz','青岛':'qd','成都':'cd'}[e.site]||'') + '">' + escapeHtml(e.site) + '</span></td><td>' + '' + '<span class="product-tag" style="' + getProductStyle(e.product) + '">' + escapeHtml(e.product || '-') + '</span></td><td><span class="source-tag ' + srcTag + '">' + e.source + '</span></td><td>' + escapeHtml(e.category) + '</td><td>' + escapeHtml(e.reviewer) + '</td><td style="text-align:center;max-width:300px;font-size:0.78rem;">' + escapeHtml(e.note) + '</td><td style="font-size:0.7rem;">' + escapeHtml(e.qcCode) + '</td></tr>';
+                tableRows += '<tr' + rbg + '><td>' + e.dateStr + '</td><td>' + '<span class="site-tag ' + ({'深圳':'sz','青岛':'qd','成都':'cd'}[e.site]||'other') + '">' + escapeHtml(e.site) + '</span></td><td>' + '' + '<span class="product-tag" style="' + getProductStyle(e.product) + '">' + escapeHtml(e.product || '-') + '</span></td><td><span class="source-tag ' + srcTag + '">' + e.source + '</span></td><td>' + escapeHtml(e.category) + '</td><td>' + escapeHtml(e.reviewer) + '</td><td style="text-align:center;max-width:300px;font-size:0.78rem;">' + escapeHtml(e.note) + '</td><td style="font-size:0.7rem;">' + escapeHtml(e.qcCode) + '</td></tr>';
             });
         }
 
@@ -23093,7 +23538,7 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
                     var allRows = '';
                     filtered.forEach(function(e) {
                         var srcTag = e.source === '初审' ? 'cs' : (e.source === '抽检' ? 'cj' : 'qa');
-                        allRows += '<tr><td>' + e.dateStr + '</td><td>' + '<span class="site-tag ' + ({'深圳':'sz','青岛':'qd','成都':'cd'}[e.site]||'') + '">' + escapeHtml(e.site) + '</span></td><td>' + '' + '<span class="product-tag" style="' + getProductStyle(e.product) + '">' + escapeHtml(e.product || '-') + '</span></td><td><span class="source-tag ' + srcTag + '">' + e.source + '</span></td><td>' + escapeHtml(e.category) + '</td><td>' + escapeHtml(e.reviewer) + '</td><td style="text-align:center;max-width:300px;font-size:0.78rem;">' + escapeHtml(e.note) + '</td><td style="font-size:0.7rem;">' + escapeHtml(e.qcCode) + '</td></tr>';
+                        allRows += '<tr><td>' + e.dateStr + '</td><td>' + '<span class="site-tag ' + ({'深圳':'sz','青岛':'qd','成都':'cd'}[e.site]||'other') + '">' + escapeHtml(e.site) + '</span></td><td>' + '' + '<span class="product-tag" style="' + getProductStyle(e.product) + '">' + escapeHtml(e.product || '-') + '</span></td><td><span class="source-tag ' + srcTag + '">' + e.source + '</span></td><td>' + escapeHtml(e.category) + '</td><td>' + escapeHtml(e.reviewer) + '</td><td style="text-align:center;max-width:300px;font-size:0.78rem;">' + escapeHtml(e.note) + '</td><td style="font-size:0.7rem;">' + escapeHtml(e.qcCode) + '</td></tr>';
                     });
                     tableBlock = '<div style="flex:1;overflow:auto;min-height:0;"><div class="error-table-wrapper"><table class="error-table"><thead><tr><th>日期</th><th>站点</th><th>品类</th><th>来源</th><th>失误类别</th><th>初审人</th><th>失误备注</th><th>质检码</th></tr></thead><tbody>' + allRows + '</tbody></table><div class="pagination"><span>共' + totalFiltered + '条</span></div></div></div>';
                 } else {
@@ -23108,7 +23553,7 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
                         var rbg3 = '';
                         if (e.category === '低级/投诉失误' || e.category === '低级失误' || e.category === '投诉失误') rbg3 = ' style="background:#f5c6cb;"';
                         else if (e.category === '明显失误' || e.category === '扣错项·明显失误') rbg3 = ' style="background:#fde8e8;"';
-                        pgRows += '<tr' + rbg3 + '><td>' + e.dateStr + '</td><td>' + '<span class="site-tag ' + ({'深圳':'sz','青岛':'qd','成都':'cd'}[e.site]||'') + '">' + escapeHtml(e.site) + '</span></td><td>' + '' + '<span class="product-tag" style="' + getProductStyle(e.product) + '">' + escapeHtml(e.product || '-') + '</span></td><td><span class="source-tag ' + srcTag + '">' + e.source + '</span></td><td>' + escapeHtml(e.category) + '</td><td>' + escapeHtml(e.reviewer) + '</td><td style="text-align:center;max-width:300px;font-size:0.78rem;">' + escapeHtml(e.note) + '</td><td style="font-size:0.7rem;">' + escapeHtml(e.qcCode) + '</td></tr>';
+                        pgRows += '<tr' + rbg3 + '><td>' + e.dateStr + '</td><td>' + '<span class="site-tag ' + ({'深圳':'sz','青岛':'qd','成都':'cd'}[e.site]||'other') + '">' + escapeHtml(e.site) + '</span></td><td>' + '' + '<span class="product-tag" style="' + getProductStyle(e.product) + '">' + escapeHtml(e.product || '-') + '</span></td><td><span class="source-tag ' + srcTag + '">' + e.source + '</span></td><td>' + escapeHtml(e.category) + '</td><td>' + escapeHtml(e.reviewer) + '</td><td style="text-align:center;max-width:300px;font-size:0.78rem;">' + escapeHtml(e.note) + '</td><td style="font-size:0.7rem;">' + escapeHtml(e.qcCode) + '</td></tr>';
                     });
                     var pgHtml = '<div class="pagination"><button ' + (pg <= 1 ? 'disabled' : '') + ' onclick="window._tablePage=' + (pg - 1) + ';_refreshErrorTableBody()">上一页</button><span style="font-size:0.8rem;">' + pg + '/' + totalPages + '（共' + totalFiltered + '条）</span><button ' + (pg >= totalPages ? 'disabled' : '') + ' onclick="window._tablePage=' + (pg + 1) + ';_refreshErrorTableBody()">下一页</button></div>';
                     tableBlock = '<div style="flex:1;overflow:auto;min-height:0;"><div class="error-table-wrapper"><table class="error-table"><thead><tr><th>日期</th><th>站点</th><th>品类</th><th>来源</th><th>失误类别</th><th>初审人</th><th>失误备注</th><th>质检码</th></tr></thead><tbody>' + pgRows + '</tbody></table>' + pgHtml + '</div></div>';
@@ -23126,7 +23571,7 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
                                     var curStats = {};
                                     allFiltered.forEach(function(e){ curStats[e.site] = (curStats[e.site]||0)+1; });
                                     var totalAll = allFiltered.length;
-                                    var sites = ['深圳','青岛','成都'];
+                                    var sites = getEnabledSiteNames();
                                     var list = sites.map(function(s){ return {name:s, count:curStats[s]||0}; }).sort(function(a,b){return b.count-a.count;});
                                     var max = Math.max(1, list[0].count);
                                     var allBtn = '<span class=\"site-stat-btn\" data-site=\"all\" style=\"cursor:pointer;padding:3px 8px;border-radius:8px;font-size:0.65rem;font-weight:600;white-space:nowrap;background:'+(f.site==='all'?'#1f3a6b':'#f1f5f9')+';color:'+(f.site==='all'?'#fff':'#5e6f8d')+';\">🌐 全部 '+totalAll+'</span>';
@@ -26442,6 +26887,9 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
         newcomerAnalysisData:      { guest: false, exam: false },
         newcomerGlobalData:        { guest: false, exam: false },
         adminPersonSiteMap:        { guest: false, exam: false },
+        siteConfigData:            { guest: true,  exam: false },  // 站点配置（名称/图标/颜色/负责人），游客也要用它渲染站点切换
+        newhireDeadlineConfig:     { guest: true,  exam: false },  // 纳期配置（阶段时限/各项第几天）
+        newhireDeadlineReminders:  { guest: false, exam: false },  // 提醒发送记录（定时脚本写，页面只读不展示）
         biweeklyCases:             { guest: false, exam: false },
         knowledgeCases:            { guest: false, exam: false },
         // 2026-09-13 流量优化：手工培训案例（云端实测约 97KB，本表最大单键）。
@@ -28391,7 +28839,9 @@ updateAdminUI();
         editOverlay.style.zIndex = '10001';
         var avaHtml = uploadedAvatar ? '<img src="' + uploadedAvatar + '" style="width:100%;height:100%;object-fit:cover;">' : '<span style="font-size:2rem;color:#94a3b8;">📷</span>';
         var delStyle = uploadedAvatar ? 'inline-block' : 'none';
-        var selCD = function(v) { return stu.site === v ? ' selected' : ''; };
+        var siteOptionsHtml = getEnabledSites().map(function(s) {
+            return '<option value="' + escapeHtml(s.name) + '"' + (stu.site === s.name ? ' selected' : '') + '>' + escapeHtml((s.icon || '📍') + ' ' + s.name) + '</option>';
+        }).join('');
         var selStg = function(v) { return stu.stage === v ? ' selected' : ''; };
         editOverlay.innerHTML = '<div class="modal-container" style="max-width:500px;">' +
             '<div class="modal-header"><span>✏️ 编辑学员</span><button class="modal-close-btn">✕</button></div>' +
@@ -28404,9 +28854,7 @@ updateAdminUI();
                 '</div>' +
                 '<div style="margin-bottom:14px;"><label style="font-weight:600;color:#1f3a6b;">姓名 *</label><input id="editStuName" type="text" value="' + escapeHtml(stu.name) + '" style="width:100%;padding:10px 14px;border:2px solid #e2e8f0;border-radius:10px;font-size:0.95rem;"></div>' +
                 '<div style="margin-bottom:14px;"><label style="font-weight:600;color:#1f3a6b;">站点 *</label><select id="editStuSite" style="width:100%;padding:10px 14px;border:2px solid #e2e8f0;border-radius:10px;font-size:0.95rem;">' +
-                    '<option value="成都"' + selCD('成都') + '>🐼 成都</option>' +
-                    '<option value="青岛"' + selCD('青岛') + '>🌊 青岛</option>' +
-                    '<option value="深圳"' + selCD('深圳') + '>📱 深圳</option>' +
+                    siteOptionsHtml +
                 '</select></div>' +
                 '<div style="margin-bottom:14px;"><label style="font-weight:600;color:#1f3a6b;">入职日期</label><input id="editStuJoinDate" type="date" value="' + (stu.joinDate || '') + '" style="width:100%;padding:10px 14px;border:2px solid #e2e8f0;border-radius:10px;font-size:0.95rem;"></div>' +
                 '<div style="margin-bottom:14px;"><label style="font-weight:600;color:#1f3a6b;">初始阶段</label><select id="editStuStage" style="width:100%;padding:10px 14px;border:2px solid #e2e8f0;border-radius:10px;font-size:0.95rem;">' +
