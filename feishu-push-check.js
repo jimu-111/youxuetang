@@ -4,6 +4,7 @@
  * 计划任务：每周一 12:30 主查 + 每天 14:00 补查（幂等：同一天相同状态不重复发，状态变化才再发）
  * 用法：node feishu-push-check.js [--force]（--force 忽略幂等强制发，试跑用）
  */
+const { loadEmailConfig } = require('./email-calibrate');
 const fs = require('fs');
 const ADMIN_EMAIL = 'xuhang02@zhuanzhuan.com';
 const FEISHU_APP_ID = 'cli_aab1fa4e87bbdbd3';
@@ -36,10 +37,12 @@ async function getAppToken() {
 }
 
 async function sendCard(card, token) {
+  let _to = ADMIN_EMAIL;
+  try { const _cal = await loadEmailConfig(); _to = (_cal.config && _cal.config.reportEmail) || _to; } catch (e) {}
     const r = await fetch('https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=email', {
         method: 'POST',
         headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ receive_id: ADMIN_EMAIL, msg_type: 'interactive', content: JSON.stringify(card) })
+        body: JSON.stringify({ receive_id: _to, msg_type: 'interactive', content: JSON.stringify(card) })
     });
     const d = await r.json();
     if (d.code !== 0) throw new Error('sendCard: ' + JSON.stringify(d));
@@ -57,6 +60,18 @@ async function fetchTodayRuns() {
 
 async function getDoneInfo() {
     const key = 'auto_push_done_' + fmt(new Date());
+    const r = await fetch(SUPABASE_URL + '/rest/v1/app_data?key=eq.' + encodeURIComponent(key) + '&select=value&limit=1', {
+        headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY }
+    });
+    const arr = await r.json();
+    if (Array.isArray(arr) && arr.length > 0) { try { return JSON.parse(arr[0].value); } catch (e) { return null; } }
+    return null;
+}
+
+// 2026-11-09：云端工作流跑完会自己发结果卡，并写 auto_push_notified_<日期>。
+// 本机检查器先看这条标记，云端已经发过同样结果就不再重复发；标记不存在（云端没触发/发卡步骤挂了）才由本机兜底。
+async function getNotifiedInfo() {
+    const key = 'auto_push_notified_' + fmt(new Date());
     const r = await fetch(SUPABASE_URL + '/rest/v1/app_data?key=eq.' + encodeURIComponent(key) + '&select=value&limit=1', {
         headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY }
     });
@@ -97,6 +112,20 @@ async function main() {
     }
     console.log('检查结果: ' + result.status);
 
+    // 2026-11-09：云端工作流已发过同样结果的卡片就不再重复发。
+    // 映射：云端 success ↔ 本机 success；云端 failure/cancelled ↔ 本机 failed。
+    // 云端没触发（not_triggered）时不会有标记，仍然由本机发「未推送」告警 —— 这条兜底不能省。
+    let notified = null;
+    try { notified = await getNotifiedInfo(); } catch (e) { console.log('查云端发卡标记失败: ' + e.message); }
+    const cloudCovered = notified && (
+        (notified.status === 'success' && result.status === 'success') ||
+        ((notified.status === 'failure' || notified.status === 'cancelled') && result.status === 'failed')
+    );
+    if (!force && cloudCovered) {
+        console.log('云端已发过同样结果的卡片（' + notified.status + '），跳过发送');
+        return;
+    }
+
     // 2. 幂等：今天同状态已发过则不重复发（状态变化才再发）
     let prev = null;
     try { prev = JSON.parse(fs.readFileSync(STATE_FILE, 'utf8')); } catch (e) { }
@@ -130,27 +159,34 @@ async function main() {
 // 正是因为这条路径不会告警，才一直没人发现。现在兜底发一张卡片。
 // 注意：崩因很可能就是「网络/飞书不通」，所以发送本身必须 best-effort，绝不能二次抛出。
 // 非周一不会走到这里（main 里在取 force/now 之后就 return 了，那里不可能抛），所以不会打扰非周一。
-main().catch(async function (e) {
-    console.error('检查器异常: ' + e.message);
-    try {
-        const today = fmt(new Date());
-        // 与主流程同样的幂等：今天已经报过「检查器出错」就不再重复发（主查+补查会跑两次）
-        let prev = null;
-        try { prev = JSON.parse(fs.readFileSync(STATE_FILE, 'utf8')); } catch (e2) { }
-        if (prev && prev.date === today && prev.status === 'check_error') {
-            console.log('今天已发过「检查器出错」，跳过');
-            return;
+function run() {
+    main().catch(async function (e) {
+        console.error('检查器异常: ' + e.message);
+        try {
+            const today = fmt(new Date());
+            // 与主流程同样的幂等：今天已经报过「检查器出错」就不再重复发（主查+补查会跑两次）
+            let prev = null;
+            try { prev = JSON.parse(fs.readFileSync(STATE_FILE, 'utf8')); } catch (e2) { }
+            if (prev && prev.date === today && prev.status === 'check_error') {
+                console.log('今天已发过「检查器出错」，跳过');
+                return;
+            }
+            const card = {
+                config: { wide_screen_mode: true },
+                header: { title: { tag: 'plain_text', content: '⚠️ 推送检查器出错' }, template: 'red' },
+                elements: [{ tag: 'div', text: { tag: 'lark_md', content: '**' + today + '** 检查器**自己异常退出**了：' + e.message + '\n本次**没能检查**推送状态，请手动确认 GitHub 上的运行情况。' } }]
+            };
+            const token = await getAppToken();
+            await sendCard(card, token);
+            fs.writeFileSync(STATE_FILE, JSON.stringify({ date: today, status: 'check_error', updatedAt: new Date().toISOString() }));
+            console.log('已发送「检查器出错」卡片');
+        } catch (e2) {
+            console.error('兜底告警也发不出去: ' + e2.message);
         }
-        const card = {
-            config: { wide_screen_mode: true },
-            header: { title: { tag: 'plain_text', content: '⚠️ 推送检查器出错' }, template: 'red' },
-            elements: [{ tag: 'div', text: { tag: 'lark_md', content: '**' + today + '** 检查器**自己异常退出**了：' + e.message + '\n本次**没能检查**推送状态，请手动确认 GitHub 上的运行情况。' } }]
-        };
-        const token = await getAppToken();
-        await sendCard(card, token);
-        fs.writeFileSync(STATE_FILE, JSON.stringify({ date: today, status: 'check_error', updatedAt: new Date().toISOString() }));
-        console.log('已发送「检查器出错」卡片');
-    } catch (e2) {
-        console.error('兜底告警也发不出去: ' + e2.message);
-    }
-});
+    });
+}
+
+if (require.main === module) run();
+
+// 给本机测试用
+module.exports = { getNotifiedInfo: getNotifiedInfo };
