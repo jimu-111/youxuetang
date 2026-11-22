@@ -23,6 +23,7 @@ if (!FEISHU_APP_SECRET) {
 const SUPABASE_URL = (process.env.SUPABASE_URL || 'https://zfxwnixlvdxawoylhgxj.supabase.co').replace(/\/$/, '').replace(/\s/g, '');
 const SUPABASE_KEY = (process.env.SUPABASE_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InpmeHduaXhsdmR4YXdveWxoZ3hqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODIyMDEyNzIsImV4cCI6MjA5Nzc3NzI3Mn0.aPfO4Ry_LzoOColCVx64JQPF-BWga-_J2fX9hg-E4G8').replace(/\s/g, '');
 const SITE_URL = 'https://jimu-111.github.io/youxuetang/';
+const { loadEmailConfig } = require('./email-calibrate');
 const KV_PAGES = 'https://yxt-feishu.pages.dev';
 const KV_SECRET = 'yxt-feishu-2026';
 
@@ -543,16 +544,26 @@ async function main() {
         const queue = await supabaseGet(queueKey);
         if (!queue || !queue.entries || queue.entries.length === 0) { console.log('队列为空，无待推送人员'); return; }
         const appToken = await getAppToken();
+        let emails = {};
+        try {
+            const cal = await loadEmailConfig();
+            emails = cal.emails || {};
+            console.log('📧 发送前邮箱校准：' + Object.keys(emails).length + '人（' + cal.source + '）');
+        } catch (e) {
+            console.log('⚠️ 发送前邮箱校准失败，用云端缓存：' + e.message);
+            emails = (await supabaseGet('personnelEmails')) || {};
+        }
+        function latestEmail(name, fallback) { return emails[name] || fallback; }
         let sent = 0, fail = 0;
         let pushRecords = []; // 推送记录，写回 Supabase 供网页查看
         for (const entry of queue.entries) {
             if (entry.type === 'exam') {
                 var card = { config: { wide_screen_mode: true }, header: { title: { tag: 'plain_text', content: '📝 ' + entry.name + ' 精准考试' }, template: 'orange' }, elements: [{ tag: 'div', text: { tag: 'lark_md', content: '**' + entry.name + '** 上周失误 **' + entry.count + ' 次**，已达出卷阈值\n考试码：**' + entry.code + '**' } }, { tag: 'action', actions: [{ tag: 'button', text: { tag: 'plain_text', content: '📝 开始考试' }, type: 'primary', url: SITE_URL + '?exam=' + entry.code }] }] };
-                try { await sendCard(entry.email, card, appToken); console.log('  📝 考试 → ' + entry.name + '(' + entry.count + ') [' + entry.code + ']'); sent++; pushRecords.push({ type: 'exam', reviewerName: entry.name, examCode: entry.code, email: entry.email, pushedAt: new Date().toISOString() }); }
+                try { await sendCard(latestEmail(entry.name, entry.email), card, appToken); console.log('  📝 考试 → ' + entry.name + '(' + entry.count + ') [' + entry.code + ']'); sent++; pushRecords.push({ type: 'exam', reviewerName: entry.name, examCode: entry.code, email: latestEmail(entry.name, entry.email), pushedAt: new Date().toISOString() }); }
                 catch(e) { console.log('  ❌ ' + entry.name + ': ' + e.message); fail++; }
             } else if (entry.type === 'learn') {
                 var lcard = { config: { wide_screen_mode: true }, header: { title: { tag: 'plain_text', content: '🗺️ ' + entry.name + ' 学习地图' }, template: 'blue' }, elements: [{ tag: 'div', text: { tag: 'lark_md', content: '**' + entry.name + '** 上周失误 **' + entry.count + ' 次**，已达学习阈值\n课程：' + entry.courseCount + ' 节' } }, { tag: 'action', actions: [{ tag: 'button', text: { tag: 'plain_text', content: '🗺️ 学习地图' }, type: 'primary', url: SITE_URL + '?learnPlan=' + entry.code }] }] };
-                try { await sendCard(entry.email, lcard, appToken); console.log('  🗺️ 学习 → ' + entry.name + ' [' + entry.code + '] ' + entry.courseCount + '课'); sent++; pushRecords.push({ type: 'learn', reviewerName: entry.name, planCode: entry.code, email: entry.email, pushedAt: new Date().toISOString() }); }
+                try { await sendCard(latestEmail(entry.name, entry.email), lcard, appToken); console.log('  🗺️ 学习 → ' + entry.name + ' [' + entry.code + '] ' + entry.courseCount + '课'); sent++; pushRecords.push({ type: 'learn', reviewerName: entry.name, planCode: entry.code, email: latestEmail(entry.name, entry.email), pushedAt: new Date().toISOString() }); }
                 catch(e) { console.log('  ❌ ' + entry.name + ': ' + e.message); fail++; }
             } else if (entry.type === 'train') {
                 var tcard = { config: { wide_screen_mode: true }, header: { title: { tag: 'plain_text', content: '📖 ' + entry.name + ' 精准培训' }, template: 'purple' }, elements: [{ tag: 'div', text: { tag: 'lark_md', content: '**' + entry.name + '** 上周失误 **' + entry.count + ' 次**，已达培训阈值\n匹配案例：' + entry.caseCount + ' 条' } }, { tag: 'action', actions: [{ tag: 'button', text: { tag: 'plain_text', content: '📖 查看培训' }, type: 'primary', url: SITE_URL + '?report=' + encodeURIComponent(entry.reportName) }] }] };
@@ -560,7 +571,7 @@ async function main() {
                 //   「XXX 的培训资料」。之前没带 → 自动推的记录在页面上显示成「0案例 | 培训资料 | 📌 无报告」，
                 //   连「查看/下载」按钮都不出来（报告明明生成了却点不开）。scope 由推的人决定：本脚本按人匹配
                 //   案例，故为「个人培训资料」；以后若加站点级推送，在那边写 scope 即可，这里会原样带过去。
-                try { await sendCard(entry.email, tcard, appToken); console.log('  📖 培训 → ' + entry.name + ' (' + entry.caseCount + '条)'); sent++; pushRecords.push({ type: 'train', reviewerName: entry.name, reportName: entry.reportName, email: entry.email, pushedAt: new Date().toISOString(), caseCount: entry.caseCount || 0, scope: entry.scope || '个人培训资料' }); }
+                try { await sendCard(latestEmail(entry.name, entry.email), tcard, appToken); console.log('  📖 培训 → ' + entry.name + ' (' + entry.caseCount + '条)'); sent++; pushRecords.push({ type: 'train', reviewerName: entry.name, reportName: entry.reportName, email: latestEmail(entry.name, entry.email), pushedAt: new Date().toISOString(), caseCount: entry.caseCount || 0, scope: entry.scope || '个人培训资料' }); }
                 catch(e) { console.log('  ❌ ' + entry.name + ': ' + e.message); fail++; }
             }
         }
@@ -583,8 +594,15 @@ async function main() {
     if (PHASE === 'full') console.log('📤 完整模式（分析+发送+标记）');
 
     const appToken = await getAppToken();
-    const emails = (await supabaseGet('personnelEmails')) || {};
-    console.log('Token OK, 邮箱: ' + Object.keys(emails).length + '人');
+    let emails = {};
+    try {
+        const cal = await loadEmailConfig();
+        emails = cal.emails || {};
+        console.log('Token OK, 邮箱校准(' + cal.source + '): ' + Object.keys(emails).length + '人');
+    } catch (e) {
+        console.log('⚠️ 邮箱校准失败，用云端缓存：' + e.message);
+        emails = (await supabaseGet('personnelEmails')) || {};
+    }
 
     let sent = 0, fail = 0;
     let pushQueue = []; // 推送队列

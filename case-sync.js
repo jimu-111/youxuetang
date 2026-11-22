@@ -40,6 +40,7 @@
  *   FORCE=1 node case-sync.js               # 越过闸门②
  *   node case-sync.js --alert-only "消息"    # 只发飞书告警卡片
  */
+const { loadEmailConfig } = require('./email-calibrate');
 const https = require('https');
 const fs = require('fs');
 const path = require('path');
@@ -72,18 +73,20 @@ const APP_SECRET = process.env.FEISHU_APP_SECRET || (function () {
 
 // Supabase 地址/密钥直接从仓库里的 index.html 读（本来就是公开在前端页面里的），
 // 也可以用环境变量覆盖。绝不在这里写死新的密钥。
-const SUPABASE_URL = process.env.SUPABASE_URL || (function () {
+let SUPABASE_URL = process.env.SUPABASE_URL || (function () {
   try {
     const page = fs.readFileSync(path.join(__dirname, 'index.html'), 'utf8');
     return (page.match(/const SUPABASE_URL = '([^']+)'/) || [])[1] || '';
   } catch (e) { return ''; }
 })();
-const SUPABASE_KEY = process.env.SUPABASE_KEY || (function () {
+let SUPABASE_KEY = process.env.SUPABASE_KEY || (function () {
   try {
     const page = fs.readFileSync(path.join(__dirname, 'index.html'), 'utf8');
     return (page.match(/const SUPABASE_KEY = '([^']+)'/) || [])[1] || '';
   } catch (e) { return ''; }
 })();
+SUPABASE_URL = String(SUPABASE_URL).replace(/\s/g, '').replace(/\/$/, '');
+SUPABASE_KEY = String(SUPABASE_KEY).replace(/\s/g, '');
 
 // ---------------- 通用网络 ----------------
 function requestJson(url, opts) {
@@ -708,6 +711,8 @@ async function prepareTrainingDrafts(merged) {
 
 // ---------------- 飞书告警卡片 ----------------
 async function sendCard(title, msg, color) {
+  let _to = REPORT_EMAIL;
+  try { const _cal = await loadEmailConfig(); _to = (_cal.config && _cal.config.reportEmail) || _to; } catch (e) {}
   if (process.env.NO_CARD === '1') { console.log('📨（NO_CARD=1，未发送飞书卡片）'); return; }
   try {
     const card = {
@@ -718,7 +723,7 @@ async function sendCard(title, msg, color) {
     };
     const r = await api('/im/v1/messages?receive_id_type=email', {
       method: 'POST',
-      body: JSON.stringify({ receive_id: REPORT_EMAIL, msg_type: 'interactive', content: JSON.stringify(card) })
+      body: JSON.stringify({ receive_id: _to, msg_type: 'interactive', content: JSON.stringify(card) })
     });
     if (!r.json || r.json.code !== 0) throw new Error('HTTP ' + r.status + ' ' + String(r.raw).slice(0, 200));
     console.log('📨 飞书卡片已发送');

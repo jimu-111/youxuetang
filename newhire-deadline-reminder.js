@@ -6,7 +6,7 @@
  *      newhireDeadlineConfig（纳期天数）、personnelEmails（姓名→邮箱）；
  *   ② 按「当前阶段开始日 + 第几天」算每一项的纳期；
  *   ③ 到期当天发一次；逾期后发一次（不重复）；
- *   ④ 收件人 = 站点负责人 + 学员本人（有邮箱才发）；
+ *   ④ 收件人 = 品控负责人 + 学员本人（有邮箱才发）；
  *   ⑤ 发送记录写 newhireDeadlineReminders，避免重复。
  *
  * 手动用法：
@@ -19,6 +19,7 @@
 const https = require('https');
 const fs = require('fs');
 const path = require('path');
+const { loadEmailConfig } = require('./email-calibrate');
 
 const PAGES = 'https://yxt-feishu.pages.dev';
 const APP_ID = 'cli_aab1fa4e87bbdbd3';
@@ -31,18 +32,20 @@ const APP_SECRET = process.env.FEISHU_APP_SECRET || (function () {
   try { return fs.readFileSync('C:/Users/xuhan/yxt/feishu-secret.txt', 'utf8').trim(); } catch (e) { return ''; }
 })();
 
-const SUPABASE_URL = process.env.SUPABASE_URL || (function () {
+let SUPABASE_URL = process.env.SUPABASE_URL || (function () {
   try {
     const page = fs.readFileSync(path.join(__dirname, 'index.html'), 'utf8');
     return (page.match(/const SUPABASE_URL = '([^']+)'/) || [])[1] || '';
   } catch (e) { return ''; }
 })();
-const SUPABASE_KEY = process.env.SUPABASE_KEY || (function () {
+let SUPABASE_KEY = process.env.SUPABASE_KEY || (function () {
   try {
     const page = fs.readFileSync(path.join(__dirname, 'index.html'), 'utf8');
     return (page.match(/const SUPABASE_KEY = '([^']+)'/) || [])[1] || '';
   } catch (e) { return ''; }
 })();
+SUPABASE_URL = String(SUPABASE_URL).replace(/\s/g, '').replace(/\/$/, '');
+SUPABASE_KEY = String(SUPABASE_KEY).replace(/\s/g, '');
 
 // ---------------- 默认配置（与页面 index.html 保持一致） ----------------
 const DEFAULT_SITES = [
@@ -321,7 +324,7 @@ function cardForSupervisor(student, site, items) {
     header: { title: { tag: 'plain_text', content: (hasOverdue ? '⚠️ ' : '📅 ') + '新人纳期提醒' }, template: hasOverdue ? 'red' : 'blue' },
     elements: [
       { tag: 'div', text: { tag: 'lark_md', content: '**' + student.name + '**（' + (student.site || '') + '）· ' + (STAGE_NAMES[Number(student.stage)] || ('阶段' + (Number(student.stage) + 1))) + '\n' + itemsText(items) } },
-      { tag: 'div', text: { tag: 'lark_md', content: '站点负责人：' + (site && site.supervisor ? site.supervisor : '未配置') + '，请跟进。' } },
+      { tag: 'div', text: { tag: 'lark_md', content: '品控负责人：' + (site && site.supervisor ? site.supervisor : '未配置') + '，请跟进。' } },
       { tag: 'action', actions: [{ tag: 'button', text: { tag: 'plain_text', content: '打开优学堂' }, type: 'primary', url: SITE_URL }] }
     ].concat(RUN_URL ? [{ tag: 'note', elements: [{ tag: 'plain_text', content: '运行日志：' + RUN_URL }] }] : [])
   };
@@ -334,7 +337,7 @@ function cardForStudent(student, items) {
     header: { title: { tag: 'plain_text', content: (hasOverdue ? '⚠️ ' : '📅 ') + '你的新人培养纳期' }, template: hasOverdue ? 'red' : 'blue' },
     elements: [
       { tag: 'div', text: { tag: 'lark_md', content: '**' + student.name + '**（' + (student.site || '') + '）\n' + itemsText(items) } },
-      { tag: 'div', text: { tag: 'lark_md', content: '请按纳期完成；如果有特殊情况，请联系站点负责人。' } },
+      { tag: 'div', text: { tag: 'lark_md', content: '请按纳期完成；如果有特殊情况，请联系品控负责人。' } },
       { tag: 'action', actions: [{ tag: 'button', text: { tag: 'plain_text', content: '打开优学堂' }, type: 'primary', url: SITE_URL }] }
     ]
   };
@@ -356,7 +359,14 @@ async function main() {
   const students = parseJson(studentsRaw, []);
   const sites = normalizeSites(sitesRaw);
   const stages = normalizeStages(stagesRaw);
-  const emails = parseJson(emailsRaw, {});
+  let emails = parseJson(emailsRaw, {});
+  try {
+    const cal = await loadEmailConfig();
+    if (cal.emails && Object.keys(cal.emails).length) emails = cal.emails;
+    console.log('📧 推送前邮箱校准：' + Object.keys(emails).length + ' 人（' + cal.source + '）');
+  } catch (e) {
+    console.log('⚠️ 邮箱校准失败，用云端缓存：' + e.message);
+  }
   const sent = cleanSent(parseJson(sentRaw, {}), today);
 
   if (!Array.isArray(students) || !students.length) {
@@ -398,7 +408,7 @@ async function main() {
       dueCount += supItems.filter(x => x.type === 'due').length;
       overdueCount += supItems.filter(x => x.type === 'overdue').length;
       if (!supervisorEmail) {
-        console.log('  ⚠️ ' + student.name + '（' + student.site + '）没有站点负责人邮箱，跳过负责人提醒');
+        console.log('  ⚠️ ' + student.name + '（' + student.site + '）没有品控负责人邮箱，跳过品控负责人提醒');
         skipped++;
       } else if (DRY_RUN) {
         console.log('  [DRY-负责人] ' + student.name + ' → ' + supervisorName + ' <' + supervisorEmail + '>：' + supItems.map(x => x.item.label + '(' + x.type + ',' + x.due + ')').join('；'));

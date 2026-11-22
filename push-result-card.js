@@ -12,11 +12,12 @@
  * 幂等：发完写 auto_push_notified_<日期>；同一天再跑（Cloudflare + GitHub 两条通道）不会重复发。
  * 本机的 feishu-push-check.js 也会先看这条标记，避免重复。
  */
-const ADMIN_EMAIL = 'xuhang02@zhuanzhuan.com';
+let ADMIN_EMAIL = 'xuhang02@zhuanzhuan.com';
+const { loadEmailConfig } = require('./email-calibrate');
 const FEISHU_APP_ID = 'cli_aab1fa4e87bbdbd3';
 const FEISHU_APP_SECRET = process.env.FEISHU_APP_SECRET || '';
-const SUPABASE_URL = process.env.SUPABASE_URL || '';
-const SUPABASE_KEY = process.env.SUPABASE_KEY || '';
+const SUPABASE_URL = (process.env.SUPABASE_URL || '').replace(/\s/g, '').replace(/\/$/, '');
+const SUPABASE_KEY = (process.env.SUPABASE_KEY || '').replace(/\s/g, '');
 const OUTCOME = String(process.env.PUSH_OUTCOME || '').trim();
 const RUN_URL = process.env.RUN_URL || 'https://github.com/jimu-111/youxuetang/actions/workflows/auto-push.yml';
 const KV_PAGES = 'https://yxt-feishu.pages.dev';
@@ -157,6 +158,13 @@ async function main() {
     const sent = hasDone ? Number(done.sent || 0) : 0;
     const fail = hasDone ? Number(done.fail || 0) : 0;
 
+    try {
+        const cal = await loadEmailConfig();
+        if (cal.config && cal.config.reportEmail) ADMIN_EMAIL = cal.config.reportEmail;
+        console.log('📧 推送前邮箱校准：报告收件人 ' + ADMIN_EMAIL + '（' + cal.source + '）');
+    } catch (e) {
+        console.log('⚠️ 邮箱校准失败，用默认收件人：' + e.message);
+    }
     const card = buildCard(today, sent, fail, hasDone);
     const token = await getAppToken();
     await sendCard(card, token);

@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <!-- 版本行：每次部署新代码必须 bump 此 content（YYYYMMDD.N），旧设备靠它自检静默升级 -->
-    <meta name="yxt-ver" content="20261121.1">
+    <meta name="yxt-ver" content="20261122.1">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
     <title>优学堂</title>
     <script src="https://cdn.sheetjs.com/xlsx-0.20.2/package/dist/xlsx.full.min.js" defer></script>
@@ -2537,15 +2537,17 @@
             <!-- 邮箱管理详情 -->
             <div id="emailDetail" class="report-box" style="display:none;margin-top:16px;">
                 <div class="report-title" style="display:flex;justify-content:space-between;align-items:center;">📧 邮箱地址管理 <span style="font-size:0.7rem;color:#94a3b8;cursor:pointer;" onclick="toggleAdminDetail('emailDetail')">收起 ▲</span></div>
-                <p style="color:#64748b;font-size:0.85rem;margin:8px 0 12px;">维护初审人邮箱，用于邮件推送。点击单元格可直接编辑。</p>
+                <p style="color:#64748b;font-size:0.85rem;margin:8px 0 12px;">维护人员邮箱，用于邮件推送。点击单元格可直接编辑。<b>「保存」会先写飞书，成功后再写云端/本地；飞书写失败不会改云端。</b></p>
                 <div style="margin-bottom:8px;display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
                     <input id="emailSearchInput" type="text" placeholder="🔍 搜索姓名或邮箱..." oninput="window.refreshEmailTable&&window.refreshEmailTable(this.value)" style="flex:1;min-width:160px;padding:6px 12px;border:1px solid #cbd5e1;border-radius:8px;font-size:0.8rem;">
                     <button id="addEmailRowBtn" style="background:#f1f5f9;border:1px solid #cbd5e1;padding:6px 16px;border-radius:8px;cursor:pointer;font-size:0.8rem;">➕ 添加行</button>
                     <button id="importEmailBtn" style="background:#eef2ff;border:1px solid #2a5298;color:#2a5298;padding:6px 16px;border-radius:8px;cursor:pointer;font-size:0.8rem;">📥 批量导入</button>
+                    <button id="syncEmailFromFeishuBtn" style="background:#e0f2fe;border:1px solid #0284c7;color:#0369a1;padding:6px 16px;border-radius:8px;cursor:pointer;font-size:0.8rem;">🔄 从飞书更新</button>
+                    <button id="writeEmailToFeishuBtn" style="background:#fef3c7;border:1px solid #f59e0b;color:#b45309;padding:6px 16px;border-radius:8px;cursor:pointer;font-size:0.8rem;">☁️ 写回飞书</button>
                     <button id="saveEmailsBtn" class="primary" style="background:#27ae60;border-radius:20px;padding:6px 20px;">💾 保存</button>
                 </div>
                 <div style="max-height:350px;overflow-y:auto;">
-                <table id="adminEmailTable" style="width:100%;border-collapse:collapse;border:1px solid #e2e8f0;"><thead><tr style="background:#f8fafc;"><th style="text-align:center;padding:8px;font-size:0.8rem;color:#5e6f8d;width:80px;border:1px solid #e2e8f0;">姓名</th><th style="text-align:center;padding:8px;font-size:0.8rem;color:#5e6f8d;border:1px solid #e2e8f0;">邮箱</th><th style="text-align:center;width:50px;border:1px solid #e2e8f0;">修改</th><th style="text-align:center;width:50px;border:1px solid #e2e8f0;">删除</th></tr></thead><tbody id="adminEmailBody"><tr><td colspan="4" style="text-align:center;color:#94a3b8;padding:20px;">加载中...</td></tr></tbody></table>
+                <table id="adminEmailTable" style="width:100%;border-collapse:collapse;border:1px solid #e2e8f0;"><thead><tr style="background:#f8fafc;"><th style="text-align:center;padding:8px;font-size:0.8rem;color:#5e6f8d;width:80px;border:1px solid #e2e8f0;">姓名</th><th style="text-align:center;padding:8px;font-size:0.8rem;color:#5e6f8d;border:1px solid #e2e8f0;">邮箱</th><th style="text-align:center;padding:8px;font-size:0.8rem;color:#5e6f8d;width:110px;border:1px solid #e2e8f0;">站点</th><th style="text-align:center;width:50px;border:1px solid #e2e8f0;">修改</th><th style="text-align:center;width:50px;border:1px solid #e2e8f0;">删除</th></tr></thead><tbody id="adminEmailBody"><tr><td colspan="5" style="text-align:center;color:#94a3b8;padding:20px;">加载中...</td></tr></tbody></table>
                 </div>
             </div>
             <!-- 审计日志详情 -->
@@ -2573,7 +2575,7 @@
             <!-- 站点配置详情 -->
             <div id="siteConfigDetail" class="report-box" style="display:none;margin-top:16px;">
                 <div class="report-title" style="display:flex;justify-content:space-between;align-items:center;">🌐 站点配置 <span style="font-size:0.7rem;color:#94a3b8;cursor:pointer;" onclick="toggleAdminDetail('siteConfigDetail')">收起 ▲</span></div>
-                <p style="color:#64748b;font-size:0.85rem;margin:8px 0 12px;">维护站点名称、图标、颜色和负责人；保存后所有模块自动使用这份配置，<b>新增站点不用改代码</b>。</p>
+                <p style="color:#64748b;font-size:0.85rem;margin:8px 0 12px;">维护站点名称、图标、颜色和品控负责人；保存后所有模块自动使用这份配置，<b>新增站点不用改代码</b>。</p>
                 <div style="margin-bottom:8px;display:flex;gap:8px;flex-wrap:wrap;">
                     <button id="addSiteConfigBtn" style="background:#f1f5f9;border:1px solid #cbd5e1;padding:6px 16px;border-radius:8px;cursor:pointer;font-size:0.8rem;">➕ 添加站点</button>
                     <button id="saveSiteConfigBtn" class="primary" style="background:#27ae60;border-radius:20px;padding:6px 20px;">💾 保存站点配置</button>
@@ -2586,14 +2588,14 @@
                             <th style="padding:6px;border:1px solid #e2e8f0;">站点名称</th>
                             <th style="padding:6px;border:1px solid #e2e8f0;width:60px;">图标</th>
                             <th style="padding:6px;border:1px solid #e2e8f0;width:56px;">颜色</th>
-                            <th style="padding:6px;border:1px solid #e2e8f0;">负责人</th>
-                            <th style="padding:6px;border:1px solid #e2e8f0;">负责人邮箱</th>
+                            <th style="padding:6px;border:1px solid #e2e8f0;">品控负责人</th>
+                            <th style="padding:6px;border:1px solid #e2e8f0;">品控负责人邮箱</th>
                             <th style="padding:6px;border:1px solid #e2e8f0;width:50px;">删除</th>
                         </tr></thead>
                         <tbody id="siteConfigBody"></tbody>
                     </table>
                 </div>
-                <p style="color:#94a3b8;font-size:0.72rem;margin:8px 0 0;">删除站点不会改学员数据；如果该站点还有学员，建议先把人员转到其他站点。改站点名称也不会自动改已有学员的站点，改名后请在「人员管理」里把人转到新名称。负责人邮箱不填，就用「邮箱地址管理」里的邮箱。</p>
+                <p style="color:#94a3b8;font-size:0.72rem;margin:8px 0 0;">删除站点不会改学员数据；如果该站点还有学员，建议先把人员转到其他站点。改站点名称也不会自动改已有学员的站点，改名后请在「人员管理」里把人转到新名称。品控负责人邮箱不填，就用「邮箱地址管理」里的邮箱。</p>
             </div>
             <!-- 纳期配置详情 -->
             <div id="deadlineConfigDetail" class="report-box" style="display:none;margin-top:16px;">
@@ -2615,7 +2617,7 @@
                         <tbody id="deadlineConfigBody"></tbody>
                     </table>
                 </div>
-                <p style="color:#94a3b8;font-size:0.72rem;margin:8px 0 0;">纳期必须小于等于阶段时限；到期当天和逾期后各提醒一次，发给站点负责人和学员本人。</p>
+                <p style="color:#94a3b8;font-size:0.72rem;margin:8px 0 0;">纳期必须小于等于阶段时限；到期当天和逾期后各提醒一次，发给品控负责人和学员本人。</p>
             </div>
         </div>`;
 
@@ -3109,7 +3111,7 @@
                 '<td style="border:1px solid #eef2f6;"><input class="sc-name" placeholder="站点名称" style="width:100%;padding:4px 6px;border:1px solid #cbd5e1;border-radius:6px;font-size:0.78rem;"></td>' +
                 '<td style="border:1px solid #eef2f6;"><input class="sc-icon" value="📍" maxlength="4" style="width:100%;padding:4px 2px;border:1px solid #cbd5e1;border-radius:6px;font-size:0.9rem;text-align:center;"></td>' +
                 '<td style="border:1px solid #eef2f6;text-align:center;"><input type="color" class="sc-color" value="#f8fafc" style="width:36px;height:26px;border:none;background:none;cursor:pointer;"></td>' +
-                '<td style="border:1px solid #eef2f6;"><input class="sc-supervisor" placeholder="负责人" style="width:100%;padding:4px 6px;border:1px solid #cbd5e1;border-radius:6px;font-size:0.78rem;"></td>' +
+                '<td style="border:1px solid #eef2f6;"><input class="sc-supervisor" placeholder="品控负责人" style="width:100%;padding:4px 6px;border:1px solid #cbd5e1;border-radius:6px;font-size:0.78rem;"></td>' +
                 '<td style="border:1px solid #eef2f6;"><input class="sc-email" placeholder="可选" style="width:100%;padding:4px 6px;border:1px solid #cbd5e1;border-radius:6px;font-size:0.78rem;"></td>' +
                 '<td style="text-align:center;border:1px solid #eef2f6;"><button class="sc-del" style="background:#ffedea;color:#c0392b;border:none;padding:3px 8px;border-radius:6px;cursor:pointer;font-size:0.7rem;">🗑️</button></td>';
             tbody.appendChild(tr);
@@ -3128,7 +3130,7 @@
                 if (seen[name]) { errors.push('站点名称重复：' + name); return; }
                 seen[name] = 1;
                 var supEmail = tr.querySelector('.sc-email').value.trim();
-                if (supEmail && supEmail.indexOf('@') < 0) errors.push('站点「' + name + '」的负责人邮箱格式不对');
+                if (supEmail && supEmail.indexOf('@') < 0) errors.push('站点「' + name + '」的品控负责人邮箱格式不对');
                 sites.push({
                     name: name,
                     icon: (tr.querySelector('.sc-icon').value || '📍').trim() || '📍',
@@ -3280,17 +3282,19 @@
             var tbody = document.getElementById('adminEmailBody');
             if (!tbody) return;
             var emails = getPersonnelEmails();
+            var siteMap = getAdminPersonSiteMap();
             var names = Object.keys(emails).filter(function(n) {
-                return !filter || n.toLowerCase().indexOf(filter) >= 0 || (emails[n]||'').toLowerCase().indexOf(filter) >= 0;
+                return !filter || n.toLowerCase().indexOf(filter) >= 0 || (emails[n]||'').toLowerCase().indexOf(filter) >= 0 || (siteMap[n]||'').toLowerCase().indexOf(filter) >= 0;
             }).sort();
             if (names.length === 0) {
-                tbody.innerHTML = '<tr><td colspan="4" style="text-align:center;color:#94a3b8;padding:20px;">' + (filter ? '未找到匹配项' : '暂无邮箱数据') + '</td></tr>';
+                tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;color:#94a3b8;padding:20px;">' + (filter ? '未找到匹配项' : '暂无邮箱数据') + '</td></tr>';
                 return;
             }
             tbody.innerHTML = names.map(function(n) {
                 return '<tr>' +
                     '<td style="text-align:center;padding:8px 6px;font-size:0.82rem;font-weight:600;width:80px;border:1px solid #eef2f6;">' + escapeHtml(n) + '</td>' +
                     '<td style="text-align:center;padding:8px 6px;font-size:0.78rem;color:#5e6f8d;border:1px solid #eef2f6;">' + (emails[n] ? escapeHtml(emails[n]) : '<span style="color:#c0392b;font-weight:600;">待补录</span>') + '</td>' +
+                    '<td style="text-align:center;padding:4px;border:1px solid #eef2f6;"><select class="ae-site" data-name="' + escapeHtml(n) + '" style="width:100%;padding:4px;border:1px solid #cbd5e1;border-radius:6px;font-size:0.75rem;">' + renderEmailSiteOptions(siteMap[n] || '') + '</select></td>' +
                     '<td style="text-align:center;padding:4px;width:50px;border:1px solid #eef2f6;"><button class="ae-edit" data-name="' + escapeHtml(n) + '" data-email="' + escapeHtml(emails[n]) + '" style="background:#eef2ff;color:#2a5298;border:none;padding:3px 10px;border-radius:6px;cursor:pointer;font-size:0.7rem;">✏️</button></td>' +
                     '<td style="text-align:center;padding:4px;width:50px;border:1px solid #eef2f6;"><button class="ae-del" data-name="' + escapeHtml(n) + '" style="background:#ffedea;color:#c0392b;border:none;padding:3px 10px;border-radius:6px;cursor:pointer;font-size:0.7rem;">🗑️</button></td>' +
                 '</tr>';
@@ -3314,6 +3318,8 @@
         }
         // 邮箱编辑弹窗
         function showEditEmailDialog(name, email, tr) {
+            var siteSel = tr ? tr.querySelector('.ae-site') : null;
+            var siteVal = siteSel ? siteSel.value : '';
             var ov = document.createElement('div');
             ov.className = 'modal-overlay'; ov.style.zIndex = '6000';
             ov.innerHTML = '<div class="modal-container" style="max-width:420px;">' +
@@ -3322,7 +3328,9 @@
                     '<label style="font-size:0.8rem;font-weight:600;color:#1f3a6b;display:block;margin-bottom:4px;">姓名</label>' +
                     '<input id="eedName" value="' + escapeHtml(name) + '" style="width:100%;padding:8px 12px;border:1px solid #cbd5e1;border-radius:10px;font-size:0.85rem;margin-bottom:12px;">' +
                     '<label style="font-size:0.8rem;font-weight:600;color:#1f3a6b;display:block;margin-bottom:4px;">邮箱</label>' +
-                    '<input id="eedEmail" value="' + escapeHtml(email) + '" style="width:100%;padding:8px 12px;border:1px solid #cbd5e1;border-radius:10px;font-size:0.85rem;margin-bottom:16px;">' +
+                    '<input id="eedEmail" value="' + escapeHtml(email) + '" style="width:100%;padding:8px 12px;border:1px solid #cbd5e1;border-radius:10px;font-size:0.85rem;margin-bottom:12px;">' +
+                    '<label style="font-size:0.8rem;font-weight:600;color:#1f3a6b;display:block;margin-bottom:4px;">站点</label>' +
+                    '<select id="eedSite" style="width:100%;padding:8px 12px;border:1px solid #cbd5e1;border-radius:10px;font-size:0.85rem;margin-bottom:16px;">' + renderEmailSiteOptions(siteVal) + '</select>' +
                     '<div style="display:flex;gap:8px;">' +
                         '<button id="eedSave" style="flex:1;background:#2a5298;color:white;border:none;padding:10px;border-radius:10px;cursor:pointer;font-weight:600;">💾 保存</button>' +
                         '<button id="eedCancel" style="flex:1;background:#f1f5f9;border:1px solid #cbd5e1;padding:10px;border-radius:10px;cursor:pointer;">取消</button>' +
@@ -3335,6 +3343,7 @@
             ov.querySelector('#eedSave').onclick = function() {
                 var nn = document.getElementById('eedName').value.trim();
                 var ne = document.getElementById('eedEmail').value.trim();
+                var ns = document.getElementById('eedSite').value;
                 if (!nn) { alert('姓名不能为空'); return; }
                 if (!ne || ne.indexOf('@') < 0) { alert('请输入有效的邮箱地址'); return; }
                 // 更新当前行显示
@@ -3343,6 +3352,7 @@
                     if (cells.length >= 2) {
                         cells[0].textContent = nn;
                         cells[1].textContent = ne;
+                        if (siteSel) siteSel.value = ns;
                         var eb = tr.querySelector('.ae-edit');
                         if (eb) { eb.dataset.name = nn; eb.dataset.email = ne; }
                         var db = tr.querySelector('.ae-del');
@@ -3358,29 +3368,273 @@
                 if (!tbody) return;
                 e.preventDefault(); e.stopPropagation();
                 var tr = document.createElement('tr');
-                tr.innerHTML = '<td style="text-align:center;padding:8px 6px;"><input class="ae-name" style="width:100%;padding:4px;border:1px solid #cbd5e1;border-radius:6px;font-size:0.78rem;text-align:center;"></td><td style="text-align:center;padding:8px 6px;"><input class="ae-email" style="width:100%;padding:4px;border:1px solid #cbd5e1;border-radius:6px;font-size:0.78rem;text-align:center;"></td><td style="text-align:center;">—</td><td style="text-align:center;"><button class="ae-del-new" style="background:#ffedea;color:#c0392b;border:none;padding:3px 10px;border-radius:6px;cursor:pointer;font-size:0.7rem;">🗑️</button></td>';
+                tr.innerHTML = '<td style="text-align:center;padding:8px 6px;"><input class="ae-name" style="width:100%;padding:4px;border:1px solid #cbd5e1;border-radius:6px;font-size:0.78rem;text-align:center;"></td><td style="text-align:center;padding:8px 6px;"><input class="ae-email" style="width:100%;padding:4px;border:1px solid #cbd5e1;border-radius:6px;font-size:0.78rem;text-align:center;"></td><td style="text-align:center;padding:4px;"><select class="ae-site" style="width:100%;padding:4px;border:1px solid #cbd5e1;border-radius:6px;font-size:0.75rem;">' + renderEmailSiteOptions('') + '</select></td><td style="text-align:center;">—</td><td style="text-align:center;"><button class="ae-del-new" style="background:#ffedea;color:#c0392b;border:none;padding:3px 10px;border-radius:6px;cursor:pointer;font-size:0.7rem;">🗑️</button></td>';
                 tbody.insertBefore(tr, tbody.firstChild);
                 tr.querySelector('.ae-del-new').onclick = function() { showConfirm('确定删除此行吗？', '🗑️', true).then(function(ok) { if (ok) tr.remove(); }); };
             }
         });
-        document.getElementById('saveEmailsBtn').addEventListener('click', function() {
+        var _emailSheetSig = '';
+        function _emailSheetHash(rows) {
+            var parts = [];
+            (rows || []).forEach(function(r) {
+                var name = _emailCellText(r[0]);
+                var email = _emailCellText(r[1]).replace(/^mailto:/i, '');
+                var site = _emailCellText(r[2]);
+                var type = _emailCellText(r[3]);
+                var use = _emailCellText(r[4]);
+                var enabled = _emailCellText(r[5]);
+                if (!name && !email) return;
+                parts.push([type, name, email, site, use, enabled].join('|'));
+            });
+            parts.sort();
+            var s = parts.join('\n'), h = 0;
+            for (var i = 0; i < s.length; i++) h = ((h << 5) - h + s.charCodeAt(i)) | 0;
+            return String(h);
+        }
+        document.getElementById('saveEmailsBtn').addEventListener('click', async function() {
+            var btn = this;
+            var searchEl = document.getElementById('emailSearchInput');
+            if (searchEl && searchEl.value.trim()) { alert('请先清空搜索框再保存，避免只保存筛选出来的行'); return; }
             var rows = document.querySelectorAll('#adminEmailBody tr');
             var newEmails = {};
+            var newSites = {};
             rows.forEach(function(tr) {
                 var cells = tr.querySelectorAll('td');
                 if (cells.length < 2) return;
                 // 已有数据行：从 cells 文本读取；新添加行：从 input 读取
                 var nameInput = tr.querySelector('.ae-name');
                 var emailInput = tr.querySelector('.ae-email');
+                var siteInput = tr.querySelector('.ae-site');
                 var n = nameInput ? nameInput.value : (cells[0].textContent || '').trim();
                 var e = emailInput ? emailInput.value : (cells[1].textContent || '').trim();
-                if (n && e && e.indexOf('@') > 0) newEmails[n] = e;
+                var st = siteInput ? siteInput.value : '';
+                if (n && e && e.indexOf('@') > 0) { newEmails[n] = e; newSites[n] = st; }
             });
-            savePersonnelEmails(newEmails);
-            logAdminAction('邮箱管理', '保存邮箱列表', Object.keys(newEmails).length + '人');
-            refreshEmailTable();
-            updateAdminCards();
-            showToast('✅ 邮箱列表已保存（' + Object.keys(newEmails).length + '人）', 'success');
+            var count = Object.keys(newEmails).length;
+            if (!count) { alert('当前没有可保存的邮箱'); return; }
+            btn.disabled = true; btn.textContent = '⏳ 保存中...';
+            try {
+                var token = getErrorDashboardToken();
+                if (!token) token = await getFeishuToken();
+                if (!token) throw new Error('未获取到飞书凭证，请先在失误看板授权');
+                var readUrl = 'https://open.feishu.cn/open-apis/sheets/v2/spreadsheets/BzG8s8py3hDZIvtUJl7cRXJXnfe/values/qCBZEl!A2:F500?majorDimension=ROWS';
+                var rr = await feishuApiFetch(readUrl, { headers: { 'Authorization': 'Bearer ' + token } });
+                var rd = await rr.json();
+                if (!rd || rd.code !== 0) throw new Error((rd && rd.msg) || '读取飞书表失败');
+                var src = (rd.data && rd.data.valueRange && rd.data.valueRange.values) || [];
+                var sig = _emailSheetHash(src);
+                if (_emailSheetSig && sig !== _emailSheetSig) {
+                    var ok = await showConfirm('飞书表在你打开后已被别人改过。点「确定」会用当前页面覆盖飞书；点「取消」请先点「🔄 从飞书更新」。', '⚠️', true);
+                    if (!ok) { btn.disabled = false; btn.textContent = '💾 保存'; return; }
+                } else if (!_emailSheetSig) {
+                    var sheetMap = {};
+                    src.forEach(function(r) {
+                        if (_emailCellText(r[3]) === '系统') return;
+                        var nm = _emailCellText(r[0]);
+                        var em = _emailCellText(r[1]).replace(/^mailto:/i, '');
+                        if (nm && em) sheetMap[nm] = em;
+                    });
+                    var same = Object.keys(newEmails).length === Object.keys(sheetMap).length && Object.keys(newEmails).every(function(n) { return sheetMap[n] === newEmails[n]; });
+                    if (!same) {
+                        var ok2 = await showConfirm('飞书表当前名单和页面不一致（可能别人改过）。点「确定」会用当前页面覆盖飞书；点「取消」请先点「🔄 从飞书更新」。', '⚠️', true);
+                        if (!ok2) { btn.disabled = false; btn.textContent = '💾 保存'; return; }
+                    }
+                }
+                // 保留系统收件人行
+                var systemRows = [];
+                src.forEach(function(r) {
+                    if (_emailCellText(r[3]) !== '系统') return;
+                    var em = _emailCellText(r[1]).replace(/^mailto:/i, '');
+                    if (!em || em.indexOf('@') < 0) return;
+                    systemRows.push([_emailCellText(r[0]), em, _emailCellText(r[2]), '系统', _emailCellText(r[4]), _emailCellText(r[5]) || '是']);
+                });
+                var siteMap = getAdminPersonSiteMap();
+                Object.keys(newSites).forEach(function(n) {
+                    if (newSites[n]) siteMap[n] = newSites[n];
+                    else delete siteMap[n];
+                });
+                var order = { '成都': 0, '青岛': 1, '深圳': 2 };
+                var names = Object.keys(newEmails).sort(function(a, b) {
+                    var sa = order[siteMap[a]] === undefined ? 9 : order[siteMap[a]];
+                    var sb = order[siteMap[b]] === undefined ? 9 : order[siteMap[b]];
+                    return sa - sb || a.localeCompare(b, 'zh');
+                });
+                var out = [['姓名', '邮箱', '站点', '类型', '用途', '启用']];
+                names.forEach(function(n) { out.push([n, newEmails[n], siteMap[n] || '', '员工', '员工邮箱', '是']); });
+                systemRows.forEach(function(r) { out.push(r); });
+                while (out.length < 200) out.push(['', '', '', '', '', '']);
+                var writeUrl = 'https://open.feishu.cn/open-apis/sheets/v2/spreadsheets/BzG8s8py3hDZIvtUJl7cRXJXnfe/values_batch_update';
+                var wr = await feishuApiFetch(writeUrl, {
+                    method: 'POST',
+                    headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ valueRanges: [{ range: 'qCBZEl!A1:F200', values: out }] })
+                });
+                var wd = await wr.json();
+                if (!wd || wd.code !== 0) throw new Error((wd && wd.msg) || '写飞书表失败');
+                // 飞书写成功后才写云端/本地
+                savePersonnelEmails(newEmails);
+                saveAdminPersonSiteMap(siteMap);
+                _emailSheetSig = _emailSheetHash(out.slice(1));
+                logAdminAction('邮箱管理', '保存邮箱列表（含飞书）', count + '人');
+                refreshEmailTable();
+                updateAdminCards();
+                showToast('✅ 已保存：飞书 ' + count + ' 人 + 云端同步', 'success');
+            } catch (e) {
+                alert('❌ 保存失败：' + e.message + '\n\n飞书没写成功，云端和本地没有改动。');
+            } finally {
+                btn.disabled = false; btn.textContent = '💾 保存';
+            }
+        });
+        // 从飞书「邮箱管理」sheet 更新
+        function _emailCellText(c) {
+            if (c === null || c === undefined) return '';
+            if (typeof c === 'string') return c.trim();
+            if (typeof c === 'number') return String(c);
+            if (Array.isArray(c)) return c.map(function(x) {
+                if (x && typeof x === 'object') return String(x.text || x.link || '');
+                return String(x || '');
+            }).join('').trim();
+            if (typeof c === 'object') return String(c.text || c.link || '').trim();
+            return '';
+        }
+        document.getElementById('syncEmailFromFeishuBtn').addEventListener('click', async function() {
+            var btn = this;
+            btn.disabled = true; btn.textContent = '⏳ 读取中...';
+            try {
+                var token = getErrorDashboardToken();
+                if (!token) token = await getFeishuToken();
+                if (!token) throw new Error('未获取到飞书凭证，请先在失误看板授权');
+                var url = 'https://open.feishu.cn/open-apis/sheets/v2/spreadsheets/BzG8s8py3hDZIvtUJl7cRXJXnfe/values/qCBZEl!A2:F500?majorDimension=ROWS';
+                var resp = await feishuApiFetch(url, { headers: { 'Authorization': 'Bearer ' + token } });
+                var data = await resp.json();
+                if (!data || data.code !== 0) throw new Error((data && data.msg) || '读取失败');
+                var rows = (data.data && data.data.valueRange && data.data.valueRange.values) || [];
+                _emailSheetSig = _emailSheetHash(rows);
+                var map = {}, siteMapFromSheet = {}, feedback = [], reportEmail = '', alertEmail = '';
+                rows.forEach(function(r) {
+                    var name = _emailCellText(r[0]);
+                    var email = _emailCellText(r[1]).replace(/^mailto:/i, '');
+                    var site = _emailCellText(r[2]);
+                    var type = _emailCellText(r[3]);
+                    var use = _emailCellText(r[4]);
+                    var enabled = _emailCellText(r[5]);
+                    if (!email || email.indexOf('@') < 0) return;
+                    if (enabled === '否') return;
+                    if (type === '系统') {
+                        if (use.indexOf('反馈') >= 0) feedback.push(email);
+                        else if (use.indexOf('报告') >= 0 && !reportEmail) reportEmail = email;
+                        else if (use.indexOf('告警') >= 0 && !alertEmail) alertEmail = email;
+                        return;
+                    }
+                    if (name) {
+                        map[name] = email;
+                        if (site) siteMapFromSheet[name] = site;
+                    }
+                });
+                var oldCount = Object.keys(getPersonnelEmails()).length;
+                var newCount = Object.keys(map).length;
+                if (!newCount) throw new Error('表里没有读到员工邮箱，已中止（不会清空现有名单）');
+                if (newCount < Math.floor(oldCount * 0.5)) {
+                    var ok = await showConfirm('飞书表只读到 ' + newCount + ' 人，现有 ' + oldCount + ' 人，数量少了一半以上。仍要覆盖吗？', '⚠️', true);
+                    if (!ok) { btn.disabled = false; btn.textContent = '🔄 从飞书更新'; return; }
+                }
+                savePersonnelEmails(map);
+                if (Object.keys(siteMapFromSheet).length) {
+                    var psm = getAdminPersonSiteMap();
+                    Object.keys(siteMapFromSheet).forEach(function(n) { psm[n] = siteMapFromSheet[n]; });
+                    saveAdminPersonSiteMap(psm);
+                }
+                var cfg = {
+                    feedbackRecipients: feedback,
+                    reportEmail: reportEmail || 'xuhang02@zhuanzhuan.com',
+                    alertEmail: alertEmail || 'xuhang02@zhuanzhuan.com',
+                    updatedAt: new Date().toISOString()
+                };
+                localStorage.setItem('emailConfigData', JSON.stringify(cfg));
+                refreshEmailTable();
+                updateAdminCards();
+                logAdminAction('邮箱管理', '从飞书更新邮箱', newCount + ' 人');
+                showToast('✅ 已从飞书更新 ' + newCount + ' 人；系统收件人：反馈 ' + (feedback.length || 0) + ' 个', 'success');
+            } catch (e) {
+                alert('❌ 从飞书更新失败：' + e.message);
+            } finally {
+                btn.disabled = false; btn.textContent = '🔄 从飞书更新';
+            }
+        });
+        // 把当前邮箱表写回飞书「邮箱管理」sheet
+        document.getElementById('writeEmailToFeishuBtn').addEventListener('click', async function() {
+            var btn = this;
+            var searchEl = document.getElementById('emailSearchInput');
+            if (searchEl && searchEl.value.trim()) { alert('请先清空搜索框再写回飞书，避免只写筛选出来的行'); return; }
+            btn.disabled = true; btn.textContent = '⏳ 准备中...';
+            try {
+                var rows = document.querySelectorAll('#adminEmailBody tr');
+                var newEmails = {}, newSites = {};
+                rows.forEach(function(tr) {
+                    var cells = tr.querySelectorAll('td');
+                    if (cells.length < 2) return;
+                    var nameInput = tr.querySelector('.ae-name');
+                    var emailInput = tr.querySelector('.ae-email');
+                    var siteInput = tr.querySelector('.ae-site');
+                    var n = nameInput ? nameInput.value : (cells[0].textContent || '').trim();
+                    var e = emailInput ? emailInput.value : (cells[1].textContent || '').trim();
+                    var st = siteInput ? siteInput.value : '';
+                    if (n && e && e.indexOf('@') > 0) { newEmails[n] = e; newSites[n] = st; }
+                });
+                var count = Object.keys(newEmails).length;
+                if (!count) throw new Error('当前没有可写回的邮箱');
+                var token = getErrorDashboardToken();
+                if (!token) token = await getFeishuToken();
+                if (!token) throw new Error('未获取到飞书凭证，请先在失误看板授权');
+                // 先读飞书表，保留系统收件人行
+                var readUrl = 'https://open.feishu.cn/open-apis/sheets/v2/spreadsheets/BzG8s8py3hDZIvtUJl7cRXJXnfe/values/qCBZEl!A2:F500?majorDimension=ROWS';
+                var rr = await feishuApiFetch(readUrl, { headers: { 'Authorization': 'Bearer ' + token } });
+                var rd = await rr.json();
+                if (!rd || rd.code !== 0) throw new Error((rd && rd.msg) || '读取飞书表失败');
+                var src = (rd.data && rd.data.valueRange && rd.data.valueRange.values) || [];
+                var systemRows = [];
+                src.forEach(function(r) {
+                    if (_emailCellText(r[3]) !== '系统') return;
+                    var em = _emailCellText(r[1]).replace(/^mailto:/i, '');
+                    if (!em || em.indexOf('@') < 0) return;
+                    systemRows.push([_emailCellText(r[0]), em, _emailCellText(r[2]), '系统', _emailCellText(r[4]), _emailCellText(r[5]) || '是']);
+                });
+                var siteMap = getAdminPersonSiteMap();
+                Object.keys(newSites).forEach(function(n) {
+                    if (newSites[n]) siteMap[n] = newSites[n];
+                    else delete siteMap[n];
+                });
+                var order = { '成都': 0, '青岛': 1, '深圳': 2 };
+                var names = Object.keys(newEmails).sort(function(a, b) {
+                    var sa = order[siteMap[a]] === undefined ? 9 : order[siteMap[a]];
+                    var sb = order[siteMap[b]] === undefined ? 9 : order[siteMap[b]];
+                    return sa - sb || a.localeCompare(b, 'zh');
+                });
+                var out = [['姓名', '邮箱', '站点', '类型', '用途', '启用']];
+                names.forEach(function(n) { out.push([n, newEmails[n], siteMap[n] || '', '员工', '员工邮箱', '是']); });
+                systemRows.forEach(function(r) { out.push(r); });
+                while (out.length < 200) out.push(['', '', '', '', '', '']);
+                var ok = await showConfirm('将把 ' + count + ' 个员工邮箱写回飞书「邮箱管理」，系统收件人保留 ' + systemRows.length + ' 行。确认？', '☁️', true);
+                if (!ok) { btn.disabled = false; btn.textContent = '☁️ 写回飞书'; return; }
+                var writeUrl = 'https://open.feishu.cn/open-apis/sheets/v2/spreadsheets/BzG8s8py3hDZIvtUJl7cRXJXnfe/values_batch_update';
+                var wr = await feishuApiFetch(writeUrl, {
+                    method: 'POST',
+                    headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ valueRanges: [{ range: 'qCBZEl!A1:F200', values: out }] })
+                });
+                var wd = await wr.json();
+                if (!wd || wd.code !== 0) throw new Error((wd && wd.msg) || '写飞书表失败');
+                savePersonnelEmails(newEmails);
+                saveAdminPersonSiteMap(siteMap);
+                _emailSheetSig = _emailSheetHash(out.slice(1));
+                refreshEmailTable();
+                logAdminAction('邮箱管理', '写回飞书邮箱表', count + ' 人');
+                showToast('✅ 已写回飞书：' + count + ' 个员工邮箱，系统收件人 ' + systemRows.length + ' 行', 'success');
+            } catch (e) {
+                alert('❌ 写回飞书失败：' + e.message);
+            } finally {
+                btn.disabled = false; btn.textContent = '☁️ 写回飞书';
+            }
         });
         // 批量导入邮箱
         document.getElementById('importEmailBtn').addEventListener('click', function() {
@@ -13619,6 +13873,7 @@ URL.revokeObjectURL(url);
             );
             if (!go) return;
         }
+        await calibrateEmailsFromFeishu(true);
         var defaults = [opts.siteQc].concat((opts.thresholdPeople || []).map(function(p) { return p.name; })).filter(Boolean);
         var recips = (opts.presetRecipients && opts.presetRecipients.length)
             ? opts.presetRecipients
@@ -17320,6 +17575,8 @@ URL.revokeObjectURL(url);
     async function pushExamCardToReviewer(reviewerName, examCode, questionCount, statusEl) {
         var clean = (reviewerName || '').replace(/解答失误|解答/g, '').trim();
         if (statusEl) statusEl.innerHTML = '⏳ 正在推送飞书…';
+        // 推送前校准飞书邮箱
+        await calibrateEmailsFromFeishu(true);
         // 查邮箱：本地优先，无则查云端
         var emails = getPersonnelEmails();
         var email = emails[clean] || emails[reviewerName] || '';
@@ -18723,7 +18980,19 @@ URL.revokeObjectURL(url);
         ]
     };
     var FEISHU_SOURCE_DOC_URL = 'https://zhuanspirit.feishu.cn/sheets/BzG8s8py3hDZIvtUJl7cRXJXnfe';
-    var FEISHU_FEEDBACK_RECIPIENTS = 'xuhang02@zhuanzhuan.com'; // 反馈通知邮箱，逗号分隔，如 'a@xx.com,b@xx.com'
+    var FEISHU_FEEDBACK_RECIPIENTS = 'xuhang02@zhuanzhuan.com'; // 反馈通知邮箱兜底值（飞书「邮箱管理」里没配时才用）
+    function getFeedbackRecipients() {
+        try {
+            var c = JSON.parse(localStorage.getItem('emailConfigData') || 'null');
+            if (c && Array.isArray(c.feedbackRecipients) && c.feedbackRecipients.length) {
+                return c.feedbackRecipients.filter(Boolean).join(',');
+            }
+            if (c && typeof c.feedbackRecipients === 'string' && c.feedbackRecipients.trim()) {
+                return c.feedbackRecipients;
+            }
+        } catch(e) {}
+        return FEISHU_FEEDBACK_RECIPIENTS;
+    }
     // 每周一自动刷新抽检数据
     async function refreshSamplingFromFeishu() {
         try {
@@ -22488,7 +22757,9 @@ URL.revokeObjectURL(url);
                 var pick = _sccPickAll(errors, cases);
                 if (!pick.ok) { showAlert(pick.reason + '。', '⚠️'); return; }
                 if (!pick.picked.length) { showAlert('案例库里没有可用案例（或该周期一条都没挑出来），无法生成报告。', '⚠️'); return; }
-                _sccOpenRecipientPicker(site, { start: start, end: end, rangeLabel: rangeLabel, reportName: reportName, pick: pick });
+                calibrateEmailsFromFeishu(true).then(function() {
+                    _sccOpenRecipientPicker(site, { start: start, end: end, rangeLabel: rangeLabel, reportName: reportName, pick: pick });
+                });
             } catch(e) {
                 showAlert('挑选案例出错：' + (e.message || e), '⚠️');
             }
@@ -24126,6 +24397,88 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
 
     // ==================== 邮件推送（Resend + Supabase Edge Function） ====================
     const PERSONNEL_EMAILS_KEY = 'personnelEmails';
+    function renderEmailSiteOptions(selected) {
+        var html = '<option value="">未分配</option>';
+        var found = false;
+        getEnabledSites().forEach(function(s) {
+            if (s.name === selected) found = true;
+            html += '<option value="' + escapeHtml(s.name) + '"' + (s.name === selected ? ' selected' : '') + '>' + escapeHtml((s.icon || '📍') + ' ' + s.name) + '</option>';
+        });
+        if (selected && !found) html += '<option value="' + escapeHtml(selected) + '" selected>' + escapeHtml(selected) + '（已停用）</option>';
+        return html;
+    }
+    var _emailCalibAt = 0;
+    var _emailCalibPromise = null;
+    function emailCellText(c) {
+        if (c === null || c === undefined) return '';
+        if (typeof c === 'string') return c.trim();
+        if (typeof c === 'number') return String(c);
+        if (Array.isArray(c)) return c.map(function(x) {
+            if (x && typeof x === 'object') return String(x.text || x.link || '');
+            return String(x || '');
+        }).join('').trim();
+        if (typeof c === 'object') return String(c.text || c.link || '').trim();
+        return '';
+    }
+    async function calibrateEmailsFromFeishu(silent) {
+        if (_emailCalibPromise) return _emailCalibPromise;
+        if (Date.now() - _emailCalibAt < 60000) return true;
+        _emailCalibPromise = (async function() {
+            try {
+                var token = getErrorDashboardToken();
+                if (!token) token = await getFeishuToken();
+                if (!token) throw new Error('未获取到飞书凭证');
+                var url = 'https://open.feishu.cn/open-apis/sheets/v2/spreadsheets/BzG8s8py3hDZIvtUJl7cRXJXnfe/values/qCBZEl!A2:F500?majorDimension=ROWS';
+                var resp = await feishuApiFetch(url, { headers: { 'Authorization': 'Bearer ' + token } });
+                var data = await resp.json();
+                if (!data || data.code !== 0) throw new Error((data && data.msg) || '读取失败');
+                var rows = (data.data && data.data.valueRange && data.data.valueRange.values) || [];
+                var map = {}, sites = {}, feedback = [], reportEmail = '', alertEmail = '';
+                rows.forEach(function(r) {
+                    var name = emailCellText(r[0]);
+                    var email = emailCellText(r[1]).replace(/^mailto:/i, '');
+                    var site = emailCellText(r[2]);
+                    var type = emailCellText(r[3]);
+                    var use = emailCellText(r[4]);
+                    var enabled = emailCellText(r[5]);
+                    if (!email || email.indexOf('@') < 0) return;
+                    if (enabled === '否') return;
+                    if (type === '系统') {
+                        if (use.indexOf('反馈') >= 0) feedback.push(email);
+                        else if (use.indexOf('报告') >= 0 && !reportEmail) reportEmail = email;
+                        else if (use.indexOf('告警') >= 0 && !alertEmail) alertEmail = email;
+                        return;
+                    }
+                    if (name) { map[name] = email; if (site) sites[name] = site; }
+                });
+                var newCount = Object.keys(map).length;
+                if (!newCount) throw new Error('表里没有员工邮箱');
+                var oldCount = Object.keys(getPersonnelEmails()).length;
+                if (oldCount > 0 && newCount < Math.floor(oldCount * 0.5)) throw new Error('飞书员工邮箱从 ' + oldCount + ' 掉到 ' + newCount + '，少了一半以上');
+                if (isAdminMode()) {
+                    savePersonnelEmails(map);
+                    var psm = getAdminPersonSiteMap();
+                    Object.keys(sites).forEach(function(n) { psm[n] = sites[n]; });
+                    saveAdminPersonSiteMap(psm);
+                    localStorage.setItem('emailConfigData', JSON.stringify({
+                        feedbackRecipients: feedback,
+                        reportEmail: reportEmail || 'xuhang02@zhuanzhuan.com',
+                        alertEmail: alertEmail || 'xuhang02@zhuanzhuan.com',
+                        updatedAt: new Date().toISOString()
+                    }));
+                }
+                _emailCalibAt = Date.now();
+                if (!silent) console.log('[邮箱] 推送前校准：' + Object.keys(map).length + '人');
+                return true;
+            } catch (e) {
+                if (!silent) console.log('[邮箱] 推送前校准失败：' + e.message);
+                return false;
+            } finally {
+                _emailCalibPromise = null;
+            }
+        })();
+        return _emailCalibPromise;
+    }
     function getPersonnelEmails() {
         try { return JSON.parse(localStorage.getItem(PERSONNEL_EMAILS_KEY) || '{}'); } catch(e) {}
         // 本地为空时尝试从云端拉取
@@ -24687,7 +25040,7 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
     function reportQuestion(qid, reason) { reportItem('exam', qid, reason); }
     function resolveReportedQuestion(qid) { resolveReportItem('exam', qid); }
 
-    function reportTrainingCaseByIdx(idx, btn) {
+    async function reportTrainingCaseByIdx(idx, btn) {
         var cases = getManualCasesFull ? getManualCasesFull() : [];
         var c = cases[idx];
         if (!c) return;
@@ -24697,7 +25050,8 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
         var reason = prompt('请简要描述案例问题（可选）：', '');
         if (reason === null) { if (btn) { btn.disabled = false; btn.textContent = '⚠️'; } return; }
         reportItem('training', id, reason, { title: c.issueDesc || c.qcCode, category: c.errorCategory || '', desc: c.qcCode || '' });
-        var recipients = FEISHU_FEEDBACK_RECIPIENTS.split(',').map(function(s){ return s.trim(); }).filter(Boolean);
+        await calibrateEmailsFromFeishu(true);
+        var recipients = getFeedbackRecipients().split(',').map(function(s){ return s.trim(); }).filter(Boolean);
         if (recipients.length > 0) {
             feishuPushDirect('report_training', { title: c.issueDesc || c.qcCode, category: c.errorCategory || '', reason: reason }, recipients).catch(function(){});
         }
@@ -26087,7 +26441,7 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
         }, 100);
     }
 
-    function reportQuestionInExam(btn) {
+    async function reportQuestionInExam(btn) {
         var qid = btn.dataset.qid;
         var qidx = parseInt(btn.dataset.qidx);
         if (!qid) return;
@@ -26103,7 +26457,8 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
             desc: q ? (q.answer || '') : ''
         });
         // 自动推送飞书通知（异步，不阻塞考试）
-        var recipients = FEISHU_FEEDBACK_RECIPIENTS.split(',').map(function(s){ return s.trim(); }).filter(Boolean);
+        await calibrateEmailsFromFeishu(true);
+        var recipients = getFeedbackRecipients().split(',').map(function(s){ return s.trim(); }).filter(Boolean);
         if (recipients.length > 0) {
             var cardData = {
                 examCode: (function(){ var h = getExamHistory(); return h[currentExamId] ? h[currentExamId].examCode : ''; })(),
@@ -26887,7 +27242,8 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
         newcomerAnalysisData:      { guest: false, exam: false },
         newcomerGlobalData:        { guest: false, exam: false },
         adminPersonSiteMap:        { guest: false, exam: false },
-        siteConfigData:            { guest: true,  exam: false },  // 站点配置（名称/图标/颜色/负责人），游客也要用它渲染站点切换
+        emailConfigData:           { guest: true,  exam: false },  // 系统收件人（反馈/报告/告警），由飞书「邮箱管理」sheet 同步；游客也要用它发反馈
+        siteConfigData:            { guest: true,  exam: false },  // 站点配置（名称/图标/颜色/品控负责人），游客也要用它渲染站点切换
         newhireDeadlineConfig:     { guest: true,  exam: false },  // 纳期配置（阶段时限/各项第几天）
         newhireDeadlineReminders:  { guest: false, exam: false },  // 提醒发送记录（定时脚本写，页面只读不展示）
         biweeklyCases:             { guest: false, exam: false },
