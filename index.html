@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <!-- 版本行：每次部署新代码必须 bump 此 content（YYYYMMDD.N），旧设备靠它自检静默升级 -->
-    <meta name="yxt-ver" content="20261122.1">
+    <meta name="yxt-ver" content="20261122.2">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
     <title>优学堂</title>
     <script src="https://cdn.sheetjs.com/xlsx-0.20.2/package/dist/xlsx.full.min.js" defer></script>
@@ -3414,9 +3414,8 @@
             if (!count) { alert('当前没有可保存的邮箱'); return; }
             btn.disabled = true; btn.textContent = '⏳ 保存中...';
             try {
-                var token = getErrorDashboardToken();
-                if (!token) token = await getFeishuToken();
-                if (!token) throw new Error('未获取到飞书凭证，请先在失误看板授权');
+                var token = await getFeishuToken();
+                if (!token) throw new Error('未获取到应用身份凭证，无法写飞书表；请确认飞书代理正常');
                 var readUrl = 'https://open.feishu.cn/open-apis/sheets/v2/spreadsheets/BzG8s8py3hDZIvtUJl7cRXJXnfe/values/qCBZEl!A2:F500?majorDimension=ROWS';
                 var rr = await feishuApiFetch(readUrl, { headers: { 'Authorization': 'Bearer ' + token } });
                 var rd = await rr.json();
@@ -3501,8 +3500,8 @@
             var btn = this;
             btn.disabled = true; btn.textContent = '⏳ 读取中...';
             try {
-                var token = getErrorDashboardToken();
-                if (!token) token = await getFeishuToken();
+                var token = await getFeishuToken();
+                if (!token) token = getErrorDashboardToken();
                 if (!token) throw new Error('未获取到飞书凭证，请先在失误看板授权');
                 var url = 'https://open.feishu.cn/open-apis/sheets/v2/spreadsheets/BzG8s8py3hDZIvtUJl7cRXJXnfe/values/qCBZEl!A2:F500?majorDimension=ROWS';
                 var resp = await feishuApiFetch(url, { headers: { 'Authorization': 'Bearer ' + token } });
@@ -3583,9 +3582,8 @@
                 });
                 var count = Object.keys(newEmails).length;
                 if (!count) throw new Error('当前没有可写回的邮箱');
-                var token = getErrorDashboardToken();
-                if (!token) token = await getFeishuToken();
-                if (!token) throw new Error('未获取到飞书凭证，请先在失误看板授权');
+                var token = await getFeishuToken();
+                if (!token) throw new Error('未获取到应用身份凭证，无法写飞书表；请确认飞书代理正常');
                 // 先读飞书表，保留系统收件人行
                 var readUrl = 'https://open.feishu.cn/open-apis/sheets/v2/spreadsheets/BzG8s8py3hDZIvtUJl7cRXJXnfe/values/qCBZEl!A2:F500?majorDimension=ROWS';
                 var rr = await feishuApiFetch(readUrl, { headers: { 'Authorization': 'Bearer ' + token } });
@@ -24425,8 +24423,8 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
         if (Date.now() - _emailCalibAt < 60000) return true;
         _emailCalibPromise = (async function() {
             try {
-                var token = getErrorDashboardToken();
-                if (!token) token = await getFeishuToken();
+                var token = await getFeishuToken();
+                if (!token) token = getErrorDashboardToken();
                 if (!token) throw new Error('未获取到飞书凭证');
                 var url = 'https://open.feishu.cn/open-apis/sheets/v2/spreadsheets/BzG8s8py3hDZIvtUJl7cRXJXnfe/values/qCBZEl!A2:F500?majorDimension=ROWS';
                 var resp = await feishuApiFetch(url, { headers: { 'Authorization': 'Bearer ' + token } });
