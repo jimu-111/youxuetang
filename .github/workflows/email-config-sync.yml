@@ -1,0 +1,40 @@
+name: 邮箱配置同步
+
+# 2026-11-22 建。
+# 每天 10:00（北京时间 = UTC 2:00）读飞书「邮箱管理」sheet（BzG8… / qCBZEl），
+# 把员工邮箱写云端 personnelEmails，把系统收件人写云端 emailConfigData。
+# 安全闸门：表里员工邮箱为 0，或比云端现有少一半以上 → 中止；确认无误可手动勾 force。
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: '只读演练（不写云端）'
+        default: 'false'
+      force:
+        description: '强制（越过「少一半」闸门）'
+        default: 'false'
+  schedule:
+    - cron: "0 2 * * *"
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    concurrency:
+      group: email-config-sync
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: 读飞书邮箱表 → 写云端
+        run: node email-config-sync.js
+        env:
+          DRY_RUN: ${{ github.event.inputs.dry_run || 'false' }}
+          FORCE: ${{ github.event.inputs.force || 'false' }}
+          FEISHU_APP_SECRET: ${{ secrets.FEISHU_APP_SECRET }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
