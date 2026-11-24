@@ -90,18 +90,16 @@ function parseRows(rows) {
     const type = cellText(r[3]);
     const use = cellText(r[4]);
     const enabled = cellText(r[5]);
-    if (!email || email.indexOf('@') < 0) return;
     if (enabled === '否') return;
     if (type === '系统') {
+      if (!email || email.indexOf('@') < 0) return;
       if (use.indexOf('反馈') >= 0) feedback.push(email);
       else if (use.indexOf('报告') >= 0 && !reportEmail) reportEmail = email;
       else if (use.indexOf('告警') >= 0 && !alertEmail) alertEmail = email;
       return;
     }
-    if (name) {
-      emails[name] = email;
-      if (site) sites[name] = site;
-    }
+    if (name && site) sites[name] = site;
+    if (name && email && email.indexOf('@') >= 0) emails[name] = email;
   });
   return {
     emails,
@@ -152,10 +150,12 @@ async function loadEmailConfig(opts) {
     if (!opts.noWrite) {
       try {
         const oldSites = parseJson(await readCloud('adminPersonSiteMap'), {});
-        Object.keys(parsed.sites).forEach(n => { oldSites[n] = parsed.sites[n]; });
+        const oldSitesCount = Object.keys(oldSites).length;
+        const newSitesCount = Object.keys(parsed.sites).length;
+        const finalSites = (newSitesCount && (!oldSitesCount || newSitesCount >= Math.floor(oldSitesCount * 0.5))) ? parsed.sites : oldSites;
         await Promise.all([
           writeCloud('personnelEmails', JSON.stringify(parsed.emails)),
-          writeCloud('adminPersonSiteMap', JSON.stringify(oldSites)),
+          writeCloud('adminPersonSiteMap', JSON.stringify(finalSites)),
           writeCloud('emailConfigData', JSON.stringify(parsed.config))
         ]);
       } catch (e) { console.log('  ⚠️ 邮箱校准写云端失败（继续用飞书最新值）：' + e.message); }

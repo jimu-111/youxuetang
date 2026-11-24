@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <!-- 版本行：每次部署新代码必须 bump 此 content（YYYYMMDD.N），旧设备靠它自检静默升级 -->
-    <meta name="yxt-ver" content="20261122.2">
+    <meta name="yxt-ver" content="20261124.1">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
     <title>优学堂</title>
     <script src="https://cdn.sheetjs.com/xlsx-0.20.2/package/dist/xlsx.full.min.js" defer></script>
@@ -2559,17 +2559,15 @@
             <!-- 人员管理详情 -->
             <div id="siteDetail" class="report-box" style="display:none;margin-top:16px;">
                 <div class="report-title" style="display:flex;justify-content:space-between;align-items:center;">👤 人员管理 <span style="font-size:0.7rem;color:#94a3b8;cursor:pointer;" onclick="toggleAdminDetail('siteDetail')">收起 ▲</span></div>
-                <p style="color:#64748b;font-size:0.85rem;margin:8px 0 12px;">维护人员姓名与所属站点，<b>所有模块的站点归属以这里为准</b>。站点下拉直接修改即时保存。</p>
+                <p style="color:#64748b;font-size:0.85rem;margin:8px 0 12px;"><b>人员名单和站点以「邮箱地址管理」为准，这里只读。</b>新增、删除、改站点请去「邮箱地址管理」；保存/同步后这里自动跟着变。</p>
                 <div style="margin-bottom:8px;display:flex;gap:6px;flex-wrap:wrap;align-items:center;">
                     ${siteFilterBtns}
                 </div>
                 <div style="margin-bottom:8px;display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
                     <input id="siteSearchInput" type="text" placeholder="🔍 搜索姓名或站点..." oninput="window.refreshAdminSiteTable&&window.refreshAdminSiteTable(this.value)" style="flex:1;min-width:160px;padding:6px 12px;border:1px solid #cbd5e1;border-radius:8px;font-size:0.8rem;">
-                    <button id="addSiteRowBtn" style="background:#f1f5f9;border:1px solid #cbd5e1;padding:6px 16px;border-radius:8px;cursor:pointer;font-size:0.8rem;">➕ 添加人员</button>
-                    <button id="resetSiteBtn" style="background:#fef3c7;border:1px solid #f59e0b;color:#b45309;padding:6px 16px;border-radius:8px;cursor:pointer;font-size:0.8rem;">↩ 恢复默认名单</button>
                 </div>
                 <div style="max-height:380px;overflow-y:auto;">
-                <table id="adminSiteTable" style="width:100%;border-collapse:collapse;border:1px solid #e2e8f0;"><thead><tr style="background:#f8fafc;"><th style="text-align:center;padding:8px;font-size:0.8rem;color:#5e6f8d;width:40%;border:1px solid #e2e8f0;">姓名</th><th style="text-align:center;padding:8px;font-size:0.8rem;color:#5e6f8d;border:1px solid #e2e8f0;">站点</th><th style="text-align:center;width:60px;border:1px solid #e2e8f0;">删除</th></tr></thead><tbody id="adminSiteBody"><tr><td colspan="3" style="text-align:center;color:#94a3b8;padding:20px;">加载中...</td></tr></tbody></table>
+                <table id="adminSiteTable" style="width:100%;border-collapse:collapse;border:1px solid #e2e8f0;"><thead><tr style="background:#f8fafc;"><th style="text-align:center;padding:8px;font-size:0.8rem;color:#5e6f8d;width:40%;border:1px solid #e2e8f0;">姓名</th><th style="text-align:center;padding:8px;font-size:0.8rem;color:#5e6f8d;border:1px solid #e2e8f0;">站点</th></tr></thead><tbody id="adminSiteBody"><tr><td colspan="2" style="text-align:center;color:#94a3b8;padding:20px;">加载中...</td></tr></tbody></table>
                 </div>
             </div>
             <!-- 站点配置详情 -->
@@ -3035,17 +3033,14 @@
                 return !filter || n.toLowerCase().indexOf(filter) >= 0 || (map[n]||'').toLowerCase().indexOf(filter) >= 0;
             }).sort();
             if (names.length === 0) {
-                tbody.innerHTML = '<tr><td colspan="3" style="text-align:center;color:#94a3b8;padding:20px;">' + (filter || siteFilter ? '未找到匹配项' : '暂无人员数据') + '</td></tr>';
+                tbody.innerHTML = '<tr><td colspan="2" style="text-align:center;color:#94a3b8;padding:20px;">' + (filter || siteFilter ? '未找到匹配项' : '暂无人员数据') + '</td></tr>';
                 return;
             }
             tbody.innerHTML = names.map(function(n) {
-                var opts = ADMIN_SITE_OPTIONS.map(function(s) {
-                    return '<option value="' + s + '"' + (map[n] === s ? ' selected' : '') + '>' + s + '</option>';
-                }).join('');
+                var site = map[n] || '';
                 return '<tr data-name="' + escapeHtml(n) + '">' +
-                    '<td style="text-align:center;padding:8px 6px;font-size:0.82rem;font-weight:600;width:40%;border:1px solid #eef2f6;">' + escapeHtml(n) + '</td>' +
-                    '<td style="text-align:center;padding:8px 6px;font-size:0.8rem;border:1px solid #eef2f6;"><select class="as-site" data-name="' + escapeHtml(n) + '" style="padding:4px 8px;border:1px solid #cbd5e1;border-radius:6px;font-size:0.78rem;cursor:pointer;">' + opts + '</select></td>' +
-                    '<td style="text-align:center;padding:4px;width:60px;border:1px solid #eef2f6;"><button class="as-del" data-name="' + escapeHtml(n) + '" style="background:#ffedea;color:#c0392b;border:none;padding:3px 10px;border-radius:6px;cursor:pointer;font-size:0.7rem;">🗑️</button></td>' +
+                    '<td style="text-align:center;padding:8px 6px;font-size:0.82rem;font-weight:600;width:50%;border:1px solid #eef2f6;">' + escapeHtml(n) + '</td>' +
+                    '<td style="text-align:center;padding:8px 6px;font-size:0.8rem;border:1px solid #eef2f6;">' + (site ? escapeHtml(site) : '<span style="color:#94a3b8;">未分配</span>') + '</td>' +
                 '</tr>';
             }).join('');
             // 站点下拉：修改即时保存
@@ -3408,7 +3403,7 @@
                 var n = nameInput ? nameInput.value : (cells[0].textContent || '').trim();
                 var e = emailInput ? emailInput.value : (cells[1].textContent || '').trim();
                 var st = siteInput ? siteInput.value : '';
-                if (n && e && e.indexOf('@') > 0) { newEmails[n] = e; newSites[n] = st; }
+                if (n) { newSites[n] = st; if (e && e.indexOf('@') > 0) newEmails[n] = e; }
             });
             var count = Object.keys(newEmails).length;
             if (!count) { alert('当前没有可保存的邮箱'); return; }
@@ -3447,19 +3442,15 @@
                     if (!em || em.indexOf('@') < 0) return;
                     systemRows.push([_emailCellText(r[0]), em, _emailCellText(r[2]), '系统', _emailCellText(r[4]), _emailCellText(r[5]) || '是']);
                 });
-                var siteMap = getAdminPersonSiteMap();
-                Object.keys(newSites).forEach(function(n) {
-                    if (newSites[n]) siteMap[n] = newSites[n];
-                    else delete siteMap[n];
-                });
+                var siteMap = newSites;
                 var order = { '成都': 0, '青岛': 1, '深圳': 2 };
-                var names = Object.keys(newEmails).sort(function(a, b) {
+                var names = Object.keys(newSites).sort(function(a, b) {
                     var sa = order[siteMap[a]] === undefined ? 9 : order[siteMap[a]];
                     var sb = order[siteMap[b]] === undefined ? 9 : order[siteMap[b]];
                     return sa - sb || a.localeCompare(b, 'zh');
                 });
                 var out = [['姓名', '邮箱', '站点', '类型', '用途', '启用']];
-                names.forEach(function(n) { out.push([n, newEmails[n], siteMap[n] || '', '员工', '员工邮箱', '是']); });
+                names.forEach(function(n) { out.push([n, newEmails[n] || '', siteMap[n] || '', '员工', '员工邮箱', '是']); });
                 systemRows.forEach(function(r) { out.push(r); });
                 while (out.length < 200) out.push(['', '', '', '', '', '']);
                 var writeUrl = 'https://open.feishu.cn/open-apis/sheets/v2/spreadsheets/BzG8s8py3hDZIvtUJl7cRXJXnfe/values_batch_update';
@@ -3472,7 +3463,7 @@
                 if (!wd || wd.code !== 0) throw new Error((wd && wd.msg) || '写飞书表失败');
                 // 飞书写成功后才写云端/本地
                 savePersonnelEmails(newEmails);
-                saveAdminPersonSiteMap(siteMap);
+                saveAdminPersonSiteMap(newSites);
                 _emailSheetSig = _emailSheetHash(out.slice(1));
                 logAdminAction('邮箱管理', '保存邮箱列表（含飞书）', count + '人');
                 refreshEmailTable();
@@ -3517,18 +3508,16 @@
                     var type = _emailCellText(r[3]);
                     var use = _emailCellText(r[4]);
                     var enabled = _emailCellText(r[5]);
-                    if (!email || email.indexOf('@') < 0) return;
                     if (enabled === '否') return;
                     if (type === '系统') {
+                        if (!email || email.indexOf('@') < 0) return;
                         if (use.indexOf('反馈') >= 0) feedback.push(email);
                         else if (use.indexOf('报告') >= 0 && !reportEmail) reportEmail = email;
                         else if (use.indexOf('告警') >= 0 && !alertEmail) alertEmail = email;
                         return;
                     }
-                    if (name) {
-                        map[name] = email;
-                        if (site) siteMapFromSheet[name] = site;
-                    }
+                    if (name && site) siteMapFromSheet[name] = site;
+                    if (name && email && email.indexOf('@') >= 0) map[name] = email;
                 });
                 var oldCount = Object.keys(getPersonnelEmails()).length;
                 var newCount = Object.keys(map).length;
@@ -3538,10 +3527,10 @@
                     if (!ok) { btn.disabled = false; btn.textContent = '🔄 从飞书更新'; return; }
                 }
                 savePersonnelEmails(map);
-                if (Object.keys(siteMapFromSheet).length) {
-                    var psm = getAdminPersonSiteMap();
-                    Object.keys(siteMapFromSheet).forEach(function(n) { psm[n] = siteMapFromSheet[n]; });
-                    saveAdminPersonSiteMap(psm);
+                var oldSitesCount = Object.keys(getAdminPersonSiteMap()).length;
+                var newSitesCount = Object.keys(siteMapFromSheet).length;
+                if (newSitesCount && (!oldSitesCount || newSitesCount >= Math.floor(oldSitesCount * 0.5))) {
+                    saveAdminPersonSiteMap(siteMapFromSheet);
                 }
                 var cfg = {
                     feedbackRecipients: feedback,
@@ -3578,7 +3567,7 @@
                     var n = nameInput ? nameInput.value : (cells[0].textContent || '').trim();
                     var e = emailInput ? emailInput.value : (cells[1].textContent || '').trim();
                     var st = siteInput ? siteInput.value : '';
-                    if (n && e && e.indexOf('@') > 0) { newEmails[n] = e; newSites[n] = st; }
+                    if (n) { newSites[n] = st; if (e && e.indexOf('@') > 0) newEmails[n] = e; }
                 });
                 var count = Object.keys(newEmails).length;
                 if (!count) throw new Error('当前没有可写回的邮箱');
@@ -3597,19 +3586,15 @@
                     if (!em || em.indexOf('@') < 0) return;
                     systemRows.push([_emailCellText(r[0]), em, _emailCellText(r[2]), '系统', _emailCellText(r[4]), _emailCellText(r[5]) || '是']);
                 });
-                var siteMap = getAdminPersonSiteMap();
-                Object.keys(newSites).forEach(function(n) {
-                    if (newSites[n]) siteMap[n] = newSites[n];
-                    else delete siteMap[n];
-                });
+                var siteMap = newSites;
                 var order = { '成都': 0, '青岛': 1, '深圳': 2 };
-                var names = Object.keys(newEmails).sort(function(a, b) {
+                var names = Object.keys(newSites).sort(function(a, b) {
                     var sa = order[siteMap[a]] === undefined ? 9 : order[siteMap[a]];
                     var sb = order[siteMap[b]] === undefined ? 9 : order[siteMap[b]];
                     return sa - sb || a.localeCompare(b, 'zh');
                 });
                 var out = [['姓名', '邮箱', '站点', '类型', '用途', '启用']];
-                names.forEach(function(n) { out.push([n, newEmails[n], siteMap[n] || '', '员工', '员工邮箱', '是']); });
+                names.forEach(function(n) { out.push([n, newEmails[n] || '', siteMap[n] || '', '员工', '员工邮箱', '是']); });
                 systemRows.forEach(function(r) { out.push(r); });
                 while (out.length < 200) out.push(['', '', '', '', '', '']);
                 var ok = await showConfirm('将把 ' + count + ' 个员工邮箱写回飞书「邮箱管理」，系统收件人保留 ' + systemRows.length + ' 行。确认？', '☁️', true);
@@ -3623,7 +3608,7 @@
                 var wd = await wr.json();
                 if (!wd || wd.code !== 0) throw new Error((wd && wd.msg) || '写飞书表失败');
                 savePersonnelEmails(newEmails);
-                saveAdminPersonSiteMap(siteMap);
+                saveAdminPersonSiteMap(newSites);
                 _emailSheetSig = _emailSheetHash(out.slice(1));
                 refreshEmailTable();
                 logAdminAction('邮箱管理', '写回飞书邮箱表', count + ' 人');
@@ -24439,15 +24424,16 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
                     var type = emailCellText(r[3]);
                     var use = emailCellText(r[4]);
                     var enabled = emailCellText(r[5]);
-                    if (!email || email.indexOf('@') < 0) return;
                     if (enabled === '否') return;
                     if (type === '系统') {
+                        if (!email || email.indexOf('@') < 0) return;
                         if (use.indexOf('反馈') >= 0) feedback.push(email);
                         else if (use.indexOf('报告') >= 0 && !reportEmail) reportEmail = email;
                         else if (use.indexOf('告警') >= 0 && !alertEmail) alertEmail = email;
                         return;
                     }
-                    if (name) { map[name] = email; if (site) sites[name] = site; }
+                    if (name && site) sites[name] = site;
+                    if (name && email && email.indexOf('@') >= 0) map[name] = email;
                 });
                 var newCount = Object.keys(map).length;
                 if (!newCount) throw new Error('表里没有员工邮箱');
@@ -24455,9 +24441,11 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
                 if (oldCount > 0 && newCount < Math.floor(oldCount * 0.5)) throw new Error('飞书员工邮箱从 ' + oldCount + ' 掉到 ' + newCount + '，少了一半以上');
                 if (isAdminMode()) {
                     savePersonnelEmails(map);
-                    var psm = getAdminPersonSiteMap();
-                    Object.keys(sites).forEach(function(n) { psm[n] = sites[n]; });
-                    saveAdminPersonSiteMap(psm);
+                    var oldSitesCount = Object.keys(getAdminPersonSiteMap()).length;
+                    var newSitesCount = Object.keys(sites).length;
+                    if (newSitesCount && (!oldSitesCount || newSitesCount >= Math.floor(oldSitesCount * 0.5))) {
+                        saveAdminPersonSiteMap(sites);
+                    }
                     localStorage.setItem('emailConfigData', JSON.stringify({
                         feedbackRecipients: feedback,
                         reportEmail: reportEmail || 'xuhang02@zhuanzhuan.com',

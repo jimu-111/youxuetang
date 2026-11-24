@@ -115,18 +115,17 @@ async function writeCloud(key, value) {
     const use = cellText(row[4]);
     const enabled = cellText(row[5]);
     if (!email && !name) return;
-    if (!email || email.indexOf('@') < 0) {
-      if (name) issues.push('第 ' + (idx + 2) + ' 行「' + name + '」邮箱为空或格式不对');
-      return;
-    }
     if (enabled === '否') return;
     if (type === '系统') {
+      if (!email || email.indexOf('@') < 0) return;
       if (use.indexOf('反馈') >= 0) feedback.push(email);
       else if (use.indexOf('报告') >= 0 && !reportEmail) reportEmail = email;
       else if (use.indexOf('告警') >= 0 && !alertEmail) alertEmail = email;
       return;
     }
-    if (name) { map[name] = email; if (site) sitesFromSheet[name] = site; }
+    if (name && site) sitesFromSheet[name] = site;
+    if (name && email && email.indexOf('@') >= 0) map[name] = email;
+    else if (name && (!email || email.indexOf('@') < 0)) issues.push('第 ' + (idx + 2) + ' 行「' + name + '」邮箱为空或格式不对');
   });
 
   const oldRaw = await readCloud('personnelEmails');
@@ -135,7 +134,10 @@ async function writeCloud(key, value) {
   const oldSitesRaw = await readCloud('adminPersonSiteMap');
   let oldSites = {};
   try { oldSites = oldSitesRaw ? JSON.parse(oldSitesRaw) : {}; } catch (e) {}
-  Object.keys(sitesFromSheet).forEach(n => { oldSites[n] = sitesFromSheet[n]; });
+  const oldSitesCount = Object.keys(oldSites).length;
+  const newSitesCount = Object.keys(sitesFromSheet).length;
+  let finalSites = oldSites;
+  if (newSitesCount && (FORCE || !oldSitesCount || newSitesCount >= Math.floor(oldSitesCount * 0.5))) finalSites = sitesFromSheet;
   const oldCount = Object.keys(old).length;
   const newCount = Object.keys(map).length;
   console.log('📧 飞书表员工邮箱 ' + newCount + ' 人（站点 ' + Object.keys(sitesFromSheet).length + ' 人），云端现有 ' + oldCount + ' 人；系统收件人：反馈 ' + feedback.length + '、报告 ' + (reportEmail ? 1 : 0) + '、告警 ' + (alertEmail ? 1 : 0));
@@ -159,6 +161,6 @@ async function writeCloud(key, value) {
   }
   await writeCloud('personnelEmails', JSON.stringify(map));
   await writeCloud('emailConfigData', JSON.stringify(cfg));
-  await writeCloud('adminPersonSiteMap', JSON.stringify(oldSites));
+  await writeCloud('adminPersonSiteMap', JSON.stringify(finalSites));
   console.log('✅ 已写云端 personnelEmails / emailConfigData / adminPersonSiteMap');
 })().catch(e => { console.error('❌ ' + e.message); process.exit(1); });
