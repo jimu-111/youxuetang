@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <!-- 版本行：每次部署新代码必须 bump 此 content（YYYYMMDD.N），旧设备靠它自检静默升级 -->
-    <meta name="yxt-ver" content="20261128.13">
+    <meta name="yxt-ver" content="20261128.15">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
     <title>优学堂</title>
     <script src="https://cdn.sheetjs.com/xlsx-0.20.2/package/dist/xlsx.full.min.js" defer></script>
@@ -602,8 +602,8 @@
         var AUTH_STATE_KEY = 'yxtAuthStateV1';
         var AUTH_RETURN_KEY = 'yxtAuthReturnV1';
         var AUTH_PROXY = 'https://yxt-feishu.pages.dev';
-        // 必须和飞书后台「重定向 URL」完全一致；固定用生产地址，避免本地打开/换域名时 20029
-        var AUTH_REDIRECT_URI = 'https://jimu-111.github.io/youxuetang/';
+        // 必须和飞书后台「重定向 URL」完全一致；固定用轻量回调页，手机不用下载整个首页
+        var AUTH_REDIRECT_URI = 'https://jimu-111.github.io/youxuetang/auth-callback.html';
         var AUTH_SUPABASE_URL = 'https://zfxwnixlvdxawoylhgxj.supabase.co';
         var AUTH_SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InpmeHduaXhsdmR4YXdveWxoZ3hqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODIyMDEyNzIsImV4cCI6MjA5Nzc3NzI3Mn0.aPfO4Ry_LzoOColCVx64JQPF-BWga-_J2fX9hg-E4G8';
         var AUTH_APP_ID = 'cli_aab1fa4e87bbdbd3';
@@ -643,6 +643,9 @@
             sessionDays: 7
         };
         var authConfig = null;
+        var authConfigLoaded = false;
+        var _authAppTokenCache = null, _authAppTokenExp = 0;
+        var _authTenantTokenCache = null, _authTenantTokenExp = 0;
         function normalizeAuthConfig(raw) {
             var c = (raw && typeof raw === 'object') ? raw : {};
             var d = DEFAULT_AUTH_CONFIG;
@@ -670,6 +673,7 @@
             return authConfig;
         }
         async function loadAuthConfig() {
+            if (authConfigLoaded) return getAuthConfig();
             try {
                 var r = await Promise.race([
                     fetch(AUTH_SUPABASE_URL + '/rest/v1/app_data?select=value&key=eq.' + encodeURIComponent(AUTH_CONFIG_KEY), {
@@ -680,6 +684,7 @@
                 var rows = await r.json();
                 if (Array.isArray(rows) && rows[0] && rows[0].value) authConfig = normalizeAuthConfig(JSON.parse(rows[0].value));
             } catch (e) {}
+            authConfigLoaded = true;
             return getAuthConfig();
         }
         function sessionMs() { return getAuthConfig().sessionDays * 24 * 60 * 60 * 1000; }
@@ -784,18 +789,31 @@
             return json;
         }
         async function appToken() {
+            if (_authAppTokenCache && Date.now() < _authAppTokenExp) return _authAppTokenCache;
             var j = await authProxy('/auth/v3/app_access_token/internal', {
                 method: 'POST', body: { app_id: AUTH_APP_ID, app_secret: '' }
             });
             if (!j.app_access_token) throw new Error(j.msg || '获取应用凭证失败');
-            return j.app_access_token;
+            _authAppTokenCache = j.app_access_token;
+            _authAppTokenExp = Date.now() + Math.max(60, (Number(j.expire) || 7200) - 300) * 1000;
+            return _authAppTokenCache;
         }
         async function tenantToken() {
+            if (_authTenantTokenCache && Date.now() < _authTenantTokenExp) return _authTenantTokenCache;
             var j = await authProxy('/auth/v3/tenant_access_token/internal', {
                 method: 'POST', body: { app_id: AUTH_APP_ID, app_secret: '' }
             });
             if (!j.tenant_access_token) throw new Error(j.msg || '获取应用身份失败');
-            return j.tenant_access_token;
+            _authTenantTokenCache = j.tenant_access_token;
+            _authTenantTokenExp = Date.now() + Math.max(60, (Number(j.expire) || 7200) - 300) * 1000;
+            return _authTenantTokenCache;
+        }
+        function warmAuth() {
+            try {
+                appToken().catch(function () {});
+                tenantToken().catch(function () {});
+                loadAuthConfig().catch(function () {});
+            } catch (e) {}
         }
         async function exchangeCode(code) {
             var app = await appToken();
@@ -892,7 +910,7 @@
             window._yxtAuthPoll = setInterval(async function () {
                 tries++;
                 var detail = document.getElementById('yxtAuthDetail');
-                if (detail) detail.textContent = '等待手机确认…（' + (tries * 3) + 's）';
+                if (detail) detail.textContent = '等待手机确认…（' + Math.round(tries * 1.5) + 's）';
                 try {
                     var key = relayKey(state);
                     var r = await fetch(AUTH_SUPABASE_URL + '/rest/v1/app_data?select=value&key=eq.' + encodeURIComponent(key), {
@@ -924,13 +942,19 @@
                         }
                     }
                 } catch (e) {}
-                if (tries >= 40) {
+                if (tries >= 60) {
                     clearInterval(window._yxtAuthPoll); window._yxtAuthPoll = null;
                     var st = document.getElementById('yxtAuthStatus');
                     if (st) st.textContent = '二维码已超时';
                     if (detail) detail.textContent = '请点「刷新二维码」重试';
                 }
-            }, 3000);
+            }, 1500);
+        }
+        function setGateProgress(status, detail) {
+            var s = document.getElementById('yxtAuthStatus');
+            var d = document.getElementById('yxtAuthDetail');
+            if (s) s.textContent = status;
+            if (d) d.textContent = detail || '';
         }
         function showGate(opts) {
             opts = opts || {};
@@ -974,6 +998,7 @@
             if (opts.showQr && auth && auth.url) {
                 drawQr(box, auth.url);
                 startRelayPoll(auth.state);
+                warmAuth();
             } else {
                 box.style.display = 'none';
             }
@@ -1004,14 +1029,16 @@
         async function handleCallback(code, state) {
             var sameDevice = false;
             try { sameDevice = sessionStorage.getItem(AUTH_STATE_KEY) === state; } catch (e) {}
-            showGate({ status: '正在验证飞书登录…', detail: '请稍候，不要关闭页面', showQr: false });
+            showGate({ status: '正在验证飞书登录…', detail: '第 1/4 步：校验授权码', showQr: false });
             try {
                 await loadAuthConfig();
                 var token = await exchangeCode(code);
+                setGateProgress('正在读取飞书身份…', '第 2/4 步：读取姓名和 open_id');
                 var info = await userInfo(token.access_token);
                 var email = String(info.email || info.enterprise_email || '').toLowerCase();
                 var contact = null;
                 if (!isExtraEmail(email)) {
+                    setGateProgress('正在核对通讯录…', '第 3/4 步：查部门和白名单');
                     var tk = await tenantToken();
                     contact = await contactUser(info.open_id, tk);
                 }
@@ -1045,6 +1072,7 @@
                 } catch (e) {}
                 try { sessionStorage.removeItem(AUTH_STATE_KEY); } catch (e) {}
                 // 手机扫码时，手机把“已登录的是谁”写回云端，电脑轮询取走；不传 token
+                setGateProgress('正在通知电脑…', '第 4/4 步：回传登录结果');
                 var relayOk = true;
                 try { await writeRelay(state, user); } catch (e) { relayOk = false; }
                 if (sameDevice) {
@@ -3139,6 +3167,7 @@
 <p>系统只分两级：<span class="ym-pill g">游客</span> 和 <span class="ym-pill a">管理员</span>。游客以浏览为主，管理员多出编辑、推送、同步、备份等操作。</p>
 <p><b>管理员名单内的人</b>扫码后直接进管理员模式；<b>名单外成员</b>扫码后是游客，可以输管理密码进管理员，关掉页面就退出。一次扫码默认保持 <b>7 天</b>，超级管理员可在「权限管理」改成 1–30 天。</p>
 <p>超级管理员可在管理后台「权限管理」修改管理员名单、允许进入的部门、额外白名单邮箱和登录有效期；保存后下一次扫码生效。</p>
+<p><b>扫码回调页：</b>手机扫码后打开的是独立的轻量页 <code>auth-callback.html</code>，不再下载整个优学堂。飞书开放平台 → 应用 → 安全设置 → 重定向 URL 必须包含 <code>https://jimu-111.github.io/youxuetang/auth-callback.html</code>。</p>
 <table class="ym-table"><thead><tr><th>页面</th><th>游客</th><th>管理员</th><th>说明</th></tr></thead><tbody>
 <tr><td>仪表盘</td><td>只读</td><td>只读</td><td>看培训进度、完成率、人员分布</td></tr>
 <tr><td>新人进度</td><td>只读</td><td>编辑</td><td>管理员可录入、改阶段、归档、退回</td></tr>
@@ -3276,8 +3305,8 @@
             id: 'log', title: '维护约定与更新记录', icon: '📌',
             jumps: [{ label: '功能与权限', target: 'featureGuide' }, { label: '文档与云端', target: 'admin:docsDetail' }],
             body: `<p><b>维护约定：</b>每次修改功能、规则、阈值或权限，必须同步更新本手册对应章节，并更新“最后核对”日期；功能简介和权限页也要一起改。</p>
-<ul><li><b>2026-11-28：</b>手册第一版；周红绿灯改为考试≥5、培训≥7、学习≥11；新增功能与权限合并页；管理后台新增文档与云端入口；邮箱改为飞书通讯录每周一/四/日 10:00 同步；人员变动标记离职会联动删除邮箱和人员站点，入职记录保留；管理后台点卡片展开后自动滚到详情；新增飞书扫码门禁（质量管理部白名单，7 天登录态，前端尽力版）；新增超级管理员「权限管理」；飞书登录失败可用管理密码临时进入 10 分钟；管理员名单内扫码直接进管理员，名单外输密码进管理员只保留到关页。</li><li>写规则时统一写“触发条件 → 数据来源 → 执行时间 → 结果 → 失败处理”。</li><li>手册不写密码、密钥和完整 token。</li></ul>
-<div class="ym-note">最后核对：2026-11-28 · 适用版本：20261128.13。遇到代码与手册不一致，以当前代码为准，并回来改手册。</div>`
+<ul><li><b>2026-11-28：</b>手册第一版；周红绿灯改为考试≥5、培训≥7、学习≥11；新增功能与权限合并页；管理后台新增文档与云端入口；邮箱改为飞书通讯录每周一/四/日 10:00 同步；人员变动标记离职会联动删除邮箱和人员站点，入职记录保留；管理后台点卡片展开后自动滚到详情；新增飞书扫码门禁（质量管理部白名单，7 天登录态，前端尽力版）；新增超级管理员「权限管理」；飞书登录失败可用管理密码临时进入 10 分钟；管理员名单内扫码直接进管理员，名单外输密码进管理员只保留到关页；扫码回调改用独立轻量页 auth-callback.html。</li><li>写规则时统一写“触发条件 → 数据来源 → 执行时间 → 结果 → 失败处理”。</li><li>手册不写密码、密钥和完整 token。</li></ul>
+<div class="ym-note">最后核对：2026-11-28 · 适用版本：20261128.15。遇到代码与手册不一致，以当前代码为准，并回来改手册。</div>`
         }
     ];
 
@@ -3311,7 +3340,7 @@
         }).join('');
         document.getElementById('mainContent').innerHTML =
             '<div class="ym-wrap">' +
-                '<div class="ym-topbar"><button class="ym-back" onclick="switchNav(\'admin\')">← 返回管理后台</button><span class="ym-version">适用版本 20261128.13 · 最后核对 2026-11-28</span></div>' +
+                '<div class="ym-topbar"><button class="ym-back" onclick="switchNav(\'admin\')">← 返回管理后台</button><span class="ym-version">适用版本 20261128.15 · 最后核对 2026-11-28</span></div>' +
                 '<div class="yxg-hero"><div class="yxg-kicker">优学堂 · 全功能手册</div><h1>使用手册</h1><p>把每一个功能、规则、云端任务和计算口径写在一处。左边目录可直接跳转，章节里的按钮可跳到对应模块。</p><div class="yxg-stats"><span>' + YXT_MANUAL_SECTIONS.length + ' 个章节</span><span>11 个功能页</span><span>规则 + 推送 + 云端</span><span>随功能同步更新</span></div></div>' +
                 '<div class="ym-layout"><aside class="ym-toc"><h3>📖 目录</h3>' + toc + '<div class="ym-note" style="margin-top:10px;font-size:.68rem;">功能 / 规则 / 权限有改动，本手册同步更新。</div></aside><div class="ym-main">' + body + '</div></div>' +
             '</div>';

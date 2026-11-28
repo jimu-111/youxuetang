@@ -1,0 +1,295 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
+<title>优学堂 · 飞书登录</title>
+<style>
+    * { box-sizing: border-box; }
+    body {
+        margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center;
+        padding: 20px; background: linear-gradient(135deg, #eef4ff 0%, #f8fbff 55%, #eaf7f1 100%);
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif;
+    }
+    .card {
+        width: min(92vw, 400px); background: #fff; border: 1px solid #e2e8f0; border-radius: 22px;
+        box-shadow: 0 24px 70px rgba(15,23,42,.18); padding: 30px 26px; text-align: center;
+    }
+    .logo { font-size: 1.55rem; font-weight: 800; color: #1f3a6b; letter-spacing: .5px; }
+    .sub { font-size: .8rem; color: #64748b; margin: 6px 0 24px; }
+    .spinner {
+        width: 34px; height: 34px; margin: 0 auto 18px; border: 3px solid #dbeafe;
+        border-top-color: #2a5298; border-radius: 50%; animation: spin .8s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    #status { font-size: 1rem; font-weight: 700; color: #1f3a6b; line-height: 1.5; }
+    #detail { font-size: .76rem; color: #94a3b8; line-height: 1.6; margin-top: 8px; word-break: break-word; }
+    #actions { display: none; margin-top: 20px; }
+    #actions a {
+        display: inline-block; padding: 10px 22px; border-radius: 10px; background: #2a5298;
+        color: #fff; text-decoration: none; font-size: .82rem; font-weight: 600;
+    }
+    .done { font-size: 2.2rem; margin-bottom: 10px; }
+</style>
+</head>
+<body>
+<div class="card">
+    <div class="logo">📚 优学堂</div>
+    <div class="sub">飞书登录验证</div>
+    <div class="spinner" id="spinner"></div>
+    <div id="status">正在验证飞书登录…</div>
+    <div id="detail">请稍候，不要关闭页面</div>
+    <div id="actions"><a id="retry" href="#">返回优学堂重新扫码</a></div>
+</div>
+<script>
+(function () {
+    'use strict';
+    var APP_ID = 'cli_aab1fa4e87bbdbd3';
+    var PROXY = 'https://yxt-feishu.pages.dev';
+    var SUPA_URL = 'https://zfxwnixlvdxawoylhgxj.supabase.co';
+    var SUPA_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InpmeHduaXhsdmR4YXdveWxoZ3hqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODIyMDEyNzIsImV4cCI6MjA5Nzc3NzI3Mn0.aPfO4Ry_LzoOColCVx64JQPF-BWga-_J2fX9hg-E4G8';
+    var SESSION_KEY = 'yxtAuthSessionV1';
+    var STATE_KEY = 'yxtAuthStateV1';
+    var RETURN_KEY = 'yxtAuthReturnV1';
+    var CONFIG_KEY = 'authConfigData';
+    var DEPT_OPTIONS = [
+        { id: 'od-b9b6ffb82f64f6fd06f3822de07effe4', name: '质量管理部（直属）' },
+        { id: 'od-7f1cce53e2d3665f802f0af655e8830d', name: '青岛复核组' },
+        { id: 'od-28d91ee3386bef869da88882a4daadb0', name: '深圳复核组' },
+        { id: 'od-8e338e2a4dda72409687b0192a4f160d', name: '成都复核组' },
+        { id: 'od-f092b4a31b047cf95e4db462c112bd47', name: '郑州复核组' },
+        { id: 'od-9862282cc4145e5738083636d6ef97b6', name: '质量运营组' }
+    ];
+    var DEFAULT_CONFIG = {
+        version: 1,
+        admins: [
+            { name: '徐行', email: 'xuhang02@zhuanzhuan.com', role: 'super' },
+            { name: '唐洲', email: 'tangzhou@zhuanzhuan.com', role: 'super' },
+            { name: '周金山', email: 'zhoujinshan@zhuanzhuan.com', role: 'global' },
+            { name: '孙伟', email: 'sunwei02@zhuanzhuan.com', role: 'global' },
+            { name: '苏超跃', email: 'suchaoyue01@zhuanzhuan.com', role: 'global' },
+            { name: '孙俊', email: 'sunjun01@zhuanzhuan.com', role: 'global' },
+            { name: '邹文文', email: 'zouwenwen@zhuanzhuan.com', role: 'global' },
+            { name: '许伟明', email: 'xuweiming01@zhuanzhuan.com', role: 'global' },
+            { name: '陈佳鹏', email: 'chenjiapeng@zhuanzhuan.com', role: 'global' },
+            { name: '李玥', email: 'liyue52@zhuanzhuan.com', role: 'global' },
+            { name: '吴尧飞', email: 'wuyaofei@zhuanzhuan.com', role: 'global' },
+            { name: '张振珀', email: 'zhangzhenpo@zhuanzhuan.com', role: 'global' }
+        ],
+        extraEmails: ['xuweiming01@zhuanzhuan.com'],
+        allowDepts: DEPT_OPTIONS.map(function (d) { return d.id; }),
+        sessionDays: 7
+    };
+    var baseAppUrl = location.origin + location.pathname.replace(/auth-callback\.html$/i, '');
+    if (baseAppUrl.slice(-1) !== '/') baseAppUrl += '/';
+
+    function setStatus(status, detail) {
+        var s = document.getElementById('status'), d = document.getElementById('detail');
+        if (s) s.textContent = status;
+        if (d) d.textContent = detail || '';
+    }
+    function showError(msg) {
+        var sp = document.getElementById('spinner');
+        if (sp) sp.style.display = 'none';
+        setStatus('登录失败', msg || '请重新扫码');
+        var actions = document.getElementById('actions');
+        if (actions) actions.style.display = 'block';
+        var retry = document.getElementById('retry');
+        if (retry) retry.href = baseAppUrl;
+        try { history.replaceState({}, '', baseAppUrl); } catch (e) {}
+    }
+    function showSuccess(msg) {
+        var sp = document.getElementById('spinner');
+        if (sp) sp.style.display = 'none';
+        setStatus('✅ 登录成功', msg || '请回到电脑继续，页面会自动进入');
+        var card = document.querySelector('.card');
+        if (card) {
+            var done = document.createElement('div');
+            done.className = 'done';
+            done.textContent = '✅';
+            card.insertBefore(done, card.firstChild.nextSibling);
+        }
+        try { history.replaceState({}, '', baseAppUrl); } catch (e) {}
+    }
+    function normalizeConfig(raw) {
+        var c = (raw && typeof raw === 'object') ? raw : {};
+        var d = DEFAULT_CONFIG;
+        var admins = Array.isArray(c.admins) ? c.admins.filter(function (a) { return a && (a.email || a.name); }).map(function (a) {
+            return { name: String(a.name || '').trim(), email: String(a.email || '').trim().toLowerCase(), role: a.role === 'super' ? 'super' : 'global' };
+        }) : d.admins.slice();
+        var extras = Array.isArray(c.extraEmails) ? c.extraEmails.map(function (e) { return String(e || '').trim().toLowerCase(); }).filter(Boolean) : d.extraEmails.slice();
+        var allow = Array.isArray(c.allowDepts) ? c.allowDepts.filter(function (id) { return typeof id === 'string' && id.indexOf('od-') === 0; }) : d.allowDepts.slice();
+        var days = parseInt(c.sessionDays, 10);
+        if (!days || days < 1 || days > 30) days = d.sessionDays;
+        return { version: 1, admins: admins, extraEmails: extras, allowDepts: allow, sessionDays: days };
+    }
+    async function loadConfig() {
+        try {
+            var r = await Promise.race([
+                fetch(SUPA_URL + '/rest/v1/app_data?select=value&key=eq.' + encodeURIComponent(CONFIG_KEY), {
+                    headers: { apikey: SUPA_KEY, Authorization: 'Bearer ' + SUPA_KEY }
+                }),
+                new Promise(function (_, reject) { setTimeout(function () { reject(new Error('timeout')); }, 8000); })
+            ]);
+            var rows = await r.json();
+            if (Array.isArray(rows) && rows[0] && rows[0].value) return normalizeConfig(JSON.parse(rows[0].value));
+        } catch (e) {}
+        return normalizeConfig(DEFAULT_CONFIG);
+    }
+    async function proxy(path, opts) {
+        opts = opts || {};
+        var headers = {
+            'x-target-url': 'https://open.feishu.cn/open-apis' + path,
+            'x-target-method': opts.method || 'GET'
+        };
+        if (opts.token) headers['x-target-auth'] = 'Bearer ' + opts.token;
+        var body;
+        if (opts.body) {
+            headers['x-target-content-type'] = 'application/json';
+            body = JSON.stringify(opts.body);
+        }
+        var resp = await fetch(PROXY, { method: 'POST', headers: headers, body: body });
+        var text = await resp.text();
+        var json = null;
+        try { json = JSON.parse(text); } catch (e) {}
+        if (!json) throw new Error('飞书代理返回异常（HTTP ' + resp.status + '）');
+        return json;
+    }
+    async function appToken() {
+        var j = await proxy('/auth/v3/app_access_token/internal', {
+            method: 'POST', body: { app_id: APP_ID, app_secret: '' }
+        });
+        if (!j.app_access_token) throw new Error(j.msg || '获取应用凭证失败');
+        return j.app_access_token;
+    }
+    async function tenantToken() {
+        var j = await proxy('/auth/v3/tenant_access_token/internal', {
+            method: 'POST', body: { app_id: APP_ID, app_secret: '' }
+        });
+        if (!j.tenant_access_token) throw new Error(j.msg || '获取应用身份失败');
+        return j.tenant_access_token;
+    }
+    async function exchangeCode(code) {
+        var app = await appToken();
+        var j = await proxy('/authen/v1/oidc/access_token', {
+            method: 'POST', token: app, body: { grant_type: 'authorization_code', code: code }
+        });
+        if (j.code !== 0 || !j.data || !j.data.access_token) throw new Error(j.msg || '授权码兑换失败');
+        return j.data;
+    }
+    async function userInfo(accessToken) {
+        var j = await proxy('/authen/v1/user_info', { token: accessToken });
+        if (j.code !== 0 || !j.data) throw new Error(j.msg || '读取飞书用户失败');
+        return j.data;
+    }
+    async function contactUser(openId, tk) {
+        if (!openId) return null;
+        var j = await proxy('/contact/v3/users/' + encodeURIComponent(openId) + '?user_id_type=open_id', { token: tk });
+        if (j.code !== 0 || !j.data || !j.data.user) throw new Error(j.msg || '读取通讯录失败');
+        return j.data.user;
+    }
+    function allowedOf(contact, info, cfg) {
+        var email = String((contact && (contact.email || contact.enterprise_email)) || (info && (info.email || info.enterprise_email)) || '').toLowerCase();
+        if (cfg.extraEmails.indexOf(email) >= 0) return { ok: true, email: email, deptIds: [] };
+        var deps = (contact && contact.department_ids) || [];
+        var allow = cfg.allowDepts;
+        return { ok: deps.some(function (id) { return allow.indexOf(id) >= 0; }), email: email, deptIds: deps };
+    }
+    function roleOf(email, cfg) {
+        email = String(email || '').toLowerCase();
+        var hit = null;
+        for (var i = 0; i < cfg.admins.length; i++) {
+            if (cfg.admins[i].email && cfg.admins[i].email === email) { hit = cfg.admins[i]; break; }
+        }
+        if (!hit) return { key: 'guest', label: '普通成员' };
+        return hit.role === 'super' ? { key: 'super', label: '超级管理员' } : { key: 'global', label: '全局管理员' };
+    }
+    async function writeRelay(state, user) {
+        var key = 'yxtAuthRelay_' + state;
+        var r = await fetch(SUPA_URL + '/rest/v1/app_data', {
+            method: 'POST',
+            headers: {
+                apikey: SUPA_KEY, Authorization: 'Bearer ' + SUPA_KEY,
+                'Content-Type': 'application/json', Prefer: 'resolution=merge-duplicates'
+            },
+            body: JSON.stringify({
+                key: key,
+                value: JSON.stringify({ v: 1, user: user, ts: Date.now() }),
+                updated_at: new Date().toISOString()
+            })
+        });
+        if (!r.ok) throw new Error('登录结果回传失败（HTTP ' + r.status + '）');
+    }
+    async function main() {
+        var params = new URLSearchParams(location.search);
+        var code = params.get('code');
+        var state = params.get('state') || '';
+        if (!code) { showError('缺少飞书授权码，请重新扫码'); return; }
+        if (state.indexOf('yxtlogin_') !== 0) { showError('登录状态无效，请从优学堂首页重新扫码'); return; }
+        try {
+            var cfg = await loadConfig();
+            setStatus('正在验证飞书登录…', '第 1/4 步：校验授权码');
+            var token = await exchangeCode(code);
+            setStatus('正在读取飞书身份…', '第 2/4 步：读取姓名和 open_id');
+            var info = await userInfo(token.access_token);
+            var email = String(info.email || info.enterprise_email || '').toLowerCase();
+            var contact = null;
+            if (cfg.extraEmails.indexOf(email) < 0) {
+                setStatus('正在核对通讯录…', '第 3/4 步：查部门和白名单');
+                var tk = await tenantToken();
+                contact = await contactUser(info.open_id, tk);
+            }
+            var allowed = allowedOf(contact, info, cfg);
+            if (!allowed.ok) throw new Error('你的飞书账号不在质量管理部白名单内');
+            var name = (contact && contact.name) || info.name || '飞书用户';
+            var role = roleOf(allowed.email || email, cfg);
+            var user = {
+                open_id: info.open_id || '',
+                name: name,
+                email: allowed.email || email,
+                avatar: (contact && contact.avatar && contact.avatar.avatar_240) || info.avatar_url || '',
+                deptIds: allowed.deptIds || [],
+                role: role.key,
+                roleLabel: role.label
+            };
+            var session = {
+                v: 1, user: user,
+                access_token: token.access_token,
+                refresh_token: token.refresh_token || '',
+                accessExpiresAt: Date.now() + (Number(token.expires_in) || 7200) * 1000,
+                sessionUntil: Date.now() + cfg.sessionDays * 24 * 60 * 60 * 1000,
+                lastVerifiedAt: Date.now(),
+                loginAt: Date.now()
+            };
+            localStorage.setItem(SESSION_KEY, JSON.stringify(session));
+            try {
+                sessionStorage.removeItem('yxtAdminOptOut');
+                if (role.key === 'super' || role.key === 'global') sessionStorage.setItem('adminMode', '1');
+            } catch (e) {}
+            var sameDevice = false;
+            try { sameDevice = sessionStorage.getItem(STATE_KEY) === state; } catch (e) {}
+            if (sameDevice) {
+                var ret = '';
+                try { ret = sessionStorage.getItem(RETURN_KEY) || ''; sessionStorage.removeItem(RETURN_KEY); sessionStorage.removeItem(STATE_KEY); } catch (e) {}
+                var target = baseAppUrl;
+                if (ret) {
+                    try {
+                        var ru = new URL(ret);
+                        if (ru.origin === location.origin && ru.pathname.indexOf(baseAppUrl.replace(location.origin, '')) === 0) target = ret;
+                    } catch (e) {}
+                }
+                location.replace(target);
+                return;
+            }
+            setStatus('正在通知电脑…', '第 4/4 步：回传登录结果');
+            await writeRelay(state, user);
+            showSuccess('请回到电脑继续，页面会自动进入');
+        } catch (e) {
+            showError(e.message || '验证失败，请重新扫码');
+        }
+    }
+    main();
+})();
+</script>
+</body>
+</html>
