@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <!-- 版本行：每次部署新代码必须 bump 此 content（YYYYMMDD.N），旧设备靠它自检静默升级 -->
-    <meta name="yxt-ver" content="20261124.1">
+    <meta name="yxt-ver" content="20261128.5">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
     <title>优学堂</title>
     <script src="https://cdn.sheetjs.com/xlsx-0.20.2/package/dist/xlsx.full.min.js" defer></script>
@@ -432,6 +432,120 @@
         #syncLinesTip.degraded { border-color: #fcd34d; box-shadow: 0 12px 34px rgba(217,119,6,0.24); }
         #syncLinesTip.degraded .slt-dot-1 { color: #d97706; }
         #syncLinesTip.degraded .slt-dot-2 { color: #1e88e5; }
+    /* ===== 优学堂的功能与权限 ===== */
+    .yxg-wrap { max-width: 1180px; margin: 0 auto; }
+    .yxg-hero {
+        background: linear-gradient(135deg, #1e2a3a 0%, #1f3a6b 55%, #2f5fa8 100%);
+        color: #fff;
+        border-radius: 22px;
+        padding: 30px 30px 26px;
+        box-shadow: 0 12px 32px rgba(15, 23, 36, .22);
+        margin-bottom: 18px;
+    }
+    .yxg-kicker { font-size: .72rem; letter-spacing: .16em; color: #93c5fd; font-weight: 700; }
+    .yxg-hero h1 { margin: 8px 0 8px; font-size: 1.7rem; line-height: 1.25; }
+    .yxg-hero p { margin: 0; max-width: 820px; color: #dbeafe; font-size: .9rem; line-height: 1.7; }
+    .yxg-stats { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 16px; }
+    .yxg-stats span { background: rgba(255,255,255,.12); border: 1px solid rgba(255,255,255,.2); border-radius: 999px; padding: 4px 11px; font-size: .74rem; }
+    .yxg-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; }
+    .yxg-card { background: #fff; border: 1px solid #e4ebf4; border-radius: 16px; padding: 18px 18px 14px; box-shadow: 0 2px 10px rgba(31,58,107,.05); }
+    .yxg-card h3 { margin: 0 0 10px; font-size: .98rem; color: #1f3a6b; display: flex; align-items: center; gap: 7px; }
+    .yxg-page { padding: 9px 0; border-top: 1px dashed #e4ebf4; }
+    .yxg-page:first-of-type { border-top: 0; padding-top: 0; }
+    .yxg-page strong { display: block; font-size: .84rem; color: #33445f; margin-bottom: 2px; }
+    .yxg-page span { display: block; font-size: .76rem; color: #5e6f8d; line-height: 1.6; }
+    .yxg-tags { display: flex; gap: 5px; flex-wrap: wrap; margin-top: 5px; }
+    .yxg-tag { font-size: .66rem; border-radius: 999px; padding: 1px 7px; font-weight: 600; white-space: nowrap; }
+    .yxg-tag.g { background: #ecfdf5; color: #047857; border: 1px solid #a7f3d0; }
+    .yxg-tag.a { background: #eff6ff; color: #1d4ed8; border: 1px solid #bfdbfe; }
+    .yxg-tag.h { background: #f8fafc; color: #64748b; border: 1px solid #e2e8f0; }
+    .yxg-feature-list { display: flex; flex-direction: column; gap: 2px; margin: 6px 0 7px; font-size: .71rem; color: #64748b; line-height: 1.5; }
+    .yxg-note { margin-top: 14px; padding: 12px 14px; border-radius: 12px; background: #f8fbff; border: 1px solid #dbeafe; color: #475569; font-size: .78rem; line-height: 1.7; }
+    .yxg-section-title { margin: 26px 0 10px; font-size: 1.05rem; color: #1f3a6b; display: flex; align-items: center; gap: 7px; }
+    .yxg-section-desc { margin: 0 0 10px; color: #5e6f8d; font-size: .8rem; line-height: 1.7; }
+    .yxg-perm-summary { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 12px 0; }
+    .yxg-summary-card { border-radius: 12px; padding: 12px 14px; font-size: .76rem; line-height: 1.65; }
+    .yxg-summary-card b { display: block; margin-bottom: 3px; }
+    .yxg-summary-card.guest { background: #f3fbf5; border: 1px solid #cfe9d7; color: #166534; }
+    .yxg-summary-card.admin { background: #fdf5f4; border: 1px solid #f3d2cc; color: #9a3412; }
+    .yxg-table-wrap { background: #fff; border: 1px solid #e4ebf4; border-radius: 16px; overflow-x: auto; box-shadow: 0 2px 10px rgba(31,58,107,.05); }
+    .yxg-table { width: 100%; border-collapse: collapse; min-width: 820px; font-size: .8rem; }
+    .yxg-table th { background: #f3f7fd; color: #1f3a6b; font-size: .76rem; padding: 10px 12px; text-align: left; border-bottom: 1px solid #e4ebf4; white-space: nowrap; }
+    .yxg-table td { padding: 10px 12px; border-bottom: 1px solid #edf2f7; vertical-align: middle; color: #33445f; }
+    .yxg-table tr:last-child td { border-bottom: 0; }
+    .yxg-table tr:nth-child(even) td { background: #fbfcfe; }
+    .yxg-table .mod { font-weight: 700; color: #1f3a6b; white-space: nowrap; }
+    .yxg-legend { display: flex; gap: 12px; flex-wrap: wrap; font-size: .74rem; color: #5e6f8d; margin: 0 0 10px; }
+    .yxg-legend span { display: inline-flex; align-items: center; gap: 5px; }
+    .yxg-dot { width: 9px; height: 9px; border-radius: 3px; display: inline-block; }
+    .yxg-dot.g { background: #10b981; }
+    .yxg-dot.a { background: #2563eb; }
+    .yxg-dot.h { background: #cbd5e1; }
+    .yxg-doc-group { margin-bottom: 16px; }
+    .yxg-doc-group h4 { margin: 0 0 8px; font-size: .88rem; color: #1f3a6b; display: flex; align-items: baseline; gap: 8px; }
+    .yxg-doc-group h4 span { font-size: .68rem; color: #94a3b8; font-weight: 400; }
+    .yxg-doc-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(235px, 1fr)); gap: 10px; }
+    .yxg-doc-card { background: #fff; border: 1px solid #e4ebf4; border-radius: 12px; padding: 12px 14px; cursor: pointer; transition: border-color .15s, box-shadow .15s, transform .15s; }
+    .yxg-doc-card:hover { border-color: #93c5fd; box-shadow: 0 4px 14px rgba(31,58,107,.08); transform: translateY(-1px); }
+    .yxg-doc-title { font-size: .82rem; font-weight: 700; color: #1f3a6b; }
+    .yxg-doc-desc { margin-top: 3px; font-size: .72rem; color: #5e6f8d; line-height: 1.55; min-height: 2.2em; }
+    .yxg-doc-meta { margin-top: 5px; font-size: .66rem; color: #94a3b8; }
+    .yxg-doc-actions { margin-top: 8px; display: flex; justify-content: space-between; align-items: center; gap: 8px; font-size: .68rem; color: #2a5298; }
+    .yxg-doc-actions a { color: #2a5298; text-decoration: none; background: #eef2ff; border: 1px solid #c9d7f5; border-radius: 999px; padding: 2px 8px; }
+    .yxg-doc-actions a:hover { text-decoration: underline; }
+    /* ===== 管理后台使用手册 ===== */
+    .ym-wrap { max-width: 1180px; margin: 0 auto; }
+    .ym-layout { display: grid; grid-template-columns: 216px minmax(0, 1fr); gap: 16px; align-items: start; }
+    .ym-toc { position: sticky; top: 12px; max-height: calc(100vh - 36px); overflow-y: auto; background: #fff; border: 1px solid #e4ebf4; border-radius: 14px; padding: 12px; box-shadow: 0 2px 10px rgba(31,58,107,.05); }
+    .ym-toc h3 { margin: 0 0 8px; font-size: .8rem; color: #1f3a6b; }
+    .ym-toc a { display: block; padding: 4px 7px; border-radius: 7px; color: #5e6f8d; font-size: .73rem; line-height: 1.45; text-decoration: none; }
+    .ym-toc a:hover { background: #eef4fc; color: #1d4ed8; }
+    .ym-toc .sub { padding-left: 18px; font-size: .69rem; color: #94a3b8; }
+    .ym-main { min-width: 0; }
+    .ym-topbar { display: flex; justify-content: space-between; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 10px; }
+    .ym-back { background: #fff; border: 1px solid #cbd5e1; border-radius: 999px; padding: 6px 14px; font-size: .76rem; cursor: pointer; color: #33445f; }
+    .ym-version { font-size: .7rem; color: #94a3b8; }
+    .ym-section { background: #fff; border: 1px solid #e4ebf4; border-radius: 16px; padding: 18px 20px; margin-bottom: 12px; box-shadow: 0 2px 10px rgba(31,58,107,.04); scroll-margin-top: 14px; }
+    .ym-section h2 { margin: 0 0 10px; font-size: 1.05rem; color: #1f3a6b; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .ym-section h3 { margin: 14px 0 6px; font-size: .86rem; color: #33445f; }
+    .ym-section p { margin: 5px 0; color: #5e6f8d; font-size: .79rem; line-height: 1.7; }
+    .ym-section ul { margin: 5px 0 5px 18px; padding: 0; color: #5e6f8d; font-size: .78rem; line-height: 1.7; }
+    .ym-section li { margin: 2px 0; }
+    .ym-jumps { display: flex; gap: 5px; flex-wrap: wrap; margin: 0 0 10px; }
+    .ym-jump { background: #eef2ff; border: 1px solid #c9d7f5; color: #1d4ed8; border-radius: 999px; padding: 3px 10px; font-size: .68rem; font-weight: 600; cursor: pointer; }
+    .ym-jump:hover { background: #dbeafe; }
+    .ym-flow { display: flex; align-items: stretch; gap: 6px; flex-wrap: wrap; margin: 10px 0; }
+    .ym-flow-node { flex: 1; min-width: 130px; background: #f8fbff; border: 1px solid #dbeafe; border-radius: 10px; padding: 9px 11px; font-size: .72rem; color: #475569; }
+    .ym-flow-node b { display: block; color: #1f3a6b; font-size: .76rem; margin-bottom: 2px; }
+    .ym-flow-arrow { align-self: center; color: #93c5fd; font-weight: 700; }
+    .ym-table { width: 100%; border-collapse: collapse; font-size: .75rem; margin: 6px 0; }
+    .ym-table th { background: #f3f7fd; color: #1f3a6b; padding: 7px 8px; border: 1px solid #e4ebf4; text-align: left; font-size: .72rem; }
+    .ym-table td { padding: 7px 8px; border: 1px solid #edf2f7; color: #475569; vertical-align: top; }
+    .ym-table tr:nth-child(even) td { background: #fbfcfe; }
+    .ym-pill { display: inline-block; border-radius: 999px; padding: 1px 7px; font-size: .65rem; font-weight: 700; }
+    .ym-pill.g { background: #ecfdf5; color: #047857; border: 1px solid #a7f3d0; }
+    .ym-pill.a { background: #eff6ff; color: #1d4ed8; border: 1px solid #bfdbfe; }
+    .ym-pill.w { background: #fffbeb; color: #b45309; border: 1px solid #fde68a; }
+    .ym-pill.r { background: #fef2f2; color: #b91c1c; border: 1px solid #fecaca; }
+    .ym-note { margin: 8px 0; padding: 8px 11px; background: #f8fbff; border-left: 3px solid #93c5fd; border-radius: 0 7px 7px 0; color: #475569; font-size: .74rem; line-height: 1.65; }
+    .ym-list-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    .ym-mini { background: #fbfdff; border: 1px solid #edf2f7; border-radius: 10px; padding: 9px 11px; }
+    .ym-mini b { display: block; color: #1f3a6b; font-size: .76rem; margin-bottom: 3px; }
+    .ym-mini span { color: #5e6f8d; font-size: .72rem; line-height: 1.55; }
+    @media (max-width: 900px) {
+        .ym-layout { grid-template-columns: 1fr; }
+        .ym-toc { position: static; max-height: none; }
+        .ym-toc a { display: inline-block; margin-right: 2px; }
+        .ym-toc .sub { display: none; }
+        .ym-list-grid { grid-template-columns: 1fr; }
+    }
+    @media (max-width: 720px) {
+        .yxg-hero { padding: 22px 18px; border-radius: 18px; }
+        .yxg-hero h1 { font-size: 1.35rem; }
+        .yxg-grid { grid-template-columns: 1fr; }
+        .yxg-doc-grid { grid-template-columns: 1fr; }
+        .yxg-perm-summary { grid-template-columns: 1fr; }
+    }
     </style>
 </head>
 <body>
@@ -2390,6 +2504,256 @@
         }
     }
 
+    // ==================== 管理后台：优学堂飞书文档中心 ====================
+    const FEISHU_DOCS = [
+        { id: 'directory', module: '总览', name: '优学堂表格目录', desc: '所有飞书文档/表格的索引，先从这里找链接', url: 'https://zhuanspirit.feishu.cn/sheets/UOr7sWsImhGy9ktId90cuDXlnlg', owner: '徐行', freq: '不定时' },
+        { id: 'sop', module: '新人进度', name: '曼哈顿判责系统SOP', desc: '师傅带教阶段学习文档', url: 'https://zhuanspirit.feishu.cn/docx/Av5CdYKQIozbqcxmIgCcbFqNn2c', owner: '徐行 / 唐洲', freq: '不定时' },
+        { id: 'athena', module: '新人进度', name: '雅典娜质检系统', desc: '日常质检 / 判责系统入口', url: 'https://zhuanspirit.feishu.cn/wiki/MRbowELQ5im3sok0l90cPtaNnkg', owner: '徐行 / 唐洲', freq: '不定时' },
+        { id: 'shicao', module: '新人进度', name: '实操全检考试模板', desc: '实操全检阶段考试模板', url: 'https://zhuanspirit.feishu.cn/file/K6TgbBUA9ou1tzxvUKuc2sNRnvd', owner: '品控', freq: '不定时' },
+        { id: 'moni', module: '新人进度', name: '模拟判责模板', desc: '模拟判责阶段考试模板', url: 'https://zhuanspirit.feishu.cn/file/GaPkb88oEoF83sx3D3Cc69nUndg', owner: '品控', freq: '不定时' },
+        { id: 'lmap', module: '学习地图', name: '学习地图内容表', desc: '各品类 / 阶段的理论、线上、实操课程', url: 'https://zhuanspirit.feishu.cn/sheets/IZYasNkm5hNOfltLAAacDOAVnSd', owner: '徐行', freq: '不定时' },
+        { id: 'lprogress', module: '学习地图', name: '人员学习进度表', desc: '姓名、各品类完成情况、完成进度', url: 'https://zhuanspirit.feishu.cn/sheets/Q3lFwrHQAien4RkhK4AcNOGmnxg', owner: '组长 / 品控', freq: '不定时' },
+        { id: 'errors', module: '品控分析', name: '复核-失误登记表', desc: '初审 / 抽检 / QA 三个失误源；看板与数据分析', url: 'https://zhuanspirit.feishu.cn/sheets/EdI0sn3qkh7H6wtkhcpcxrTnnDf', owner: '组长 / 品控 / 复审', freq: '不定时' },
+        { id: 'sampling', module: '品控分析', name: '抽检数据源表', desc: '线上 / 实物抽检量、覆盖率与数据分析', url: 'https://zhuanspirit.feishu.cn/sheets/D6FewOnrhiyLX7kuNFEcdHSZntx', owner: '组长 / 品控', freq: '不定时' },
+        { id: 'cases', module: '培训资料', name: '培训案例表', desc: '案例同步、页面「从飞书导入」', url: 'https://zhuanspirit.feishu.cn/sheets/Id6OsBKpWhYJm8ti08acihZbnNh?sheet=dd29f7', owner: '待确认', freq: '周一 / 三 / 五 / 日 9:00' },
+        { id: 'caseQuestions', module: '培训资料 / 考试题库', name: '培训案例生成', desc: '案例库「生成考题」、培训题库（1K3owU）', url: 'https://zhuanspirit.feishu.cn/sheets/BzG8s8py3hDZIvtUJl7cRXJXnfe?sheet=1K3owU', owner: '待确认', freq: '每周日 8:00 + 手动' },
+        { id: 'kbstd', module: '培训资料', name: '质检标准库', desc: '知识库的质检标准卡片（gMNoIv）', url: 'https://zhuanspirit.feishu.cn/sheets/BzG8s8py3hDZIvtUJl7cRXJXnfe?sheet=gMNoIv', owner: '待确认', freq: '每天 9:00' },
+        { id: 'biweekly', module: '培训资料', name: '双周培训 slides', desc: '双周培训内容（链接，不读数据）', url: 'https://zhuanspirit.feishu.cn/slides/XTGGslL2TlPqYwdQQDOc8jeOnlc', owner: '待确认', freq: '不定时' },
+        { id: 'monthly', module: '培训资料', name: '月度标准更新 slides', desc: '月度标准内容（链接，不读数据）', url: 'https://zhuanspirit.feishu.cn/slides/BHunsshMtlAWZcdKMo9cY7smnah', owner: '待确认', freq: '不定时' },
+        { id: 'wiki', module: '培训资料', name: '判责知识库', desc: '判责规范与案例（链接，不读数据）', url: 'https://zhuanspirit.feishu.cn/wiki/WQnywMV6EiTh1LkGDvHcBAqSnVm', owner: '待确认', freq: '不定时' },
+        { id: 'qb', module: '考试题库', name: '题库总表（7 品类）', desc: '常规题库：题目、选项、答案、解析、图片、视频', url: 'https://zhuanspirit.feishu.cn/sheets/BzG8s8py3hDZIvtUJl7cRXJXnfe', owner: '待确认', freq: '每周日 8:00 同步' },
+        { id: 'email', module: '管理后台', name: '邮箱管理', desc: '人员邮箱、站点、类型；保存时回写飞书', url: 'https://zhuanspirit.feishu.cn/sheets/BzG8s8py3hDZIvtUJl7cRXJXnfe?sheet=qCBZEl', owner: '徐行', freq: '每天同步 / 保存即写' },
+        { id: 'supabase', module: '云端与自动化', name: 'Supabase 云端数据库', desc: '云端主存储：业务数据与 API', url: 'https://supabase.com/dashboard/project/zfxwnixlvdxawoylhgxj', owner: '管理员', freq: '实时', kind: 'web' },
+        { id: 'supabaseUsage', module: '云端与自动化', name: 'Supabase 云端用量', desc: '查看数据库、带宽、存储等用量', url: 'https://supabase.com/dashboard/project/zfxwnixlvdxawoylhgxj/settings/usage', owner: '管理员', freq: '实时', kind: 'web' },
+        { id: 'cf', module: '云端与自动化', name: 'Cloudflare 控制台 / 用量', desc: 'Pages、Workers、KV 的项目与用量入口', url: 'https://dash.cloudflare.com/', owner: '管理员', freq: '实时', kind: 'web' },
+        { id: 'proxy', module: '云端与自动化', name: '飞书代理 / 数据接口', desc: 'Cloudflare Pages 代理，Feishu 请求与 KV 兜底', url: 'https://yxt-feishu.pages.dev', owner: '管理员', freq: '实时', kind: 'web' },
+        { id: 'pages', module: '云端与自动化', name: '优学堂线上页面', desc: 'GitHub Pages 站点入口', url: 'https://jimu-111.github.io/youxuetang/', owner: '管理员', freq: '随部署更新', kind: 'web' },
+        { id: 'github', module: '云端与自动化', name: 'GitHub 优学堂仓库', desc: '页面源码与自动化脚本', url: 'https://github.com/jimu-111/youxuetang', owner: '管理员', freq: '随提交更新', kind: 'web' },
+        { id: 'actions', module: '云端与自动化', name: 'GitHub 自动化任务', desc: '题库、案例、知识库、提醒等云端定时任务', url: 'https://github.com/jimu-111/youxuetang/actions', owner: '管理员', freq: '定时 / 手动', kind: 'web' }
+    ];
+
+    function openFeishuDocOverlay(id) {
+        var doc = FEISHU_DOCS.find(function(d) { return d.id === id; });
+        if (!doc) return;
+        if (doc.kind === 'web') { window.open(doc.url, '_blank'); return; }
+        openKBDocOverlay('feishuDoc:' + id, doc.name, doc.url);
+    }
+
+    function feishuDocsListHtml() {
+        var order = ['总览', '新人进度', '学习地图', '品控分析', '培训资料', '培训资料 / 考试题库', '考试题库', '管理后台', '云端与自动化'];
+        var groups = {};
+        FEISHU_DOCS.forEach(function(d) { (groups[d.module] || (groups[d.module] = [])).push(d); });
+        return order.filter(function(m) { return groups[m]; }).map(function(m) {
+            var cards = groups[m].map(function(d) {
+                var isWeb = d.kind === 'web';
+                return '<div class="yxg-doc-card" onclick="openFeishuDocOverlay(\'' + d.id + '\')">' +
+                    '<div class="yxg-doc-title">' + d.name + '</div>' +
+                    '<div class="yxg-doc-desc">' + d.desc + '</div>' +
+                    '<div class="yxg-doc-meta">维护：' + d.owner + ' · 更新：' + d.freq + '</div>' +
+                    '<div class="yxg-doc-actions"><span>' + (isWeb ? '🌐 新窗口打开' : '📖 页内打开') + '</span><a href="' + d.url + '" target="_blank" onclick="event.stopPropagation()">' + (isWeb ? '↗ 打开' : '↗ 在飞书打开') + '</a></div>' +
+                '</div>';
+            }).join('');
+            return '<div class="yxg-doc-group"><h4>' + m + ' <span>' + groups[m].length + ' 个链接</span></h4><div class="yxg-doc-grid">' + cards + '</div></div>';
+        }).join('');
+    }
+
+    // ==================== 管理后台：全功能使用手册 ====================
+    const YXT_MANUAL_SECTIONS = [
+        {
+            id: 'overview', title: '总览与数据流', icon: '🧭',
+            jumps: [{ label: '功能与权限', target: 'featureGuide' }, { label: '文档与云端', target: 'admin:docsDetail' }, { label: '管理后台', target: 'admin' }],
+            body: `<p>优学堂把复核组的“人、事、题、培训、反馈”收在一个入口里。源头在飞书表，系统自动同步到云端，再按需拉到页面。</p>
+<div class="ym-flow">
+  <div class="ym-flow-node"><b>飞书源表</b>人员/邮箱、学习地图、案例、知识库、题库、判责量</div><div class="ym-flow-arrow">→</div>
+  <div class="ym-flow-node"><b>云端同步</b>GitHub Actions / Cloudflare / 本地任务</div><div class="ym-flow-arrow">→</div>
+  <div class="ym-flow-node"><b>云端存储</b>Supabase 主存储 + Cloudflare KV 兜底</div><div class="ym-flow-arrow">→</div>
+  <div class="ym-flow-node"><b>页面终端</b>成都 / 青岛 / 深圳，打开即看</div>
+</div>
+<div class="ym-note"><b>原则：</b>人只维护飞书源表，不在网页和飞书各维护一份；页面负责解析、缓存和分发。</div>`
+        },
+        {
+            id: 'permission', title: '权限规则', icon: '🔐',
+            jumps: [{ label: '去完整权限页', target: 'featureGuide' }],
+            body: `<p>系统只分两级：<span class="ym-pill g">游客</span> 和 <span class="ym-pill a">管理员</span>。游客以浏览为主，管理员多出编辑、推送、同步、备份等操作。</p>
+<table class="ym-table"><thead><tr><th>页面</th><th>游客</th><th>管理员</th><th>说明</th></tr></thead><tbody>
+<tr><td>仪表盘</td><td>只读</td><td>只读</td><td>看培训进度、完成率、人员分布</td></tr>
+<tr><td>新人进度</td><td>只读</td><td>编辑</td><td>管理员可录入、改阶段、归档、退回</td></tr>
+<tr><td>学习地图</td><td>只读 + 可同步</td><td>只读 + 可同步</td><td>内容来自飞书表，页面没有编辑入口</td></tr>
+<tr><td>数据分析 / 失误看板</td><td>只读</td><td>编辑 / 推送</td><td>上传文件、生成报告、出卷、推送仅管理员</td></tr>
+<tr><td>案例库</td><td>只读</td><td>编辑 / 推送 / 考题生成</td><td>游客只看案例页签</td></tr>
+<tr><td>知识库</td><td>只读</td><td>编辑</td><td>质检标准库为表驱动，页面只读</td></tr>
+<tr><td>题库</td><td>只读</td><td>编辑 / 同步 / 恢复</td><td>游客可看、可搜、可刷题</td></tr>
+<tr><td>考试系统</td><td>不可进</td><td>读写</td><td>游客侧边栏不显示</td></tr>
+<tr><td>反馈中心</td><td>读写</td><td>读写</td><td>游客可提交并查看自己的反馈</td></tr>
+<tr><td>管理后台</td><td>不可进</td><td>读写</td><td>游客点击会被拦截</td></tr>
+</tbody></table>
+<div class="ym-note">管理员通过侧边栏底部的「游客模式」按钮登录；登录只影响当前浏览器。</div>`
+        },
+        {
+            id: 'newhire', title: '新人培养', icon: '🎓',
+            jumps: [{ label: '仪表盘', target: 'dashboard' }, { label: '新人进度', target: 'frontend' }, { label: '纳期配置', target: 'admin:deadlineConfigDetail' }],
+            body: `<p>新人从入职到正式判责一共 5 个阶段；每个阶段有独立时限和通过标准。</p>
+<table class="ym-table"><thead><tr><th>阶段</th><th>默认时限</th><th>关键通过标准</th></tr></thead><tbody>
+<tr><td>1 理论学习</td><td>5 天</td><td>理论学习、线上考试、实操考试按纳期完成</td></tr>
+<tr><td>2 系统学习</td><td>5 天</td><td>曼哈顿 / 雅典娜 / 责任方详解 / 判责详解</td></tr>
+<tr><td>3 实操全检</td><td>2 天</td><td>50 台，通过率 ≥90%</td></tr>
+<tr><td>4 模拟判责</td><td>2 天</td><td>50 单，通过率 ≥90%</td></tr>
+<tr><td>5 正式判责</td><td>42 天</td><td>周人效 / 失误阶梯考核</td></tr>
+</tbody></table>
+<p><b>正式判责周目标：</b>前 3 周连续两周未达标会自动退回模拟判责；第 1–6 周人效 40 / 70 / 90 / 110 / 130 / 150，失误上限 10 / 7 / 6 / 5 / 5 / 5。</p>
+<div class="ym-note"><b>纳期怎么算：</b>阶段开始日 + 配置的第几天，不是按自然日平均分。到期当天和逾期后各提醒一次，发给品控负责人和学员本人。<b>入职日期是事实记录，不要为了调周期去改入职日期；调周期改阶段开始日。</b></div>`
+        },
+        {
+            id: 'learning', title: '学习地图', icon: '🗺️',
+            jumps: [{ label: '学习地图', target: 'learningMapView' }, { label: '学习地图飞书表', target: 'admin:docsDetail' }],
+            body: `<p>学习地图按品类/阶段读取飞书表，页面只做展示和进度跟踪。</p>
+<ul><li><b>内容表：</b>9 个分区、约 140 项课程；按“分组标题 / 课程行 / 纳期行”解析。</li><li><b>进度表：</b>成都、深圳、青岛三个站点页签；按姓名和品类完成情况汇总。</li><li><b>个人学习计划：</b>按个人失误短板生成，包含薄弱板块、课程、链接和推送记录。</li><li><b>权限：</b>游客可浏览、可点「从飞书同步数据」；管理员也没有额外编辑入口，内容以飞书表为准。</li></ul>
+<div class="ym-note">如果页面进度和飞书不一致，先点同步；仍不一致就检查飞书页签标题和表头是否被改。</div>`
+        },
+        {
+            id: 'quality', title: '品控分析与红绿灯', icon: '📊',
+            jumps: [{ label: '数据分析', target: 'dataAnalysis' }, { label: '失误分析看板', target: 'errorDashboard' }, { label: '品控飞书表', target: 'admin:docsDetail' }],
+            body: `<p>品控分析读取 3 类失误数据（初审 / 抽检 / QA）和 2 类抽检数据（线上 / 实物），看板约每 5 分钟刷新一次。</p>
+<table class="ym-table"><thead><tr><th>周期</th><th>绿灯</th><th>黄灯</th><th>红灯</th><th>深红</th><th>自动动作</th></tr></thead><tbody>
+<tr><td>日</td><td>0–1</td><td>2–4</td><td>≥5</td><td>—</td><td>只亮灯，不自动推送</td></tr>
+<tr><td>周 / 自定义</td><td>0–4</td><td>5–6</td><td>7–10</td><td>≥11</td><td>考试≥5、培训≥7、学习≥11</td></tr>
+<tr><td>月</td><td>0–10</td><td>11–15</td><td>16–20</td><td>≥21</td><td>考试≥11、培训≥16、学习≥21</td></tr>
+</tbody></table>
+<p><b>看板能力：</b>站点/个人画像、按周期/站点/人员钻取、红绿灯、定向出卷/培训/学习、报告导出。</p>
+<div class="ym-note">周一自动推送使用的是脚本内的另一组阈值（当前 6 / 16 / 11），和红绿灯周阈值不是同一个配置；改阈值时要分别核对。</div>`
+        },
+        {
+            id: 'training', title: '培训资料与案例推送', icon: '📚',
+            jumps: [{ label: '案例库', target: 'caseLibrary' }, { label: '知识库', target: 'knowledgeBase' }, { label: '培训案例表', target: 'admin:docsDetail' }],
+            body: `<h3>案例库</h3><ul><li>案例从飞书「培训案例表」同步：周一/三/五/日 9:00；页面也可手动导入。</li><li>案例包括问题描述、正确方向、问题照片、方向照片/示例照片；图片可存 Cloudflare KV。</li><li>管理员可按案例生成判断/单选/多选题，经过人工审核后进入培训题库。</li></ul>
+<h3>培训案例推送</h3><ul><li><b>通道①按失误次数：</b>同一个人、同一站点、所选周内失误 <b>≥6 次</b>才进入推送名单；收件人=站点品控+本人。</li><li><b>通道②按失误类别：</b>类别失误少于 <b>3 条</b>整类不推；每站目标 <b>20 条</b>案例，最低 <b>16 条</b>；收件人由管理员手动选。</li><li>培训课件按页展示，滚到底并停留 5 秒后才能下一页；末页有测验，一次补考、错 1 题以内算通过。</li></ul>
+<h3>知识库</h3><ul><li>质检标准库由飞书表驱动，每天 9:00 同步；10 个品类卡片，页面只读。</li><li>其他知识库管理员可增删改、排序；游客只读。</li></ul>`
+        },
+        {
+            id: 'exam', title: '考试题库与考试系统', icon: '📝',
+            jumps: [{ label: '题库', target: 'questionBank' }, { label: '考试系统', target: 'examSystem' }, { label: '题库飞书表', target: 'admin:docsDetail' }],
+            body: `<p><b>题库：</b>常规题库按 7 个品类维护；培训案例题库独立存放，按全部 / 判断 / 单选 / 多选展示。题库页面只读，内容由飞书总表和周日同步维护。</p>
+<table class="ym-table"><thead><tr><th>项目</th><th>规则</th></tr></thead><tbody>
+<tr><td>题库同步</td><td>每周日 8:00；先做源1→源2对账，再同步题库；题数骤降、删除量过大、0 题等异常会中止并告警。</td></tr>
+<tr><td>考试创建</td><td>管理员选套题/题库，生成考试码或链接，推送给指定人员。</td></tr>
+<tr><td>有效期</td><td>考试和培训记录 24 小时有效，过期不能开考。</td></tr>
+<tr><td>判分</td><td>普通考试满分 100 才通过；培训考核允许错 1 题以内；可补考。</td></tr>
+<tr><td>结果回收</td><td>记录完成状态、得分、次数，页面可查看并再次推送。</td></tr>
+</tbody></table>`
+        },
+        {
+            id: 'admin', title: '反馈中心与管理后台', icon: '⚙️',
+            jumps: [{ label: '反馈中心', target: 'feedback' }, { label: '备份', target: 'admin' }, { label: '邮箱管理', target: 'admin:emailDetail' }, { label: '站点配置', target: 'admin:siteConfigDetail' }, { label: '文档与云端', target: 'admin:docsDetail' }],
+            body: `<p><b>反馈中心：</b>游客可提交问题/建议、查看自己的反馈；管理员处理修复后回传结果，形成状态确认。</p>
+<table class="ym-table"><thead><tr><th>后台模块</th><th>作用</th></tr></thead><tbody>
+<tr><td>导出备份 / 导入恢复</td><td>导出学员、案例等数据为 JSON；导入会覆盖当前数据，先备份再操作。</td></tr>
+<tr><td>人员变动</td><td>记录入职/离职日期；离职后不计活跃，入职前不参与排名。</td></tr>
+<tr><td>邮箱管理</td><td>人员与站点以这里为准；保存时先写飞书，再写云端/本地；支持从飞书更新、写回飞书。</td></tr>
+<tr><td>人员管理</td><td>只读，跟随邮箱管理自动变化。</td></tr>
+<tr><td>站点配置</td><td>维护站点名称、图标、颜色、品控负责人；所有模块动态读取。</td></tr>
+<tr><td>纳期配置</td><td>改阶段时限和每个检查项的纳期天数，不用改代码。</td></tr>
+<tr><td>判责量同步</td><td>查看每日判责量、手动同步；最新日期指针只前进不后退。</td></tr>
+<tr><td>审计日志</td><td>记录管理员敏感操作，页面保留上限 200 条。</td></tr>
+<tr><td>文档与云端</td><td>飞书文档、Supabase/Cloudflare、GitHub 自动化入口；飞书文档可在页内打开。</td></tr>
+</tbody></table>`
+        },
+        {
+            id: 'automation', title: '云端与本地自动任务', icon: '⏱️',
+            jumps: [{ label: 'GitHub Actions', target: 'admin:docsDetail' }, { label: '文档与云端', target: 'admin:docsDetail' }],
+            body: `<p><b>云端任务</b>（电脑关机也会跑）：</p>
+<table class="ym-table"><thead><tr><th>时间</th><th>任务</th></tr></thead><tbody>
+<tr><td>周一/三/五/日 9:00</td><td>培训案例同步</td></tr>
+<tr><td>每天 9:00</td><td>知识库质检标准同步</td></tr>
+<tr><td>每天 10:00</td><td>邮箱配置同步</td></tr>
+<tr><td>每天 9:30</td><td>新人纳期提醒</td></tr>
+<tr><td>周日 8:00</td><td>题库源对账 + 题库同步</td></tr>
+<tr><td>周一 10:30</td><td>周一自动推送（Cloudflare Worker 触发 GitHub Actions）</td></tr>
+<tr><td>每天 10/14/18/22 点</td><td>Supabase 探活监控</td></tr>
+</tbody></table>
+<p><b>本地任务</b>（电脑关机/注销就不跑）：</p>
+<table class="ym-table"><thead><tr><th>时间</th><th>任务</th></tr></thead><tbody>
+<tr><td>每天 8:35</td><td>点整备同步</td></tr>
+<tr><td>每天 9:05</td><td>每日抽检 / 精细化抽检各套程序</td></tr>
+<tr><td>每天</td><td>判责量同步</td></tr>
+<tr><td>每天 13:50 / 15:50 / 16:30</td><td>复审推送</td></tr>
+<tr><td>周一 9:00</td><td>导出目录清理（按修改时间超过 7 天删除）</td></tr>
+</tbody></table>
+<div class="ym-note">云端任务失败去 GitHub Actions 手动重跑；本地任务失败先看电脑是否开机、计划任务是否执行，日志在 <code>C:\\Users\\xuhan\\scripts\\silent\\logs</code>。</div>`
+        },
+        {
+            id: 'calc', title: '计算口径', icon: '🧮',
+            jumps: [{ label: '品控分析', target: 'errorDashboard' }, { label: '新人进度', target: 'frontend' }],
+            body: `<table class="ym-table"><thead><tr><th>指标</th><th>公式 / 口径</th></tr></thead><tbody>
+<tr><td>判责量</td><td>按日、按人、按品类累加判责记录；云端每天一个日期键。</td></tr>
+<tr><td>初审准确率</td><td>(判责量 − 失误量) ÷ 判责量 × 100%。</td></tr>
+<tr><td>失误率</td><td>失误数 ÷ 判责量 × 100%；可分含抽检 / 不含抽检两种口径。</td></tr>
+<tr><td>抽检覆盖率</td><td>抽检量 ÷ 判责量 × 100%，上限 100%。</td></tr>
+<tr><td>红绿灯</td><td>按个人在所选周期的失误次数，对照日/周/月阈值分绿黄红深红。</td></tr>
+<tr><td>新人纳期</td><td>阶段开始日 + 对应检查项偏移天数；不是按阶段平均分。</td></tr>
+<tr><td>考试分</td><td>答对题数 ÷ 总题数 × 100；普通考试 100 分通过，培训考核允许错 1 题。</td></tr>
+</tbody></table>
+<div class="ym-note">不同页面可能使用不同分母（判责量 / 抽检量 / 总失误），看数时先确认口径；手册和看板上的口径要一致。</div>`
+        },
+        {
+            id: 'trouble', title: '异常与补跑', icon: '🛠️',
+            jumps: [{ label: 'GitHub Actions', target: 'admin:docsDetail' }, { label: '邮箱管理', target: 'admin:emailDetail' }],
+            body: `<table class="ym-table"><thead><tr><th>现象</th><th>常见原因</th><th>处理</th></tr></thead><tbody>
+<tr><td>飞书授权过期</td><td>个人 token 过期或权限被拒</td><td>重新授权；应用身份读写失败时检查代理注入。</td></tr>
+<tr><td>云端读不到/402</td><td>Supabase 配额或网络</td><td>系统自动转 KV 兜底；恢复后回灌，先别反复清缓存。</td></tr>
+<tr><td>周一没推送</td><td>Worker cron / 阈值 / 队列为空</td><td>看 Actions 日志和推送记录；无人达标时 sent:0 是正常。</td></tr>
+<tr><td>本地任务没跑</td><td>电脑关机、注销、计划任务失败</td><td>开机后手动跑一次；本地任务无状态，可安全补跑。</td></tr>
+<tr><td>判责量最新日期不对</td><td>用归档目录回填把 latest 往回拨</td><td>只用默认目录同步；归档回填不更新 latest。</td></tr>
+<tr><td>新设备看不到失误看板</td><td>看板缓存只存本机</td><td>进一次看板或点刷新，从飞书重新拉。</td></tr>
+<tr><td>保存邮箱报 Unauthorized</td><td>用了个人只读 token</td><td>保存/写回走应用身份；检查代理密钥注入。</td></tr>
+</tbody></table>
+<div class="ym-note">推送类操作改代码时注意：有的推送有两处入口，改一处会漏另一处；FORCE 等旧参数可能已失效，别只看勾选框。</div>`
+        },
+        {
+            id: 'log', title: '维护约定与更新记录', icon: '📌',
+            jumps: [{ label: '功能与权限', target: 'featureGuide' }, { label: '文档与云端', target: 'admin:docsDetail' }],
+            body: `<p><b>维护约定：</b>每次修改功能、规则、阈值或权限，必须同步更新本手册对应章节，并更新“最后核对”日期；功能简介和权限页也要一起改。</p>
+<ul><li><b>2026-11-28：</b>手册第一版；周红绿灯改为考试≥5、培训≥7、学习≥11；新增功能与权限合并页；管理后台新增文档与云端入口。</li><li>写规则时统一写“触发条件 → 数据来源 → 执行时间 → 结果 → 失败处理”。</li><li>手册不写密码、密钥和完整 token。</li></ul>
+<div class="ym-note">最后核对：2026-11-28 · 适用版本：20261128.5。遇到代码与手册不一致，以当前代码为准，并回来改手册。</div>`
+        }
+    ];
+
+    function yxtManualGo(target) {
+        if (!target) return;
+        if (target.indexOf('admin:') === 0) {
+            var id = target.slice(6);
+            switchNav('admin');
+            setTimeout(function() {
+                try {
+                    var el = document.getElementById(id);
+                    if (el && el.style.display === 'none' && typeof window.toggleAdminDetail === 'function') window.toggleAdminDetail(id);
+                    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                } catch (e) {}
+            }, 350);
+            return;
+        }
+        switchNav(target);
+    }
+
+    function renderAdminManual() {
+        var toc = YXT_MANUAL_SECTIONS.map(function(s) {
+            return '<a href="#ym-' + s.id + '">' + s.icon + ' ' + s.title + '</a>';
+        }).join('');
+        var body = YXT_MANUAL_SECTIONS.map(function(s) {
+            var jumps = (s.jumps || []).map(function(j) {
+                return '<button class="ym-jump" onclick="yxtManualGo(\'' + j.target + '\')">' + j.label + '</button>';
+            }).join('');
+            return '<section class="ym-section" id="ym-' + s.id + '"><h2>' + s.icon + ' ' + s.title + '</h2>' +
+                (jumps ? '<div class="ym-jumps">' + jumps + '</div>' : '') + s.body + '</section>';
+        }).join('');
+        document.getElementById('mainContent').innerHTML =
+            '<div class="ym-wrap">' +
+                '<div class="ym-topbar"><button class="ym-back" onclick="switchNav(\'admin\')">← 返回管理后台</button><span class="ym-version">适用版本 20261128.5 · 最后核对 2026-11-28</span></div>' +
+                '<div class="yxg-hero"><div class="yxg-kicker">优学堂 · 全功能手册</div><h1>使用手册</h1><p>把每一个功能、规则、云端任务和计算口径写在一处。左边目录可直接跳转，章节里的按钮可跳到对应模块。</p><div class="yxg-stats"><span>' + YXT_MANUAL_SECTIONS.length + ' 个章节</span><span>11 个功能页</span><span>规则 + 推送 + 云端</span><span>随功能同步更新</span></div></div>' +
+                '<div class="ym-layout"><aside class="ym-toc"><h3>📖 目录</h3>' + toc + '<div class="ym-note" style="margin-top:10px;font-size:.68rem;">功能 / 规则 / 权限有改动，本手册同步更新。</div></aside><div class="ym-main">' + body + '</div></div>' +
+            '</div>';
+        var mc = document.getElementById('mainContent'); if (mc) mc.scrollTop = 0;
+    }
+
     function renderAdminContent(){
         const container = document.getElementById('mainContent'); 
         // 已登录管理员直接进入，不用重复输密码
@@ -2434,7 +2798,7 @@
         <div style="max-width:980px;margin:0 auto;">
             <div class="report-box" style="margin-bottom:20px;">
                 <div class="report-title">⚙️ 管理后台</div>
-                <p style="color:#64748b;font-size:0.9rem;margin:8px 0 20px;">数据备份、人员、邮箱、站点和纳期配置</p>
+                <p style="color:#64748b;font-size:0.9rem;margin:8px 0 20px;">数据备份、人员、邮箱、站点、纳期配置与文档入口</p>
                 <div style="display:flex;gap:20px;flex-wrap:wrap;justify-content:center;">
                     <div style="flex:1;min-width:250px;background:#f0fdf4;border:2px solid #bbf7d0;border-radius:16px;padding:24px;text-align:center;">
                         <div style="font-size:2.5rem;margin-bottom:8px;">📤</div>
@@ -2514,6 +2878,22 @@
                     </div>
                     <div class="stat-card-value" id="deadlineConfigCount">--</div>
                     <div class="stat-card-label">纳期配置</div>
+                </div>
+                <div class="stat-card" id="docsCard" style="cursor:pointer;" onclick="toggleAdminDetail('docsDetail')">
+                    <div class="stat-card-header">
+                        <div class="stat-card-icon" style="background:#e0f2fe;">📚</div>
+                        <span class="stat-card-trend up" id="docsBadge">${FEISHU_DOCS.length} 个链接</span>
+                    </div>
+                    <div class="stat-card-value" id="docsCount">${FEISHU_DOCS.length}</div>
+                    <div class="stat-card-label">文档与云端</div>
+                </div>
+                <div class="stat-card" id="manualCard" style="cursor:pointer;" onclick="renderAdminManual()">
+                    <div class="stat-card-header">
+                        <div class="stat-card-icon" style="background:#f3e8ff;">📘</div>
+                        <span class="stat-card-trend up">V1</span>
+                    </div>
+                    <div class="stat-card-value">12 章</div>
+                    <div class="stat-card-label">使用手册</div>
                 </div>
             </div>
             <!-- 判责量详情 -->
@@ -2617,6 +2997,12 @@
                 </div>
                 <p style="color:#94a3b8;font-size:0.72rem;margin:8px 0 0;">纳期必须小于等于阶段时限；到期当天和逾期后各提醒一次，发给品控负责人和学员本人。</p>
             </div>
+            <!-- 飞书文档与云端入口 -->
+            <div id="docsDetail" class="report-box" style="display:none;margin-top:16px;">
+                <div class="report-title" style="display:flex;justify-content:space-between;align-items:center;">📚 优学堂文档与云端 <span style="font-size:0.7rem;color:#94a3b8;cursor:pointer;" onclick="toggleAdminDetail('docsDetail')">收起 ▲</span></div>
+                <p style="color:#64748b;font-size:0.85rem;margin:8px 0 12px;">汇总优学堂用到的飞书文档、云端后台和 GitHub 自动化入口。飞书文档点击后在本页下方滑动展开，右上角可在飞书打开；云端/GitHub 入口需登录，直接新窗口打开。</p>
+                <div>${feishuDocsListHtml()}</div>
+            </div>
         </div>`;
 
         // 站点选项必须声明在任何调用之前（updateAdminCards→updateSiteCard 在函数体顶层立即执行）
@@ -2650,7 +3036,7 @@
             var el = document.getElementById(id);
             if (!el) return;
             // 先收起其他详情
-            ['hrDetail','emailDetail','auditDetail','panzeDetail','siteDetail','siteConfigDetail','deadlineConfigDetail'].forEach(function(d){
+            ['hrDetail','emailDetail','auditDetail','panzeDetail','siteDetail','siteConfigDetail','deadlineConfigDetail','docsDetail'].forEach(function(d){
                 if (d !== id) { var other = document.getElementById(d); if (other) other.style.display = 'none'; }
             });
             el.style.display = el.style.display === 'none' ? 'block' : 'none';
@@ -14860,7 +15246,8 @@ URL.revokeObjectURL(url);
         ]},
         { id: 'feedbackCenter', name: '💬 反馈中心', subs: [
             { nav: 'feedback', label: '💡 问题/建议反馈', guestHidden: false }
-        ]}
+        ]},
+        { id: 'yxtGuide', name: '📘 功能与权限', directNav: 'featureGuide', subs: [] }
     ];
 
     let expandedCategory = 'newcomerTraining';
@@ -14871,6 +15258,11 @@ URL.revokeObjectURL(url);
         if (!container) return;
         var html = '';
         SIDEBAR_MENU.forEach(function(cat) {
+            if (cat.directNav) {
+                var isDirectActive = cat.directNav === currentSubNav;
+                html += '<button class="nav-btn category direct' + (isDirectActive ? ' active' : '') + '" data-direct-nav="' + cat.directNav + '" style="font-size:0.9rem;">' + cat.name + '</button>';
+                return;
+            }
             var isExpanded = cat.id === expandedCategory;
             var arrow = isExpanded ? '<span style="font-size:0.6rem;opacity:0.5;margin-right:2px;">▼</span>' : '<span style="font-size:0.6rem;opacity:0.5;margin-right:2px;">▸</span>';
             html += '<button class="nav-btn category" data-cat="' + cat.id + '" style="font-size:0.9rem;">' + arrow + cat.name + '</button>';
@@ -14890,8 +15282,21 @@ URL.revokeObjectURL(url);
         });
         container.innerHTML = html;
 
+        // 直接导航类别（无子标签）→ 打开页面
+        container.querySelectorAll('.category.direct').forEach(function(btn) {
+            btn.addEventListener('click', function() {
+                var nav = btn.dataset.directNav;
+                currentSubNav = nav;
+                currentNav = nav;
+                expandedCategory = '';
+                buildSidebarAccordion();
+                renderSubContent(nav);
+            });
+        });
+
         // 类别点击 → 展开/收起
         container.querySelectorAll('.category').forEach(function(btn) {
+            if (btn.dataset.directNav) return;
             btn.addEventListener('click', function() {
                 var catId = btn.dataset.cat;
                 if (expandedCategory === catId) {
@@ -14913,6 +15318,7 @@ URL.revokeObjectURL(url);
                 currentSubNav = nav;
                 currentNav = nav;
                 for (var i = 0; i < SIDEBAR_MENU.length; i++) {
+                    if (SIDEBAR_MENU[i].directNav === nav) { expandedCategory = SIDEBAR_MENU[i].id; break; }
                     var found = SIDEBAR_MENU[i].subs.find(function(s) { return s.nav === nav; });
                     if (found) { expandedCategory = SIDEBAR_MENU[i].id; break; }
                 }
@@ -14949,11 +15355,129 @@ URL.revokeObjectURL(url);
         currentNav = nav;
         currentSubNav = nav;
         for (var i = 0; i < SIDEBAR_MENU.length; i++) {
+            if (SIDEBAR_MENU[i].directNav === nav) { expandedCategory = SIDEBAR_MENU[i].id; break; }
             var found = SIDEBAR_MENU[i].subs.find(function(s) { return s.nav === nav; });
             if (found) { expandedCategory = SIDEBAR_MENU[i].id; break; }
         }
         buildSidebarAccordion();
         renderSubContent(nav);
+    }
+
+    // ==================== 优学堂的功能与权限 ====================
+    const YXG_MODULES = [
+        { icon: '🎓', name: '新人培养', pages: [
+            { name: '仪表盘', desc: '新人培训进度、完成率、学员分布、各阶段在培人数及最新动态的综合概览。', features: ['培训进度、完成率、站点分布一屏看', '点学员卡片查看培训档案', '阶段人数和最新动态实时更新'], guest: '只读', admin: '只读', detail: '游客和管理员都只能查看，不改数据。' },
+            { name: '新人进度', desc: '按站点查看各培训阶段详情，集中展示学员信息、培训档案与纳期状态。', features: ['按站点切换各培训阶段', '看每周人效、失误、出勤和达标情况', '纳期状态与掉队预警'], guest: '只读', admin: '编辑', detail: '游客看名单和档案；管理员可录入、改阶段、归档、退回。' }
+        ]},
+        { icon: '🗺️', name: '学习地图', pages: [
+            { name: '学习地图', desc: '全品类理论学习资料与全员学习进度；按失误短板生成个人学习计划，支持推送。', features: ['9 个学习分区、课程分类聚合', '全员学习进度看板', '按失误生成个人学习计划并推送'], guest: '只读', admin: '编辑', detail: '游客可浏览并点「从飞书同步数据」；管理员除同步外没有额外编辑入口。' }
+        ]},
+        { icon: '📊', name: '品控分析', pages: [
+            { name: '数据分析', desc: '基于飞书同步的失误数据，一键生成站点/个人质量画像，定位质量短板。', features: ['站点/个人质量画像', '按周期、站点、人员筛选', '生成报告、出卷、定向推送'], guest: '只读', admin: '编辑 / 推送', detail: '游客只读且可从飞书获取数据；上传文件、生成报告、出卷、推送仅管理员。' },
+            { name: '失误分析看板', desc: '全景展示全组质量状况，按周期/站点/个人钻取；红绿灯预警并触发定向推送。', features: ['按周阈值红绿灯预警', '按周期/站点/个人钻取明细', '自动生成定制化质量管控任务'], guest: '只读', admin: '编辑 / 推送', detail: '游客只读；管理员可刷新、授权、生成报告、出卷、推送。' }
+        ]},
+        { icon: '📚', name: '培训资料', pages: [
+            { name: '案例库', desc: '沉淀标准培训案例，支持检索、培训推送，并可按案例生成判断/单选/多选题。', features: ['标准案例检索、筛选', '培训课件与推送记录', '按案例生成判断/单选/多选题'], guest: '只读', admin: '编辑 / 推送 / 考题生成', detail: '游客只看案例页签；管理员可录入、编辑、生成考题、推送。' },
+            { name: '知识库', desc: '整合质检标准与培训资料，提供日常巡查、培训复盘的一站式速查入口。', features: ['质检标准/培训资料一站查', '分组卡片和关键词搜索', '表驱动标准库自动更新'], guest: '只读', admin: '编辑', detail: '游客只读；管理员可增删改排序；质检标准库为飞书表驱动，页面只读。' }
+        ]},
+        { icon: '📝', name: '考试题库', pages: [
+            { name: '题库', desc: '常规题库与培训案例题库双库隔离，支持分类搜索、日常刷题和管理员同步。', features: ['常规题库 + 培训案例题库', '分类搜索、日常刷题', '培训案例题库按题型展示'], guest: '只读', admin: '编辑 / 同步 / 恢复', detail: '游客可看可搜；管理员可同步、下载、写回、恢复。' },
+            { name: '考试系统', desc: '记录考试、学习、培训的推送下发，追踪完成状态与结果，形成闭环校验。', features: ['创建考试、选择套题', '推送、完成、补考', '24 小时有效期与结果回收'], guest: '隐藏', admin: '读写', detail: '游客侧边栏不可进入；管理员拥有全部功能。' }
+        ]},
+        { icon: '💬', name: '反馈中心', pages: [
+            { name: '反馈中心', desc: '收集日常使用中的问题与建议，管理员处理修复后回传结果与状态确认。', features: ['提交问题/建议', '管理员处理并回传', '反馈状态跟踪'], guest: '读写', admin: '读写', detail: '游客可提交、查看自己的反馈；管理员可处理和回传。' }
+        ]},
+        { icon: '⚙️', name: '管理后台', pages: [
+            { name: '管理后台', desc: '数据备份、人员变动、邮箱管理、站点配置、判责同步与系统日志。', features: ['数据备份/恢复', '人员/邮箱/站点/纳期配置', '审计日志与判责同步'], guest: '不可进', admin: '读写', detail: '游客点击会被拦截；管理员可备份、配置、查看日志。' }
+        ]}
+    ];
+
+    function yxgTag(role, text) {
+        var kind = (text === '隐藏' || text === '不可进') ? 'h' : (role === 'guest' ? 'g' : 'a');
+        return '<span class="yxg-tag ' + kind + '">' + role + '：' + text + '</span>';
+    }
+
+    function renderFeatureAndPermissions() {
+        var totalPages = 0;
+        YXG_MODULES.forEach(function(m) { totalPages += m.pages.length; });
+        var cards = YXG_MODULES.map(function(m) {
+            var pages = m.pages.map(function(p) {
+                var features = (p.features || []).map(function(f) { return '<span>• ' + f + '</span>'; }).join('');
+                return '<div class="yxg-page"><strong>' + p.name + '</strong><span>' + p.desc + '</span>' +
+                    '<div class="yxg-feature-list">' + features + '</div>' +
+                    '<div class="yxg-tags">' + yxgTag('游客', p.guest) + yxgTag('管理员', p.admin) + '</div></div>';
+            }).join('');
+            return '<div class="yxg-card"><h3>' + m.icon + ' ' + m.name + ' <span class="yxg-tag h" style="font-weight:400;">' + m.pages.length + ' 页</span></h3>' + pages + '</div>';
+        }).join('');
+        var rows = '';
+        YXG_MODULES.forEach(function(m) {
+            m.pages.forEach(function(p, idx) {
+                rows += '<tr>' +
+                    (idx === 0 ? '<td class="mod" rowspan="' + m.pages.length + '">' + m.icon + ' ' + m.name + '</td>' : '') +
+                    '<td>' + p.name + '</td>' +
+                    '<td>' + yxgTag('游客', p.guest) + '</td>' +
+                    '<td>' + yxgTag('管理员', p.admin) + '</td>' +
+                    '<td style="color:#5e6f8d;">' + (p.detail || '—') + '</td>' +
+                '</tr>';
+            });
+        });
+        document.getElementById('mainContent').innerHTML =
+            '<div class="yxg-wrap">' +
+                '<div class="yxg-hero"><div class="yxg-kicker">优学堂 · 使用指南</div>' +
+                    '<h1>功能与权限</h1>' +
+                    '<p>一个入口，串起人、事、题、培训与反馈闭环。下面先看各模块能做什么，再看游客和管理员分别能做什么。</p>' +
+                    '<div class="yxg-stats"><span>' + YXG_MODULES.length + ' 大模块</span><span>' + totalPages + ' 个功能页</span><span>3 个站点</span><span>游客 / 管理员两级权限</span></div>' +
+                '</div>' +
+                '<h2 class="yxg-section-title">一、功能简介</h2>' +
+                '<div class="yxg-grid">' + cards + '</div>' +
+                '<div class="yxg-note"><b>数据怎么流转：</b>飞书源表 → 云端定时同步（案例、知识库、题库、判责量等）→ 优学堂页面按需拉取。人只维护源表，页面负责解析、缓存和分发。</div>' +
+                '<div class="yxg-note"><b>日常闭环：</b>品控分析锁定短板 → 学习地图/培训资料补学 → 题库练习 → 考试系统回收结果 → 反馈中心处理问题，形成“诊—学—练—考—反馈”的闭环。</div>' +
+                '<h2 class="yxg-section-title">二、权限对照</h2>' +
+                '<p class="yxg-section-desc">同一页面，游客和管理员能做的事情不同。管理员通过侧边栏底部的「游客模式」按钮登录后，才会出现编辑、推送、同步等管理操作。</p>' +
+                '<div class="yxg-legend"><span><i class="yxg-dot g"></i>游客可用</span><span><i class="yxg-dot a"></i>管理员可用</span><span><i class="yxg-dot h"></i>不可见</span></div>' +
+                '<div class="yxg-perm-summary">' +
+                    '<div class="yxg-summary-card guest"><b>👤 游客能做什么</b><span>浏览统计、名单、课程、案例、知识库和题库；可搜索、刷题、提交反馈；不能改数据，不能进入考试系统和管理后台。</span></div>' +
+                    '<div class="yxg-summary-card admin"><b>🔓 管理员能做什么</b><span>在游客基础上，可录入/编辑、推送、同步、生成考题、备份恢复、配置站点/邮箱/纳期、查看审计日志。</span></div>' +
+                '</div>' +
+                '<div class="yxg-table-wrap"><table class="yxg-table"><thead><tr><th>模块</th><th>功能页</th><th>游客</th><th>管理员</th><th>具体说明</th></tr></thead><tbody>' + rows + '</tbody></table></div>' +
+                '<div class="yxg-note"><b>注意：</b>管理员登录只影响当前浏览器；游客看到的列表、统计和图表仍可正常浏览，但看不到管理按钮。涉及云端数据的写操作，考试系统和管理后台仅管理员可用。</div>' +
+            '</div>';
+        var mc = document.getElementById('mainContent'); if (mc) mc.scrollTop = 0;
+    }
+
+    function renderPermissionMatrix() {
+        var rows = '';
+        YXG_MODULES.forEach(function(m) {
+            m.pages.forEach(function(p, idx) {
+                var note = '';
+                if (p.name === '学习地图') note = '游客可点「从飞书同步数据」刷新';
+                else if (p.name === '数据分析') note = '游客可用「从飞书获取数据」；上传文件仅管理员';
+                else if (p.name === '案例库') note = '游客只看案例页签；管理操作仅管理员';
+                else if (p.name === '知识库') note = '质检标准库为表驱动，页面只读';
+                else if (p.name === '题库') note = '常规题库周日 8:00 同步；管理员可立即更新';
+                else if (p.name === '考试系统') note = '游客侧边栏不可进入';
+                else if (p.name === '管理后台') note = '游客点击会被拦截';
+                rows += '<tr>' +
+                    (idx === 0 ? '<td class="mod" rowspan="' + m.pages.length + '">' + m.icon + ' ' + m.name + '</td>' : '') +
+                    '<td>' + p.name + '</td>' +
+                    '<td>' + yxgTag('游客', p.guest) + '</td>' +
+                    '<td>' + yxgTag('管理员', p.admin) + '</td>' +
+                    '<td style="color:#5e6f8d;">' + (note || '—') + '</td>' +
+                '</tr>';
+            });
+        });
+        document.getElementById('mainContent').innerHTML =
+            '<div class="yxg-wrap">' +
+                '<div class="yxg-hero"><div class="yxg-kicker">优学堂 · 使用指南</div>' +
+                    '<h1>权限对照</h1>' +
+                    '<p>同一页面，游客和管理员能做的事情不同。管理员通过侧边栏底部的「游客模式」按钮登录后，才会出现编辑、推送、同步等管理操作。</p>' +
+                    '<div class="yxg-stats"><span>游客：以只读为主</span><span>管理员：可编辑 / 推送</span><span>考试系统、管理后台游客不可用</span></div>' +
+                '</div>' +
+                '<div class="yxg-legend"><span><i class="yxg-dot g"></i>游客可用</span><span><i class="yxg-dot a"></i>管理员可用</span><span><i class="yxg-dot h"></i>不可见</span></div>' +
+                '<div class="yxg-table-wrap"><table class="yxg-table"><thead><tr><th>模块</th><th>功能页</th><th>游客</th><th>管理员</th><th>说明</th></tr></thead><tbody>' + rows + '</tbody></table></div>' +
+                '<div class="yxg-note"><b>注意：</b>管理员登录只影响当前浏览器；游客看到的列表、统计和图表仍可正常浏览，但看不到管理按钮。涉及云端数据的写操作，考试系统和管理后台仅管理员可用。</div>' +
+            '</div>';
+        var mc = document.getElementById('mainContent'); if (mc) mc.scrollTop = 0;
     }
 
     function renderSubContent(nav) {
@@ -14982,6 +15506,7 @@ URL.revokeObjectURL(url);
         else if (nav === 'errorAnalysis') renderErrorAnalysis();
         else if (nav === 'learningMapView') renderLearningMapView();
         else if (nav === 'feedback') renderFeedback();
+        else if (nav === 'featureGuide') renderFeatureAndPermissions();
         // 2026-09-14 进面板先对时间戳：只把本机「已同步到哪」发给云端，云端有更新才拉回来并重画。
         // 放在分派之后：先把本地已有内容画出来（不白屏），云端真变了再重画一次。
         try { _yxtPanelCheck(nav, YXT_PANEL_RENDER[nav]); } catch(e) {}
@@ -21278,13 +21803,13 @@ URL.revokeObjectURL(url);
             redTooltip: '红灯 16-20次 / ≥21次\n红灯16-20次→出卷+培训\n红灯≥21次→出卷+培训+学习\n⚠️提前3个预警（13-15次即将红灯）',
             yellowTooltip: '黄灯 11-15次\n黄灯11-15次→出卷\n⚠️提前3个预警（8-10次即将黄灯）',
             greenTooltip: '绿灯 ≤10次\n绿灯≤10次，无推送' };
-        // week / custom
-        return { greenMax: 5, yellowMax: 10, redMin: 11, red2Min: 16, actions: true,
-            greensLabel: '绿色正常（0-5次）', yellowsLabel: '黄色预警（6-10次）', redsLabel: '红色预警（11-15次）', reds2Label: '红色预警（≥16次）',
-            examMin: 6, learnMin: 16, trainMin: 11,
-            redTooltip: '红灯 11-15次 / ≥16次\n红灯11-15次→出卷+培训\n红灯≥16次→出卷+培训+学习\n⚠️提前2个预警（9-10次即将红灯）',
-            yellowTooltip: '黄灯 6-10次\n黄灯6-10次→出卷\n⚠️提前2个预警（4-5次即将黄灯）',
-            greenTooltip: '绿灯 ≤5次\n绿灯≤5次，无推送' };
+        // week / custom（2026-11-28：考试 ≥5、培训 ≥7、学习 ≥11）
+        return { greenMax: 4, yellowMax: 6, redMin: 7, red2Min: 11, actions: true,
+            greensLabel: '绿色正常（0-4次）', yellowsLabel: '黄色预警（5-6次）', redsLabel: '红色预警（7-10次）', reds2Label: '红色预警（≥11次）',
+            examMin: 5, learnMin: 11, trainMin: 7,
+            redTooltip: '红灯 7-10次 / ≥11次\n红灯7-10次→出卷+培训\n红灯≥11次→出卷+培训+学习\n⚠️提前2个预警（5-6次即将红灯）',
+            yellowTooltip: '黄灯 5-6次\n黄灯5-6次→出卷\n⚠️提前1个预警（4次即将黄灯）',
+            greenTooltip: '绿灯 ≤4次\n绿灯≤4次，无推送' };
     }
     // 分类用：red2也算reds
     function classifyLight(count, thresholds) {
