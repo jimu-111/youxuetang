@@ -140,6 +140,10 @@ async function loadEmailConfig(opts) {
     if (!r.json || r.json.code !== 0) throw new Error('读飞书表失败 ' + r.status);
     const rows = (r.json.data && r.json.data.valueRange && r.json.data.valueRange.values) || [];
     const parsed = parseRows(rows);
+    // 离职人员即使还留在飞书表里，也不回填邮箱/站点（与页面离职联动保持一致）
+    const departed = parseJson(await readCloud('departedReviewers').catch(() => null), {});
+    Object.keys(parsed.emails).forEach(n => { if (departed[n]) delete parsed.emails[n]; });
+    Object.keys(parsed.sites).forEach(n => { if (departed[n]) delete parsed.sites[n]; });
     const newCount = Object.keys(parsed.emails).length;
     if (!newCount) throw new Error('表里没有员工邮箱');
     const oldRaw = await readCloud('personnelEmails');

@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <!-- 版本行：每次部署新代码必须 bump 此 content（YYYYMMDD.N），旧设备靠它自检静默升级 -->
-    <meta name="yxt-ver" content="20261128.5">
+    <meta name="yxt-ver" content="20261128.8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
     <title>优学堂</title>
     <script src="https://cdn.sheetjs.com/xlsx-0.20.2/package/dist/xlsx.full.min.js" defer></script>
@@ -2469,6 +2469,8 @@
     // ===== 添加学员联动：人员变动（入职）+ 人员管理（站点）+ 邮箱管理（姓名/邮箱），无邮箱发卡片给徐行补录 =====
     const XUHANG_EMAIL = 'xuhang02@zhuanzhuan.com';
     function linkNewStudent(name, site, joinDate, email) {
+        // 0. 如果之前在离职名单里，重新添加学员视为复职，先清掉离职标记
+        if (clearDepartedMark(name)) logAdminAction('人员变动', '联动恢复在职', name);
         // 1. 人员变动记录：自动加入职（已在名单中则不重复加）
         var od = getOnboardingReviewers();
         var alreadyOnboarded = !!od[name];
@@ -2522,7 +2524,7 @@
         { id: 'monthly', module: '培训资料', name: '月度标准更新 slides', desc: '月度标准内容（链接，不读数据）', url: 'https://zhuanspirit.feishu.cn/slides/BHunsshMtlAWZcdKMo9cY7smnah', owner: '待确认', freq: '不定时' },
         { id: 'wiki', module: '培训资料', name: '判责知识库', desc: '判责规范与案例（链接，不读数据）', url: 'https://zhuanspirit.feishu.cn/wiki/WQnywMV6EiTh1LkGDvHcBAqSnVm', owner: '待确认', freq: '不定时' },
         { id: 'qb', module: '考试题库', name: '题库总表（7 品类）', desc: '常规题库：题目、选项、答案、解析、图片、视频', url: 'https://zhuanspirit.feishu.cn/sheets/BzG8s8py3hDZIvtUJl7cRXJXnfe', owner: '待确认', freq: '每周日 8:00 同步' },
-        { id: 'email', module: '管理后台', name: '邮箱管理', desc: '人员邮箱、站点、类型；保存时回写飞书', url: 'https://zhuanspirit.feishu.cn/sheets/BzG8s8py3hDZIvtUJl7cRXJXnfe?sheet=qCBZEl', owner: '徐行', freq: '每天同步 / 保存即写' },
+        { id: 'email', module: '管理后台', name: '邮箱管理', desc: '人员邮箱、站点、类型；飞书通讯录每周一/四/日 10:00 同步，保存时回写飞书', url: 'https://zhuanspirit.feishu.cn/sheets/BzG8s8py3hDZIvtUJl7cRXJXnfe?sheet=qCBZEl', owner: '徐行', freq: '周一/四/日 10:00 同步 / 保存即写' },
         { id: 'supabase', module: '云端与自动化', name: 'Supabase 云端数据库', desc: '云端主存储：业务数据与 API', url: 'https://supabase.com/dashboard/project/zfxwnixlvdxawoylhgxj', owner: '管理员', freq: '实时', kind: 'web' },
         { id: 'supabaseUsage', module: '云端与自动化', name: 'Supabase 云端用量', desc: '查看数据库、带宽、存储等用量', url: 'https://supabase.com/dashboard/project/zfxwnixlvdxawoylhgxj/settings/usage', owner: '管理员', freq: '实时', kind: 'web' },
         { id: 'cf', module: '云端与自动化', name: 'Cloudflare 控制台 / 用量', desc: 'Pages、Workers、KV 的项目与用量入口', url: 'https://dash.cloudflare.com/', owner: '管理员', freq: '实时', kind: 'web' },
@@ -2647,8 +2649,8 @@
             body: `<p><b>反馈中心：</b>游客可提交问题/建议、查看自己的反馈；管理员处理修复后回传结果，形成状态确认。</p>
 <table class="ym-table"><thead><tr><th>后台模块</th><th>作用</th></tr></thead><tbody>
 <tr><td>导出备份 / 导入恢复</td><td>导出学员、案例等数据为 JSON；导入会覆盖当前数据，先备份再操作。</td></tr>
-<tr><td>人员变动</td><td>记录入职/离职日期；离职后不计活跃，入职前不参与排名。</td></tr>
-<tr><td>邮箱管理</td><td>人员与站点以这里为准；保存时先写飞书，再写云端/本地；支持从飞书更新、写回飞书。</td></tr>
+<tr><td>人员变动</td><td>记录入职/离职日期；离职后不计活跃，入职前不参与排名。标记离职会联动删除邮箱和人员管理站点（入职记录、培训档案、考试记录保留）；重新添加入职会清掉离职标记。</td></tr>
+<tr><td>邮箱管理</td><td>人员与站点以飞书通讯录为准；每周一/四/日 10:00 自动同步四个复核组 + 部直属（质量运营组不写，许伟明例外）；已标记离职的人不再同步；保存时先写飞书表，再写云端/本地。</td></tr>
 <tr><td>人员管理</td><td>只读，跟随邮箱管理自动变化。</td></tr>
 <tr><td>站点配置</td><td>维护站点名称、图标、颜色、品控负责人；所有模块动态读取。</td></tr>
 <tr><td>纳期配置</td><td>改阶段时限和每个检查项的纳期天数，不用改代码。</td></tr>
@@ -2664,7 +2666,7 @@
 <table class="ym-table"><thead><tr><th>时间</th><th>任务</th></tr></thead><tbody>
 <tr><td>周一/三/五/日 9:00</td><td>培训案例同步</td></tr>
 <tr><td>每天 9:00</td><td>知识库质检标准同步</td></tr>
-<tr><td>每天 10:00</td><td>邮箱配置同步</td></tr>
+<tr><td>周一/四/日 10:00</td><td>邮箱通讯录同步（通讯录 → 飞书邮箱表 + 云端）</td></tr>
 <tr><td>每天 9:30</td><td>新人纳期提醒</td></tr>
 <tr><td>周日 8:00</td><td>题库源对账 + 题库同步</td></tr>
 <tr><td>周一 10:30</td><td>周一自动推送（Cloudflare Worker 触发 GitHub Actions）</td></tr>
@@ -2712,8 +2714,8 @@
             id: 'log', title: '维护约定与更新记录', icon: '📌',
             jumps: [{ label: '功能与权限', target: 'featureGuide' }, { label: '文档与云端', target: 'admin:docsDetail' }],
             body: `<p><b>维护约定：</b>每次修改功能、规则、阈值或权限，必须同步更新本手册对应章节，并更新“最后核对”日期；功能简介和权限页也要一起改。</p>
-<ul><li><b>2026-11-28：</b>手册第一版；周红绿灯改为考试≥5、培训≥7、学习≥11；新增功能与权限合并页；管理后台新增文档与云端入口。</li><li>写规则时统一写“触发条件 → 数据来源 → 执行时间 → 结果 → 失败处理”。</li><li>手册不写密码、密钥和完整 token。</li></ul>
-<div class="ym-note">最后核对：2026-11-28 · 适用版本：20261128.5。遇到代码与手册不一致，以当前代码为准，并回来改手册。</div>`
+<ul><li><b>2026-11-28：</b>手册第一版；周红绿灯改为考试≥5、培训≥7、学习≥11；新增功能与权限合并页；管理后台新增文档与云端入口；邮箱改为飞书通讯录每周一/四/日 10:00 同步；人员变动标记离职会联动删除邮箱和人员站点，入职记录保留。</li><li>写规则时统一写“触发条件 → 数据来源 → 执行时间 → 结果 → 失败处理”。</li><li>手册不写密码、密钥和完整 token。</li></ul>
+<div class="ym-note">最后核对：2026-11-28 · 适用版本：20261128.8。遇到代码与手册不一致，以当前代码为准，并回来改手册。</div>`
         }
     ];
 
@@ -2747,7 +2749,7 @@
         }).join('');
         document.getElementById('mainContent').innerHTML =
             '<div class="ym-wrap">' +
-                '<div class="ym-topbar"><button class="ym-back" onclick="switchNav(\'admin\')">← 返回管理后台</button><span class="ym-version">适用版本 20261128.5 · 最后核对 2026-11-28</span></div>' +
+                '<div class="ym-topbar"><button class="ym-back" onclick="switchNav(\'admin\')">← 返回管理后台</button><span class="ym-version">适用版本 20261128.8 · 最后核对 2026-11-28</span></div>' +
                 '<div class="yxg-hero"><div class="yxg-kicker">优学堂 · 全功能手册</div><h1>使用手册</h1><p>把每一个功能、规则、云端任务和计算口径写在一处。左边目录可直接跳转，章节里的按钮可跳到对应模块。</p><div class="yxg-stats"><span>' + YXT_MANUAL_SECTIONS.length + ' 个章节</span><span>11 个功能页</span><span>规则 + 推送 + 云端</span><span>随功能同步更新</span></div></div>' +
                 '<div class="ym-layout"><aside class="ym-toc"><h3>📖 目录</h3>' + toc + '<div class="ym-note" style="margin-top:10px;font-size:.68rem;">功能 / 规则 / 权限有改动，本手册同步更新。</div></aside><div class="ym-main">' + body + '</div></div>' +
             '</div>';
@@ -2917,7 +2919,7 @@
             <!-- 邮箱管理详情 -->
             <div id="emailDetail" class="report-box" style="display:none;margin-top:16px;">
                 <div class="report-title" style="display:flex;justify-content:space-between;align-items:center;">📧 邮箱地址管理 <span style="font-size:0.7rem;color:#94a3b8;cursor:pointer;" onclick="toggleAdminDetail('emailDetail')">收起 ▲</span></div>
-                <p style="color:#64748b;font-size:0.85rem;margin:8px 0 12px;">维护人员邮箱，用于邮件推送。点击单元格可直接编辑。<b>「保存」会先写飞书，成功后再写云端/本地；飞书写失败不会改云端。</b></p>
+                <p style="color:#64748b;font-size:0.85rem;margin:8px 0 12px;"><b>人员名单、邮箱和站点以飞书通讯录为准：</b>每周一 / 周四 / 周日 10:00 自动同步四个复核组 + 质量管理部直属（质量运营组不写，许伟明作为上级部门例外；已标记离职的人不再同步）。点击单元格可直接编辑；<b>「保存」会先写飞书表，成功后再写云端/本地，下一次通讯录同步会按通讯录覆盖员工行，系统收件人保留。</b></p>
                 <div style="margin-bottom:8px;display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
                     <input id="emailSearchInput" type="text" placeholder="🔍 搜索姓名或邮箱..." oninput="window.refreshEmailTable&&window.refreshEmailTable(this.value)" style="flex:1;min-width:160px;padding:6px 12px;border:1px solid #cbd5e1;border-radius:8px;font-size:0.8rem;">
                     <button id="addEmailRowBtn" style="background:#f1f5f9;border:1px solid #cbd5e1;padding:6px 16px;border-radius:8px;cursor:pointer;font-size:0.8rem;">➕ 添加行</button>
@@ -3025,7 +3027,11 @@
             var name = document.getElementById('hrNameInput').value.trim(), date = document.getElementById('hrDateInput').value, type = document.getElementById('hrTypeVal').value;
             if (!name) { alert('请输入姓名'); return; } if (!date) { alert('请选择日期'); return; }
             if (type === 'leave') addDepartedReviewer(name, date);
-            else { var od = getOnboardingReviewers(); od[name] = date; saveOnboardingReviewers(od); showToast('✅ ' + name + ' 入职日期已设为 ' + date, 'success'); }
+            else {
+                if (clearDepartedMark(name)) logAdminAction('人员变动', '恢复在职', name);
+                var od = getOnboardingReviewers(); od[name] = date; saveOnboardingReviewers(od);
+                showToast('✅ ' + name + ' 入职日期已设为 ' + date, 'success');
+            }
             document.getElementById('hrNameInput').value = ''; document.getElementById('hrDateInput').value = '';
             refreshHRCombinedList();
             updateAdminCards();
@@ -3779,6 +3785,7 @@
             var rows = document.querySelectorAll('#adminEmailBody tr');
             var newEmails = {};
             var newSites = {};
+            var departedSaved = getDepartedReviewers() || {};
             rows.forEach(function(tr) {
                 var cells = tr.querySelectorAll('td');
                 if (cells.length < 2) return;
@@ -3789,6 +3796,7 @@
                 var n = nameInput ? nameInput.value : (cells[0].textContent || '').trim();
                 var e = emailInput ? emailInput.value : (cells[1].textContent || '').trim();
                 var st = siteInput ? siteInput.value : '';
+                if (n && departedSaved[n]) return; // 已离职人员不再写回
                 if (n) { newSites[n] = st; if (e && e.indexOf('@') > 0) newEmails[n] = e; }
             });
             var count = Object.keys(newEmails).length;
@@ -3829,7 +3837,7 @@
                     systemRows.push([_emailCellText(r[0]), em, _emailCellText(r[2]), '系统', _emailCellText(r[4]), _emailCellText(r[5]) || '是']);
                 });
                 var siteMap = newSites;
-                var order = { '成都': 0, '青岛': 1, '深圳': 2 };
+                var order = { '成都': 0, '青岛': 1, '深圳': 2, '郑州': 3, '直属': 4 };
                 var names = Object.keys(newSites).sort(function(a, b) {
                     var sa = order[siteMap[a]] === undefined ? 9 : order[siteMap[a]];
                     var sb = order[siteMap[b]] === undefined ? 9 : order[siteMap[b]];
@@ -3905,6 +3913,10 @@
                     if (name && site) siteMapFromSheet[name] = site;
                     if (name && email && email.indexOf('@') >= 0) map[name] = email;
                 });
+                // 离职人员从飞书表里再读到也不回填（离职联动删除）
+                var departedSheet = getDepartedReviewers() || {};
+                Object.keys(map).forEach(function(n) { if (departedSheet[n]) delete map[n]; });
+                Object.keys(siteMapFromSheet).forEach(function(n) { if (departedSheet[n]) delete siteMapFromSheet[n]; });
                 var oldCount = Object.keys(getPersonnelEmails()).length;
                 var newCount = Object.keys(map).length;
                 if (!newCount) throw new Error('表里没有读到员工邮箱，已中止（不会清空现有名单）');
@@ -3944,6 +3956,7 @@
             try {
                 var rows = document.querySelectorAll('#adminEmailBody tr');
                 var newEmails = {}, newSites = {};
+                var departedWrite = getDepartedReviewers() || {};
                 rows.forEach(function(tr) {
                     var cells = tr.querySelectorAll('td');
                     if (cells.length < 2) return;
@@ -3953,6 +3966,7 @@
                     var n = nameInput ? nameInput.value : (cells[0].textContent || '').trim();
                     var e = emailInput ? emailInput.value : (cells[1].textContent || '').trim();
                     var st = siteInput ? siteInput.value : '';
+                    if (n && departedWrite[n]) return; // 已离职人员不再写回
                     if (n) { newSites[n] = st; if (e && e.indexOf('@') > 0) newEmails[n] = e; }
                 });
                 var count = Object.keys(newEmails).length;
@@ -3973,7 +3987,7 @@
                     systemRows.push([_emailCellText(r[0]), em, _emailCellText(r[2]), '系统', _emailCellText(r[4]), _emailCellText(r[5]) || '是']);
                 });
                 var siteMap = newSites;
-                var order = { '成都': 0, '青岛': 1, '深圳': 2 };
+                var order = { '成都': 0, '青岛': 1, '深圳': 2, '郑州': 3, '直属': 4 };
                 var names = Object.keys(newSites).sort(function(a, b) {
                     var sa = order[siteMap[a]] === undefined ? 9 : order[siteMap[a]];
                     var sb = order[siteMap[b]] === undefined ? 9 : order[siteMap[b]];
@@ -4063,12 +4077,14 @@
                 if (!text) { showToast('请输入数据', 'warning'); return; }
                 var pairs = text.split('\n'), count = 0;
                 var emails = getPersonnelEmails();
+                var departedImport = getDepartedReviewers() || {};
                 pairs.forEach(function(line) {
                     line = line.trim(); if (!line) return;
                     // 支持：空格、制表符、逗号、中文逗号、多个空格分隔
                     var parts = line.split(/[,，\t]+|\s{2,}|\s+/);
                     if (parts.length >= 2) {
                         var name = parts[0].trim(), email = parts[1].trim();
+                        if (departedImport[name]) return; // 已离职人员不再导入
                         if (name && email && email.indexOf('@') > 0) { emails[name] = email; count++; }
                     }
                 });
@@ -15388,7 +15404,7 @@ URL.revokeObjectURL(url);
             { name: '反馈中心', desc: '收集日常使用中的问题与建议，管理员处理修复后回传结果与状态确认。', features: ['提交问题/建议', '管理员处理并回传', '反馈状态跟踪'], guest: '读写', admin: '读写', detail: '游客可提交、查看自己的反馈；管理员可处理和回传。' }
         ]},
         { icon: '⚙️', name: '管理后台', pages: [
-            { name: '管理后台', desc: '数据备份、人员变动、邮箱管理、站点配置、判责同步与系统日志。', features: ['数据备份/恢复', '人员/邮箱/站点/纳期配置', '审计日志与判责同步'], guest: '不可进', admin: '读写', detail: '游客点击会被拦截；管理员可备份、配置、查看日志。' }
+            { name: '管理后台', desc: '数据备份、人员变动、邮箱管理、站点配置、判责同步与系统日志；邮箱名单由飞书通讯录每周一/四/日定时同步，离职会联动删除邮箱和人员站点。', features: ['数据备份/恢复', '邮箱通讯录同步 / 人员 / 站点 / 纳期配置', '离职联动清理与审计日志'], guest: '不可进', admin: '读写', detail: '游客点击会被拦截；管理员可备份、配置、查看日志；邮箱名单以飞书通讯录为准，标记离职会删除邮箱和人员站点，入职记录保留。' }
         ]}
     ];
 
@@ -24786,11 +24802,45 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
         } catch(e) { return {}; }
     }
     function saveDepartedReviewers(d) { localStorage.setItem(DEPARTED_KEY, JSON.stringify(d)); _syncPushKey(DEPARTED_KEY, JSON.stringify(d)); }
+    // 离职联动：邮箱、人员管理站点一起删；入职记录/培训档案/考试记录保留
+    function unlinkDepartedPerson(name) {
+        var removed = [];
+        var em = getPersonnelEmails();
+        if (Object.prototype.hasOwnProperty.call(em, name)) {
+            delete em[name];
+            savePersonnelEmails(em);
+            removed.push('邮箱');
+        }
+        var sm = getAdminPersonSiteMap();
+        if (Object.prototype.hasOwnProperty.call(sm, name)) {
+            delete sm[name];
+            saveAdminPersonSiteMap(sm);
+            removed.push('人员站点');
+        }
+        // 入职记录保留：离职只删邮箱和人员站点，入职日期作为历史记录不动
+        if (removed.length) {
+            logAdminAction('人员变动', '离职联动删除', name + '：' + removed.join('、'));
+            if (window.refreshEmailTable) { try { window.refreshEmailTable(''); } catch (e) {} }
+            if (window.refreshAdminSiteTable) { try { window.refreshAdminSiteTable(''); } catch (e) {} }
+            if (window.refreshHRCombinedList) { try { window.refreshHRCombinedList(); } catch (e) {} }
+        }
+        return removed;
+    }
+    function clearDepartedMark(name) {
+        var d = getDepartedReviewers();
+        if (Object.prototype.hasOwnProperty.call(d, name)) {
+            delete d[name];
+            saveDepartedReviewers(d);
+            return true;
+        }
+        return false;
+    }
     function addDepartedReviewer(name, dateStr) {
         var d = getDepartedReviewers();
         d[name] = dateStr;
         saveDepartedReviewers(d);
-        showToast('✅ ' + name + ' 已于 ' + dateStr + ' 标记离职', 'success');
+        var removed = unlinkDepartedPerson(name);
+        showToast('✅ ' + name + ' 已于 ' + dateStr + ' 标记离职' + (removed.length ? '；已联动删除' + removed.join('、') : ''), 'success');
         refreshDepartedList();
         // 如果当前在品控看板，刷新亮灯数据
         if (typeof renderErrorDashboardContent === 'function' && document.getElementById('mainContent').innerHTML.indexOf('失误分析看板') >= 0) {
@@ -24861,6 +24911,7 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
             if (type === 'leave') {
                 addDepartedReviewer(name, date);
             } else {
+                if (clearDepartedMark(name)) logAdminAction('人员变动', '恢复在职', name);
                 var od = getOnboardingReviewers(); od[name] = date; saveOnboardingReviewers(od);
                 showToast('✅ ' + name + ' 入职日期已设为 ' + date, 'success');
             }
@@ -24874,7 +24925,7 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
         var d = getDepartedReviewers();
         delete d[name];
         saveDepartedReviewers(d);
-        showToast('✅ 已恢复 ' + name, 'success');
+        showToast('✅ 已恢复 ' + name + '；邮箱/站点会在下次通讯录同步时按通讯录恢复', 'success');
         // 如果管理后台打开，刷新列表
         var list = document.getElementById('departedList');
         if (list) refreshDepartedList();
@@ -24908,7 +24959,13 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
     function renderEmailSiteOptions(selected) {
         var html = '<option value="">未分配</option>';
         var found = false;
-        getEnabledSites().forEach(function(s) {
+        var sites = getEnabledSites();
+        var hasDirect = sites.some(function(s) { return s.name === '直属'; });
+        if (!hasDirect) {
+            if (selected === '直属') found = true;
+            html += '<option value="直属"' + (selected === '直属' ? ' selected' : '') + '>📌 直属</option>';
+        }
+        sites.forEach(function(s) {
             if (s.name === selected) found = true;
             html += '<option value="' + escapeHtml(s.name) + '"' + (s.name === selected ? ' selected' : '') + '>' + escapeHtml((s.icon || '📍') + ' ' + s.name) + '</option>';
         });
@@ -24960,6 +25017,10 @@ return '<div class="report-box" style="margin-bottom:16px;padding:24px 18px;">' 
                     if (name && site) sites[name] = site;
                     if (name && email && email.indexOf('@') >= 0) map[name] = email;
                 });
+                // 离职人员从飞书表里再读到也不回填（离职联动删除）
+                var departedCal = getDepartedReviewers() || {};
+                Object.keys(map).forEach(function(n) { if (departedCal[n]) delete map[n]; });
+                Object.keys(sites).forEach(function(n) { if (departedCal[n]) delete sites[n]; });
                 var newCount = Object.keys(map).length;
                 if (!newCount) throw new Error('表里没有员工邮箱');
                 var oldCount = Object.keys(getPersonnelEmails()).length;
