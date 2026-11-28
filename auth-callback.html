@@ -129,7 +129,7 @@
                 fetch(SUPA_URL + '/rest/v1/app_data?select=value&key=eq.' + encodeURIComponent(CONFIG_KEY), {
                     headers: { apikey: SUPA_KEY, Authorization: 'Bearer ' + SUPA_KEY }
                 }),
-                new Promise(function (_, reject) { setTimeout(function () { reject(new Error('timeout')); }, 8000); })
+                new Promise(function (_, reject) { setTimeout(function () { reject(new Error('timeout')); }, 4000); })
             ]);
             var rows = await r.json();
             if (Array.isArray(rows) && rows[0] && rows[0].value) return normalizeConfig(JSON.parse(rows[0].value));
@@ -169,8 +169,8 @@
         if (!j.tenant_access_token) throw new Error(j.msg || '获取应用身份失败');
         return j.tenant_access_token;
     }
-    async function exchangeCode(code) {
-        var app = await appToken();
+    async function exchangeCode(code, appTokenPromise) {
+        var app = await (appTokenPromise || appToken());
         var j = await proxy('/authen/v1/oidc/access_token', {
             method: 'POST', token: app, body: { grant_type: 'authorization_code', code: code }
         });
@@ -227,16 +227,21 @@
         if (!code) { showError('缺少飞书授权码，请重新扫码'); return; }
         if (state.indexOf('yxtlogin_') !== 0) { showError('登录状态无效，请从优学堂首页重新扫码'); return; }
         try {
-            var cfg = await loadConfig();
-            setStatus('正在验证飞书登录…', '第 1/4 步：校验授权码');
-            var token = await exchangeCode(code);
+            setStatus('正在验证飞书登录…', '第 1/4 步：换取飞书登录凭证');
+            // 三件事同时发起：权限配置、应用凭证、租户凭证，避免第一步串行等待
+            var cfgPromise = loadConfig();
+            var appTokenPromise = appToken();
+            var tenantTokenPromise = tenantToken().catch(function () { return ''; });
+            var token = await exchangeCode(code, appTokenPromise);
             setStatus('正在读取飞书身份…', '第 2/4 步：读取姓名和 open_id');
             var info = await userInfo(token.access_token);
             var email = String(info.email || info.enterprise_email || '').toLowerCase();
+            var cfg = await cfgPromise;
             var contact = null;
             if (cfg.extraEmails.indexOf(email) < 0) {
                 setStatus('正在核对通讯录…', '第 3/4 步：查部门和白名单');
-                var tk = await tenantToken();
+                var tk = await tenantTokenPromise;
+                if (!tk) throw new Error('获取飞书通讯录凭证失败');
                 contact = await contactUser(info.open_id, tk);
             }
             var allowed = allowedOf(contact, info, cfg);
