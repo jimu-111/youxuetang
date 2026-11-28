@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <!-- 版本行：每次部署新代码必须 bump 此 content（YYYYMMDD.N），旧设备靠它自检静默升级 -->
-    <meta name="yxt-ver" content="20261128.16">
+    <meta name="yxt-ver" content="20261128.18">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
     <title>优学堂</title>
     <script src="https://cdn.sheetjs.com/xlsx-0.20.2/package/dist/xlsx.full.min.js" defer></script>
@@ -993,7 +993,13 @@
             detail.textContent = opts.detail || '';
             var auth = opts.auth || null;
             var open = document.getElementById('yxtAuthOpen');
-            if (auth && auth.url) open.href = auth.url; else open.style.display = 'none';
+            if (auth && auth.url) {
+                open.href = auth.url;
+                // 一律当前页跳转，授权完回优学堂，不开新标签
+                open.target = '_self';
+            } else {
+                open.style.display = 'none';
+            }
             var box = document.getElementById('yxtAuthQrBox');
             if (opts.showQr && auth && auth.url) {
                 drawQr(box, auth.url);
@@ -3305,8 +3311,8 @@
             id: 'log', title: '维护约定与更新记录', icon: '📌',
             jumps: [{ label: '功能与权限', target: 'featureGuide' }, { label: '文档与云端', target: 'admin:docsDetail' }],
             body: `<p><b>维护约定：</b>每次修改功能、规则、阈值或权限，必须同步更新本手册对应章节，并更新“最后核对”日期；功能简介和权限页也要一起改。</p>
-<ul><li><b>2026-11-28：</b>手册第一版；周红绿灯改为考试≥5、培训≥7、学习≥11；新增功能与权限合并页；管理后台新增文档与云端入口；邮箱改为飞书通讯录每周一/四/日 10:00 同步；人员变动标记离职会联动删除邮箱和人员站点，入职记录保留；管理后台点卡片展开后自动滚到详情；新增飞书扫码门禁（质量管理部白名单，7 天登录态，前端尽力版）；新增超级管理员「权限管理」；飞书登录失败可用管理密码临时进入 10 分钟；管理员名单内扫码直接进管理员，名单外输密码进管理员只保留到关页；扫码回调改用独立轻量页 auth-callback.html；回调页把权限配置、应用凭证、通讯录凭证改为并行获取。</li><li>写规则时统一写“触发条件 → 数据来源 → 执行时间 → 结果 → 失败处理”。</li><li>手册不写密码、密钥和完整 token。</li></ul>
-<div class="ym-note">最后核对：2026-11-28 · 适用版本：20261128.16。遇到代码与手册不一致，以当前代码为准，并回来改手册。</div>`
+<ul><li><b>2026-11-28：</b>手册第一版；周红绿灯改为考试≥5、培训≥7、学习≥11；新增功能与权限合并页；管理后台新增文档与云端入口；邮箱改为飞书通讯录每周一/四/日 10:00 同步；人员变动标记离职会联动删除邮箱和人员站点，入职记录保留；管理后台点卡片展开后自动滚到详情；新增飞书扫码门禁（质量管理部白名单，7 天登录态，前端尽力版）；新增超级管理员「权限管理」；飞书登录失败可用管理密码临时进入 10 分钟；管理员名单内扫码直接进管理员，名单外输密码进管理员只保留到关页；扫码回调改用独立轻量页 auth-callback.html；回调页把权限配置、应用凭证、通讯录凭证改为并行获取；「在飞书打开」一律当前页跳转，授权完自动回优学堂，不额外多开标签。</li><li>写规则时统一写“触发条件 → 数据来源 → 执行时间 → 结果 → 失败处理”。</li><li>手册不写密码、密钥和完整 token。</li></ul>
+<div class="ym-note">最后核对：2026-11-28 · 适用版本：20261128.18。遇到代码与手册不一致，以当前代码为准，并回来改手册。</div>`
         }
     ];
 
@@ -3340,7 +3346,7 @@
         }).join('');
         document.getElementById('mainContent').innerHTML =
             '<div class="ym-wrap">' +
-                '<div class="ym-topbar"><button class="ym-back" onclick="switchNav(\'admin\')">← 返回管理后台</button><span class="ym-version">适用版本 20261128.16 · 最后核对 2026-11-28</span></div>' +
+                '<div class="ym-topbar"><button class="ym-back" onclick="switchNav(\'admin\')">← 返回管理后台</button><span class="ym-version">适用版本 20261128.18 · 最后核对 2026-11-28</span></div>' +
                 '<div class="yxg-hero"><div class="yxg-kicker">优学堂 · 全功能手册</div><h1>使用手册</h1><p>把每一个功能、规则、云端任务和计算口径写在一处。左边目录可直接跳转，章节里的按钮可跳到对应模块。</p><div class="yxg-stats"><span>' + YXT_MANUAL_SECTIONS.length + ' 个章节</span><span>11 个功能页</span><span>规则 + 推送 + 云端</span><span>随功能同步更新</span></div></div>' +
                 '<div class="ym-layout"><aside class="ym-toc"><h3>📖 目录</h3>' + toc + '<div class="ym-note" style="margin-top:10px;font-size:.68rem;">功能 / 规则 / 权限有改动，本手册同步更新。</div></aside><div class="ym-main">' + body + '</div></div>' +
             '</div>';
