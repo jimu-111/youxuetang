@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <!-- 版本行：每次部署新代码必须 bump 此 content（YYYYMMDD.N），旧设备靠它自检静默升级 -->
-    <meta name="yxt-ver" content="20261128.18">
+    <meta name="yxt-ver" content="20261128.20">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
     <title>优学堂</title>
     <script src="https://cdn.sheetjs.com/xlsx-0.20.2/package/dist/xlsx.full.min.js" defer></script>
@@ -3124,7 +3124,11 @@
         { id: 'proxy', module: '云端与自动化', name: '飞书代理 / 数据接口', desc: 'Cloudflare Pages 代理，Feishu 请求与 KV 兜底', url: 'https://yxt-feishu.pages.dev', owner: '管理员', freq: '实时', kind: 'web' },
         { id: 'pages', module: '云端与自动化', name: '优学堂线上页面', desc: 'GitHub Pages 站点入口', url: 'https://jimu-111.github.io/youxuetang/', owner: '管理员', freq: '随部署更新', kind: 'web' },
         { id: 'github', module: '云端与自动化', name: 'GitHub 优学堂仓库', desc: '页面源码与自动化脚本', url: 'https://github.com/jimu-111/youxuetang', owner: '管理员', freq: '随提交更新', kind: 'web' },
-        { id: 'actions', module: '云端与自动化', name: 'GitHub 自动化任务', desc: '题库、案例、知识库、提醒等云端定时任务', url: 'https://github.com/jimu-111/youxuetang/actions', owner: '管理员', freq: '定时 / 手动', kind: 'web' }
+        { id: 'actions', module: '云端与自动化', name: 'GitHub 自动化任务', desc: '题库、案例、知识库、提醒等云端定时任务', url: 'https://github.com/jimu-111/youxuetang/actions', owner: '管理员', freq: '定时 / 手动', kind: 'web' },
+        { id: 'feishuDev', module: '飞书后台', name: '飞书开放平台开发者后台', desc: '应用管理、权限申请、安全设置、重定向 URL', url: 'https://open.feishu.cn/app', owner: '徐行', freq: '实时', kind: 'web' },
+        { id: 'feishuApp', module: '飞书后台', name: '优学堂应用（cli_aab1fa4e87bbdbd3）', desc: '应用详情；左侧「开发配置 → 安全设置」配置重定向 URL', url: 'https://open.feishu.cn/app/cli_aab1fa4e87bbdbd3', owner: '徐行', freq: '实时', kind: 'web' },
+        { id: 'feishuRedirect', module: '飞书后台', name: '飞书重定向 URL 配置说明', desc: '官方文档：重定向 URL 规则与 20029 排查', url: 'https://open.feishu.cn/document/develop-web-apps/configure-redirect-urls', owner: '徐行', freq: '实时', kind: 'web' },
+        { id: 'feishuAdmin', module: '飞书后台', name: '飞书管理后台（通讯录）', desc: '成员、部门、权限管理', url: 'https://zhuanspirit.feishu.cn/admin', owner: '徐行', freq: '实时', kind: 'web' }
     ];
 
     function openFeishuDocOverlay(id) {
@@ -3135,7 +3139,7 @@
     }
 
     function feishuDocsListHtml() {
-        var order = ['总览', '新人进度', '学习地图', '品控分析', '培训资料', '培训资料 / 考试题库', '考试题库', '管理后台', '云端与自动化'];
+        var order = ['总览', '新人进度', '学习地图', '品控分析', '培训资料', '培训资料 / 考试题库', '考试题库', '管理后台', '云端与自动化', '飞书后台'];
         var groups = {};
         FEISHU_DOCS.forEach(function(d) { (groups[d.module] || (groups[d.module] = [])).push(d); });
         return order.filter(function(m) { return groups[m]; }).map(function(m) {
@@ -3305,14 +3309,48 @@
 <tr><td>新设备看不到失误看板</td><td>看板缓存只存本机</td><td>进一次看板或点刷新，从飞书重新拉。</td></tr>
 <tr><td>保存邮箱报 Unauthorized</td><td>用了个人只读 token</td><td>保存/写回走应用身份；检查代理密钥注入。</td></tr>
 </tbody></table>
+<h3 style="margin-top:18px;color:#1f3a6b;">控制台应急命令</h3>
+<p style="font-size:.78rem;color:#64748b;">按 F12 打开开发者工具 → Console，粘贴下面整段后回车。不要在地址栏里执行。</p>
+<p style="font-size:.8rem;font-weight:700;color:#1f3a6b;margin-bottom:4px;">1. 退出飞书登录，重新扫码</p>
+<pre style="background:#0f1724;color:#dbeafe;border-radius:10px;padding:10px 12px;font-size:.72rem;line-height:1.6;white-space:pre-wrap;word-break:break-all;">localStorage.removeItem('yxtAuthSessionV1');
+sessionStorage.removeItem('adminMode');
+sessionStorage.removeItem('yxtAdminOptOut');
+sessionStorage.removeItem('yxtAuthFallbackUntil');
+sessionStorage.removeItem('yxtAuthFailCount');
+location.reload();</pre>
+<p style="font-size:.8rem;font-weight:700;color:#1f3a6b;margin-bottom:4px;">2. 只退出管理员，保留扫码登录</p>
+<pre style="background:#0f1724;color:#dbeafe;border-radius:10px;padding:10px 12px;font-size:.72rem;line-height:1.6;white-space:pre-wrap;word-break:break-all;">sessionStorage.setItem('yxtAdminOptOut','1');
+sessionStorage.removeItem('adminMode');
+location.reload();</pre>
+<p style="font-size:.8rem;font-weight:700;color:#1f3a6b;margin-bottom:4px;">3. 清除临时密码/扫码失败状态</p>
+<pre style="background:#0f1724;color:#dbeafe;border-radius:10px;padding:10px 12px;font-size:.72rem;line-height:1.6;white-space:pre-wrap;word-break:break-all;">sessionStorage.removeItem('yxtAuthFallbackUntil');
+sessionStorage.removeItem('yxtAuthFailCount');
+location.reload();</pre>
+<p style="font-size:.8rem;font-weight:700;color:#1f3a6b;margin-bottom:4px;">4. 强制检查新版本</p>
+<pre style="background:#0f1724;color:#dbeafe;border-radius:10px;padding:10px 12px;font-size:.72rem;line-height:1.6;white-space:pre-wrap;word-break:break-all;">localStorage.removeItem('_yxtVerCheckTs');
+location.reload();</pre>
+<p style="font-size:.8rem;font-weight:700;color:#1f3a6b;margin-bottom:4px;">5. 清除飞书表格授权（不是扫码登录）</p>
+<pre style="background:#0f1724;color:#dbeafe;border-radius:10px;padding:10px 12px;font-size:.72rem;line-height:1.6;white-space:pre-wrap;word-break:break-all;">localStorage.removeItem('feishu_token');
+location.reload();</pre>
+<p style="font-size:.8rem;font-weight:700;color:#1f3a6b;margin-bottom:4px;">6. 清除失误看板缓存</p>
+<pre style="background:#0f1724;color:#dbeafe;border-radius:10px;padding:10px 12px;font-size:.72rem;line-height:1.6;white-space:pre-wrap;word-break:break-all;">localStorage.removeItem('errorDashboardCache');
+location.reload();</pre>
+<p style="font-size:.8rem;font-weight:700;color:#1f3a6b;margin-bottom:4px;">7. 强制重新拉云端数据（流量较大，谨慎）</p>
+<pre style="background:#0f1724;color:#dbeafe;border-radius:10px;padding:10px 12px;font-size:.72rem;line-height:1.6;white-space:pre-wrap;word-break:break-all;">['_lastCloudSyncAt','_lastGuestSyncAt','_lastExamSyncAt','_yxtPanelFullAt'].forEach(function(k){ localStorage.removeItem(k); });
+location.reload();</pre>
+<p style="font-size:.8rem;font-weight:700;color:#c0392b;margin-bottom:4px;">8. 清空全部本机缓存（危险）</p>
+<pre style="background:#3b0a0a;color:#fecaca;border-radius:10px;padding:10px 12px;font-size:.72rem;line-height:1.6;white-space:pre-wrap;word-break:break-all;">localStorage.clear();
+sessionStorage.clear();
+location.reload();</pre>
+<p style="font-size:.72rem;color:#c0392b;">⚠️ 第 8 条会删掉本机所有优学堂设置和未同步数据；云端数据会重新拉，但本机独有的改动会丢。除非明确要重置，否则不要用。</p>
 <div class="ym-note">推送类操作改代码时注意：有的推送有两处入口，改一处会漏另一处；FORCE 等旧参数可能已失效，别只看勾选框。</div>`
         },
         {
             id: 'log', title: '维护约定与更新记录', icon: '📌',
             jumps: [{ label: '功能与权限', target: 'featureGuide' }, { label: '文档与云端', target: 'admin:docsDetail' }],
             body: `<p><b>维护约定：</b>每次修改功能、规则、阈值或权限，必须同步更新本手册对应章节，并更新“最后核对”日期；功能简介和权限页也要一起改。</p>
-<ul><li><b>2026-11-28：</b>手册第一版；周红绿灯改为考试≥5、培训≥7、学习≥11；新增功能与权限合并页；管理后台新增文档与云端入口；邮箱改为飞书通讯录每周一/四/日 10:00 同步；人员变动标记离职会联动删除邮箱和人员站点，入职记录保留；管理后台点卡片展开后自动滚到详情；新增飞书扫码门禁（质量管理部白名单，7 天登录态，前端尽力版）；新增超级管理员「权限管理」；飞书登录失败可用管理密码临时进入 10 分钟；管理员名单内扫码直接进管理员，名单外输密码进管理员只保留到关页；扫码回调改用独立轻量页 auth-callback.html；回调页把权限配置、应用凭证、通讯录凭证改为并行获取；「在飞书打开」一律当前页跳转，授权完自动回优学堂，不额外多开标签。</li><li>写规则时统一写“触发条件 → 数据来源 → 执行时间 → 结果 → 失败处理”。</li><li>手册不写密码、密钥和完整 token。</li></ul>
-<div class="ym-note">最后核对：2026-11-28 · 适用版本：20261128.18。遇到代码与手册不一致，以当前代码为准，并回来改手册。</div>`
+<ul><li><b>2026-11-28：</b>手册第一版；周红绿灯改为考试≥5、培训≥7、学习≥11；新增功能与权限合并页；管理后台新增文档与云端入口；邮箱改为飞书通讯录每周一/四/日 10:00 同步；人员变动标记离职会联动删除邮箱和人员站点，入职记录保留；管理后台点卡片展开后自动滚到详情；新增飞书扫码门禁（质量管理部白名单，7 天登录态，前端尽力版）；新增超级管理员「权限管理」；飞书登录失败可用管理密码临时进入 10 分钟；管理员名单内扫码直接进管理员，名单外输密码进管理员只保留到关页；扫码回调改用独立轻量页 auth-callback.html；回调页把权限配置、应用凭证、通讯录凭证改为并行获取；「在飞书打开」一律当前页跳转，授权完自动回优学堂，不额外多开标签；「文档与云端」新增飞书开放平台、优学堂应用、重定向 URL 说明和飞书通讯录后台入口；手册「异常与补跑」新增控制台应急命令。</li><li>写规则时统一写“触发条件 → 数据来源 → 执行时间 → 结果 → 失败处理”。</li><li>手册不写密码、密钥和完整 token。</li></ul>
+<div class="ym-note">最后核对：2026-11-28 · 适用版本：20261128.20。遇到代码与手册不一致，以当前代码为准，并回来改手册。</div>`
         }
     ];
 
@@ -3346,7 +3384,7 @@
         }).join('');
         document.getElementById('mainContent').innerHTML =
             '<div class="ym-wrap">' +
-                '<div class="ym-topbar"><button class="ym-back" onclick="switchNav(\'admin\')">← 返回管理后台</button><span class="ym-version">适用版本 20261128.18 · 最后核对 2026-11-28</span></div>' +
+                '<div class="ym-topbar"><button class="ym-back" onclick="switchNav(\'admin\')">← 返回管理后台</button><span class="ym-version">适用版本 20261128.20 · 最后核对 2026-11-28</span></div>' +
                 '<div class="yxg-hero"><div class="yxg-kicker">优学堂 · 全功能手册</div><h1>使用手册</h1><p>把每一个功能、规则、云端任务和计算口径写在一处。左边目录可直接跳转，章节里的按钮可跳到对应模块。</p><div class="yxg-stats"><span>' + YXT_MANUAL_SECTIONS.length + ' 个章节</span><span>11 个功能页</span><span>规则 + 推送 + 云端</span><span>随功能同步更新</span></div></div>' +
                 '<div class="ym-layout"><aside class="ym-toc"><h3>📖 目录</h3>' + toc + '<div class="ym-note" style="margin-top:10px;font-size:.68rem;">功能 / 规则 / 权限有改动，本手册同步更新。</div></aside><div class="ym-main">' + body + '</div></div>' +
             '</div>';
