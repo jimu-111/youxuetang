@@ -1,21 +1,23 @@
-name: 邮箱配置同步
+name: 邮箱通讯录同步
 
-# 2026-11-22 建。
-# 每天 10:00（北京时间 = UTC 2:00）读飞书「邮箱管理」sheet（BzG8… / qCBZEl），
-# 把员工邮箱写云端 personnelEmails，把系统收件人写云端 emailConfigData。
-# 安全闸门：表里员工邮箱为 0，或比云端现有少一半以上 → 中止；确认无误可手动勾 force。
+# 2026-11-28 改：数据源由「邮箱管理 sheet」改为飞书通讯录。
+# 每周一 / 周四 / 周日 10:00（北京时间 = UTC 2:00）读取质量管理部：
+#   四个复核组（成都/青岛/深圳/郑州）+ 部直属；质量运营组不写；许伟明作为固定例外。
+# 结果写回飞书「邮箱管理」sheet（qCBZEl）和云端 personnelEmails / adminPersonSiteMap / emailConfigData。
+# 页面「人员变动」里已标记离职的人会跳过，不再写回。
+# 安全闸门：任一复核组为空、总人数少两成以上、无邮箱人数过多 → 中止；确认无误可手动勾 force。
 
 on:
   workflow_dispatch:
     inputs:
       dry_run:
-        description: '只读演练（不写云端）'
+        description: '只读演练（不写飞书、不写云端）'
         default: 'false'
       force:
-        description: '强制（越过「少一半」闸门）'
+        description: '强制（越过「少两成」闸门）'
         default: 'false'
   schedule:
-    - cron: "0 2 * * *"
+    - cron: "0 2 * * 1,4,0"
 
 jobs:
   sync:
@@ -30,7 +32,7 @@ jobs:
         with:
           node-version: "22"
 
-      - name: 读飞书邮箱表 → 写云端
+      - name: 读飞书通讯录 → 写飞书表 + 云端
         run: node email-config-sync.js
         env:
           DRY_RUN: ${{ github.event.inputs.dry_run || 'false' }}
