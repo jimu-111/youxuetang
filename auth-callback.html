@@ -82,6 +82,8 @@
     };
     var baseAppUrl = location.origin + location.pathname.replace(/auth-callback\.html$/i, '');
     if (baseAppUrl.slice(-1) !== '/') baseAppUrl += '/';
+    var isPhone = /Android|iPhone|iPod|Windows Phone|Mobile/i.test(navigator.userAgent) ||
+        (navigator.maxTouchPoints > 1 && /Macintosh/i.test(navigator.userAgent));
 
     function setStatus(status, detail) {
         var s = document.getElementById('status'), d = document.getElementById('detail');
@@ -288,7 +290,13 @@
             }
             setStatus('正在通知电脑…', '第 4/4 步：回传登录结果');
             await writeRelay(state, user);
-            showSuccess('请回到电脑继续，页面会自动进入');
+            if (isPhone) {
+                showSuccess('请回到电脑继续，页面会自动进入');
+            } else {
+                // 电脑上点“在飞书打开”授权完，自动切回优学堂
+                showSuccess('正在返回优学堂…');
+                setTimeout(function () { location.replace(baseAppUrl); }, 700);
+            }
         } catch (e) {
             showError(e.message || '验证失败，请重新扫码');
         }
