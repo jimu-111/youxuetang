@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <!-- 版本行：每次部署新代码必须 bump 此 content（YYYYMMDD.N），旧设备靠它自检静默升级 -->
-    <meta name="yxt-ver" content="20261128.20">
+    <meta name="yxt-ver" content="20261128.21">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
     <title>优学堂</title>
     <script src="https://cdn.sheetjs.com/xlsx-0.20.2/package/dist/xlsx.full.min.js" defer></script>
@@ -3236,6 +3236,7 @@
             id: 'exam', title: '考试题库与考试系统', icon: '📝',
             jumps: [{ label: '题库', target: 'questionBank' }, { label: '考试系统', target: 'examSystem' }, { label: '题库飞书表', target: 'admin:docsDetail' }],
             body: `<p><b>题库：</b>常规题库按 7 个品类维护；培训案例题库独立存放，按全部 / 判断 / 单选 / 多选展示。题库页面只读，内容由飞书总表和周日同步维护。</p>
+<p><b>刷题：</b>每个品类卡片旁「🎯 刷题」直接随机刷该品类；「全部题目」卡片旁「🎯 刷题」可自由选品类或随机；题量选 30 / 50 / 80。只刷判断、单选、多选，不含问答题；提交后显示对错、正确答案、解析和图片/视频；错题记录只存本机，按飞书账号分开。</p>
 <table class="ym-table"><thead><tr><th>项目</th><th>规则</th></tr></thead><tbody>
 <tr><td>题库同步</td><td>每周日 8:00；先做源1→源2对账，再同步题库；题数骤降、删除量过大、0 题等异常会中止并告警。</td></tr>
 <tr><td>考试创建</td><td>管理员选套题/题库，生成考试码或链接，推送给指定人员。</td></tr>
@@ -3349,8 +3350,8 @@ location.reload();</pre>
             id: 'log', title: '维护约定与更新记录', icon: '📌',
             jumps: [{ label: '功能与权限', target: 'featureGuide' }, { label: '文档与云端', target: 'admin:docsDetail' }],
             body: `<p><b>维护约定：</b>每次修改功能、规则、阈值或权限，必须同步更新本手册对应章节，并更新“最后核对”日期；功能简介和权限页也要一起改。</p>
-<ul><li><b>2026-11-28：</b>手册第一版；周红绿灯改为考试≥5、培训≥7、学习≥11；新增功能与权限合并页；管理后台新增文档与云端入口；邮箱改为飞书通讯录每周一/四/日 10:00 同步；人员变动标记离职会联动删除邮箱和人员站点，入职记录保留；管理后台点卡片展开后自动滚到详情；新增飞书扫码门禁（质量管理部白名单，7 天登录态，前端尽力版）；新增超级管理员「权限管理」；飞书登录失败可用管理密码临时进入 10 分钟；管理员名单内扫码直接进管理员，名单外输密码进管理员只保留到关页；扫码回调改用独立轻量页 auth-callback.html；回调页把权限配置、应用凭证、通讯录凭证改为并行获取；「在飞书打开」一律当前页跳转，授权完自动回优学堂，不额外多开标签；「文档与云端」新增飞书开放平台、优学堂应用、重定向 URL 说明和飞书通讯录后台入口；手册「异常与补跑」新增控制台应急命令。</li><li>写规则时统一写“触发条件 → 数据来源 → 执行时间 → 结果 → 失败处理”。</li><li>手册不写密码、密钥和完整 token。</li></ul>
-<div class="ym-note">最后核对：2026-11-28 · 适用版本：20261128.20。遇到代码与手册不一致，以当前代码为准，并回来改手册。</div>`
+<ul><li><b>2026-11-28：</b>手册第一版；周红绿灯改为考试≥5、培训≥7、学习≥11；新增功能与权限合并页；管理后台新增文档与云端入口；邮箱改为飞书通讯录每周一/四/日 10:00 同步；人员变动标记离职会联动删除邮箱和人员站点，入职记录保留；管理后台点卡片展开后自动滚到详情；新增飞书扫码门禁（质量管理部白名单，7 天登录态，前端尽力版）；新增超级管理员「权限管理」；飞书登录失败可用管理密码临时进入 10 分钟；管理员名单内扫码直接进管理员，名单外输密码进管理员只保留到关页；扫码回调改用独立轻量页 auth-callback.html；回调页把权限配置、应用凭证、通讯录凭证改为并行获取；「在飞书打开」一律当前页跳转，授权完自动回优学堂，不额外多开标签；「文档与云端」新增飞书开放平台、优学堂应用、重定向 URL 说明和飞书通讯录后台入口；手册「异常与补跑」新增控制台应急命令；题库新增品类/随机刷题（30/50/80 题，错题只存本机，不含问答）。</li><li>写规则时统一写“触发条件 → 数据来源 → 执行时间 → 结果 → 失败处理”。</li><li>手册不写密码、密钥和完整 token。</li></ul>
+<div class="ym-note">最后核对：2026-11-28 · 适用版本：20261128.21。遇到代码与手册不一致，以当前代码为准，并回来改手册。</div>`
         }
     ];
 
@@ -3384,7 +3385,7 @@ location.reload();</pre>
         }).join('');
         document.getElementById('mainContent').innerHTML =
             '<div class="ym-wrap">' +
-                '<div class="ym-topbar"><button class="ym-back" onclick="switchNav(\'admin\')">← 返回管理后台</button><span class="ym-version">适用版本 20261128.20 · 最后核对 2026-11-28</span></div>' +
+                '<div class="ym-topbar"><button class="ym-back" onclick="switchNav(\'admin\')">← 返回管理后台</button><span class="ym-version">适用版本 20261128.21 · 最后核对 2026-11-28</span></div>' +
                 '<div class="yxg-hero"><div class="yxg-kicker">优学堂 · 全功能手册</div><h1>使用手册</h1><p>把每一个功能、规则、云端任务和计算口径写在一处。左边目录可直接跳转，章节里的按钮可跳到对应模块。</p><div class="yxg-stats"><span>' + YXT_MANUAL_SECTIONS.length + ' 个章节</span><span>11 个功能页</span><span>规则 + 推送 + 云端</span><span>随功能同步更新</span></div></div>' +
                 '<div class="ym-layout"><aside class="ym-toc"><h3>📖 目录</h3>' + toc + '<div class="ym-note" style="margin-top:10px;font-size:.68rem;">功能 / 规则 / 权限有改动，本手册同步更新。</div></aside><div class="ym-main">' + body + '</div></div>' +
             '</div>';
@@ -16204,7 +16205,7 @@ URL.revokeObjectURL(url);
             { name: '知识库', desc: '整合质检标准与培训资料，提供日常巡查、培训复盘的一站式速查入口。', features: ['质检标准/培训资料一站查', '分组卡片和关键词搜索', '表驱动标准库自动更新'], guest: '只读', admin: '编辑', detail: '游客只读；管理员可增删改排序；质检标准库为飞书表驱动，页面只读。' }
         ]},
         { icon: '📝', name: '考试题库', pages: [
-            { name: '题库', desc: '常规题库与培训案例题库双库隔离，支持分类搜索、日常刷题和管理员同步。', features: ['常规题库 + 培训案例题库', '分类搜索、日常刷题', '培训案例题库按题型展示'], guest: '只读', admin: '编辑 / 同步 / 恢复', detail: '游客可看可搜；管理员可同步、下载、写回、恢复。' },
+            { name: '题库', desc: '常规题库与培训案例题库双库隔离，支持分类搜索、日常刷题和管理员同步。', features: ['常规题库 + 培训案例题库', '分类刷题 / 随机刷题（30/50/80 题）', '错题本只存本机'], guest: '只读 + 刷题', admin: '编辑 / 同步 / 恢复', detail: '游客可看可搜可刷题；错题记录只存本机、按飞书账号分开；管理员可同步、下载、写回、恢复。' },
             { name: '考试系统', desc: '记录考试、学习、培训的推送下发，追踪完成状态与结果，形成闭环校验。', features: ['创建考试、选择套题', '推送、完成、补考', '24 小时有效期与结果回收'], guest: '隐藏', admin: '读写', detail: '游客侧边栏不可进入；管理员拥有全部功能。' }
         ]},
         { icon: '💬', name: '反馈中心', pages: [
@@ -16835,6 +16836,7 @@ URL.revokeObjectURL(url);
                     <div class="qb-cat-count">${count} 题</div>
                     <div class="qb-cat-actions">
                         <button class="qb-card-btn qb-card-view" onclick="event.stopPropagation();openQBDetailModal('${safeCat}', getAllQBQuestions().filter(q=>q.category==='${safeCat}'))">👁️ 查看</button>
+                        <button class="qb-card-btn qb-card-practice" onclick="event.stopPropagation();openQBPracticeForCategory('${safeCat}')">🎯 刷题</button>
                     </div>
                 </div>`;
             }).join('');
@@ -16846,6 +16848,10 @@ URL.revokeObjectURL(url);
                 .qb-toolbar button { padding:10px 20px; border-radius:12px; font-size:0.85rem; font-weight:600; cursor:pointer; border:none; transition:0.2s; }
                 .qb-btn-add { background:#1f3a6b; color:white; }
                 .qb-btn-add:hover { background:#2a5298; }
+                .qb-btn-practice { background:#8b5cf6; color:white; }
+                .qb-btn-practice:hover { background:#7c3aed; }
+                .qb-card-practice { background:rgba(139,92,246,0.85); color:white; }
+                .qb-card-practice:hover { background:#7c3aed; }
                 .qb-btn-upload { background:#eef2ff; color:#1f3a6b; border:1px solid #cbd5e1 !important; }
                 .qb-btn-upload:hover { background:#dde4f5; }
                 .qb-btn-download { background:transparent; color:#5e6f8d; border:1px solid #cbd5e1 !important; }
@@ -16914,6 +16920,7 @@ URL.revokeObjectURL(url);
                     <div class="qb-cat-count">${uniqueQBQuestions.length} 题</div>
                     <div class="qb-cat-actions">
                         <button class="qb-card-btn qb-card-view-all" onclick="event.stopPropagation();openQBDetailModal('全部题目', window._uniqueQBQuestions||[])">👁️ 查看</button>
+                        <button class="qb-card-btn qb-card-practice" onclick="event.stopPropagation();openQBPracticePicker()">🎯 刷题</button>
                     </div>
                 </div>
                 ${catCards}
@@ -16951,6 +16958,403 @@ URL.revokeObjectURL(url);
         }, 50);
         // 本地题库为空时自动从云端/KV 自愈拉取
         _qbSelfHeal();
+    }
+
+    // ==================== 题库刷题（2026-11-28）====================
+    // 只刷常规题库的判断/单选/多选；不含问答；错题记录只存本机，按飞书账号分开
+    var _qbpState = null;
+
+    function _qbpUserKey() {
+        var u = window.YXT_AUTH || {};
+        return String(u.open_id || u.email || 'guest').replace(/[^\w.-]/g, '_');
+    }
+    function _qbpWrongKey() { return 'qbPracticeWrongV1_' + _qbpUserKey(); }
+    function _qbpLoadWrong() {
+        try {
+            var a = JSON.parse(localStorage.getItem(_qbpWrongKey()) || '[]');
+            return Array.isArray(a) ? a : [];
+        } catch (e) { return []; }
+    }
+    function _qbpSaveWrong(a) {
+        try { localStorage.setItem(_qbpWrongKey(), JSON.stringify(a)); } catch (e) {}
+    }
+    function _qbpQid(q) { return String(q.id || q.question || ''); }
+    function _qbpSetWrong(q, wrong) {
+        var a = _qbpLoadWrong(), id = _qbpQid(q), i = a.indexOf(id);
+        if (wrong) { if (i < 0) a.push(id); }
+        else if (i >= 0) a.splice(i, 1);
+        _qbpSaveWrong(a);
+    }
+    function _qbpShuffle(arr) {
+        var a = arr.slice();
+        for (var i = a.length - 1; i > 0; i--) {
+            var j = Math.floor(Math.random() * (i + 1));
+            var t = a[i]; a[i] = a[j]; a[j] = t;
+        }
+        return a;
+    }
+    function _qbpPool(category) {
+        var all = getAllQBQuestions();
+        var seen = {}, out = [];
+        all.forEach(function(q) {
+            if (!q) return;
+            if (q.type !== 'choice' && q.type !== 'multi' && q.type !== 'judge') return;
+            if (!String(q.answer || '').trim()) return;
+            if ((q.type === 'choice' || q.type === 'multi') && (!q.options || q.options.length < 2)) return;
+            var key = String(q.question || '').trim().toLowerCase();
+            if (!key || seen[key]) return;
+            seen[key] = 1;
+            if (category && category !== '__random__' && q.category !== category) return;
+            out.push(q);
+        });
+        return out;
+    }
+    function _qbpCategories() {
+        var qb = qbRead();
+        var cats = Object.keys(qb.categories || {});
+        cats.sort(function(a, b) {
+            var oa = qb.categories[a] && qb.categories[a].order;
+            var ob = qb.categories[b] && qb.categories[b].order;
+            if (oa != null && ob != null) return oa - ob;
+            if (oa != null) return -1;
+            if (ob != null) return 1;
+            return a.localeCompare(b);
+        });
+        return cats;
+    }
+    function _qbpTypeLabel(t) {
+        return t === 'judge' ? '判断题' : (t === 'multi' ? '多选题' : '单选题');
+    }
+    function _qbpNormLetters(s) { return String(s || '').toUpperCase().replace(/[^A-Z]/g, ''); }
+    function _qbpJudgeAnswer(q) {
+        var a = String(q.answer || '').trim();
+        if (/^(正确|对|是|A)$/i.test(a)) return '正确';
+        if (/^(错误|错|否|B)$/i.test(a)) return '错误';
+        return a;
+    }
+    function _qbpCorrectKeys(q) {
+        if (q.type === 'judge') return _qbpJudgeAnswer(q);
+        return _qbpNormLetters(q.answer);
+    }
+    function _qbpAnswerText(q) {
+        var keys = _qbpCorrectKeys(q);
+        if (q.type === 'judge') return keys;
+        var opts = q.options || [];
+        return keys.split('').map(function(k) {
+            var hit = null;
+            opts.forEach(function(o, i) {
+                var kk = (o && typeof o === 'object' && o.key) ? String(o.key).toUpperCase() : String.fromCharCode(65 + i);
+                if (kk === k) hit = o;
+            });
+            return k + (hit ? '. ' + optText(hit) : '');
+        }).join('；');
+    }
+    function _qbpOptionKey(o, i) {
+        return (o && typeof o === 'object' && o.key) ? String(o.key).toUpperCase() : String.fromCharCode(65 + i);
+    }
+    function _qbpClose() {
+        var ov = document.getElementById('qbPracticeOverlay');
+        if (ov) ov.remove();
+        _qbpState = null;
+    }
+    function _qbpBegin(category, count, preset) {
+        var pool = preset || _qbpPool(category);
+        if (!pool || !pool.length) { showToast('这个范围没有可刷的题目', 'warning'); return; }
+        var n = Math.min(Number(count) || 30, pool.length);
+        var qs = preset ? pool.slice(0, n) : _qbpShuffle(pool).slice(0, n);
+        _qbpState = {
+            qs: qs, idx: 0, correct: 0, wrong: [],
+            category: category, requestedCount: count, answered: false, selected: []
+        };
+        _qbpRender();
+    }
+    function openQBPracticeForCategory(category) {
+        var pool = _qbpPool(category);
+        if (!pool.length) { showToast('该品类没有可刷的题目', 'warning'); return; }
+        var selected = 30;
+        var ov = document.createElement('div');
+        ov.className = 'modal-overlay'; ov.style.zIndex = '3500';
+        ov.innerHTML = '<div class="modal-container" style="max-width:430px;">' +
+            '<div class="modal-header"><span>🎯 刷「' + escapeHtml(category) + '」</span><button class="modal-close-btn" id="qbpCatClose">✕</button></div>' +
+            '<div class="modal-body" style="padding:20px;">' +
+                '<div style="font-size:0.8rem;color:#64748b;margin-bottom:10px;">该品类可刷 <b>' + pool.length + '</b> 题，随机抽题。</div>' +
+                '<div style="font-size:0.8rem;font-weight:700;color:#1f3a6b;margin-bottom:8px;">选择题量</div>' +
+                '<div id="qbpCatCounts" style="display:flex;gap:8px;margin-bottom:14px;">' +
+                    [30, 50, 80].map(function(n) { return '<button class="qbp-count-btn" data-count="' + n + '" style="flex:1;padding:9px;border:1px solid #cbd5e1;background:' + (n === 30 ? '#8b5cf6' : '#f8fafc') + ';color:' + (n === 30 ? '#fff' : '#475569') + ';border-radius:10px;cursor:pointer;font-weight:600;">' + n + ' 题</button>'; }).join('') +
+                '</div>' +
+                '<div id="qbpCatHint" style="font-size:0.72rem;color:#94a3b8;margin-bottom:14px;"></div>' +
+                '<button id="qbpCatStart" style="width:100%;padding:10px;border:none;border-radius:10px;background:#8b5cf6;color:#fff;cursor:pointer;font-size:0.9rem;font-weight:700;">开始刷题</button>' +
+            '</div></div>';
+        document.body.appendChild(ov);
+        var hint = document.getElementById('qbpCatHint');
+        function updateHint() {
+            var n = Math.min(selected, pool.length);
+            hint.textContent = '将从 ' + pool.length + ' 题中随机抽 ' + n + ' 题';
+        }
+        updateHint();
+        ov.querySelectorAll('.qbp-count-btn').forEach(function(btn) {
+            btn.onclick = function() {
+                selected = Number(btn.getAttribute('data-count')) || 30;
+                ov.querySelectorAll('.qbp-count-btn').forEach(function(b) {
+                    var on = b === btn;
+                    b.style.background = on ? '#8b5cf6' : '#f8fafc';
+                    b.style.color = on ? '#fff' : '#475569';
+                });
+                updateHint();
+            };
+        });
+        document.getElementById('qbpCatStart').onclick = function() { ov.remove(); _qbpBegin(category, selected); };
+        document.getElementById('qbpCatClose').onclick = function() { ov.remove(); };
+        ov.addEventListener('click', function(e) { if (e.target === ov) ov.remove(); });
+    }
+    function openQBPracticePicker() {
+        var cats = _qbpCategories();
+        var counts = {};
+        cats.forEach(function(c) { counts[c] = _qbpPool(c).length; });
+        var allCount = _qbpPool('__random__').length;
+        var selectedCat = '__random__', selectedCount = 30;
+        var old = document.getElementById('qbPracticePicker');
+        if (old) old.remove();
+        var ov = document.createElement('div');
+        ov.id = 'qbPracticePicker'; ov.className = 'modal-overlay'; ov.style.zIndex = '3500';
+        var catBtns = '<button class="qbp-pick-cat active" data-cat="__random__" style="padding:10px 14px;border:2px solid #8b5cf6;background:#f5f3ff;color:#6d28d9;border-radius:12px;cursor:pointer;font-size:0.82rem;font-weight:700;">🎲 随机（全部品类）<span style="font-weight:400;opacity:.7;"> · ' + allCount + ' 题</span></button>' +
+            cats.map(function(c) {
+                var n = counts[c] || 0;
+                return '<button class="qbp-pick-cat" data-cat="' + escapeHtml(c) + '"' + (n ? '' : ' disabled') + ' style="padding:10px 14px;border:1px solid #cbd5e1;background:#f8fafc;color:#475569;border-radius:12px;cursor:pointer;font-size:0.82rem;' + (n ? '' : 'opacity:.45;cursor:not-allowed;') + '">' + escapeHtml(c) + '<span style="font-weight:400;opacity:.65;"> · ' + n + ' 题</span></button>';
+            }).join('');
+        var wrongIds = _qbpLoadWrong();
+        var wrongCount = _qbpPool('__random__').filter(function(q) { return wrongIds.indexOf(_qbpQid(q)) >= 0; }).length;
+        ov.innerHTML = '<div class="modal-container" style="max-width:620px;">' +
+            '<div class="modal-header"><span>🎯 开始刷题</span><button class="modal-close-btn" id="qbpPickClose">✕</button></div>' +
+            '<div class="modal-body" style="padding:20px;max-height:78vh;overflow-y:auto;">' +
+                '<div style="font-size:0.8rem;font-weight:700;color:#1f3a6b;margin-bottom:8px;">选择题范围</div>' +
+                '<div id="qbpPickCats" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:18px;">' + catBtns + '</div>' +
+                '<div style="font-size:0.8rem;font-weight:700;color:#1f3a6b;margin-bottom:8px;">选择题量</div>' +
+                '<div id="qbpPickCounts" style="display:flex;gap:8px;margin-bottom:12px;">' +
+                    [30, 50, 80].map(function(n) { return '<button class="qbp-count-btn" data-count="' + n + '" style="flex:1;padding:9px;border:1px solid #cbd5e1;background:' + (n === 30 ? '#8b5cf6' : '#f8fafc') + ';color:' + (n === 30 ? '#fff' : '#475569') + ';border-radius:10px;cursor:pointer;font-weight:600;">' + n + ' 题</button>'; }).join('') +
+                '</div>' +
+                '<div id="qbpPickHint" style="font-size:0.72rem;color:#94a3b8;margin-bottom:16px;"></div>' +
+                '<button id="qbpPickStart" style="width:100%;padding:10px;border:none;border-radius:10px;background:#8b5cf6;color:#fff;cursor:pointer;font-size:0.9rem;font-weight:700;">开始刷题</button>' +
+                (wrongCount ? '<button id="qbpWrongStart" style="width:100%;margin-top:8px;padding:9px;border:1px solid #f59e0b;border-radius:10px;background:#fffbeb;color:#b45309;cursor:pointer;font-size:0.8rem;font-weight:600;">📕 只刷本机错题（' + wrongCount + ' 题）</button>' : '') +
+            '</div></div>';
+        document.body.appendChild(ov);
+        var hint = document.getElementById('qbpPickHint');
+        function poolNow() { return _qbpPool(selectedCat); }
+        function updateHint() {
+            var p = poolNow(), n = Math.min(selectedCount, p.length);
+            hint.textContent = '将从 ' + p.length + ' 题中随机抽 ' + n + ' 题' + (p.length < selectedCount ? '（该范围不足 ' + selectedCount + ' 题，按全部算）' : '');
+        }
+        updateHint();
+        ov.querySelectorAll('.qbp-pick-cat').forEach(function(btn) {
+            btn.onclick = function() {
+                var cat = btn.getAttribute('data-cat');
+                selectedCat = cat;
+                ov.querySelectorAll('.qbp-pick-cat').forEach(function(b) {
+                    var on = b === btn;
+                    b.style.border = on ? '2px solid #8b5cf6' : '1px solid #cbd5e1';
+                    b.style.background = on ? '#f5f3ff' : '#f8fafc';
+                    b.style.color = on ? '#6d28d9' : '#475569';
+                    b.classList.toggle('active', on);
+                });
+                updateHint();
+            };
+        });
+        ov.querySelectorAll('.qbp-count-btn').forEach(function(btn) {
+            btn.onclick = function() {
+                selectedCount = Number(btn.getAttribute('data-count')) || 30;
+                ov.querySelectorAll('.qbp-count-btn').forEach(function(b) {
+                    var on = b === btn;
+                    b.style.background = on ? '#8b5cf6' : '#f8fafc';
+                    b.style.color = on ? '#fff' : '#475569';
+                });
+                updateHint();
+            };
+        });
+        document.getElementById('qbpPickStart').onclick = function() {
+            if (!poolNow().length) { hint.textContent = '这个范围没有可刷的题目'; return; }
+            ov.remove(); _qbpBegin(selectedCat, selectedCount);
+        };
+        var wrongBtn = document.getElementById('qbpWrongStart');
+        if (wrongBtn) wrongBtn.onclick = function() {
+            var ids = _qbpLoadWrong();
+            var qs = _qbpPool('__random__').filter(function(q) { return ids.indexOf(_qbpQid(q)) >= 0; });
+            if (!qs.length) { showToast('本机没有错题记录', 'warning'); return; }
+            ov.remove(); _qbpBegin('错题本', qs.length, _qbpShuffle(qs));
+        };
+        document.getElementById('qbpPickClose').onclick = function() { ov.remove(); };
+        ov.addEventListener('click', function(e) { if (e.target === ov) ov.remove(); });
+    }
+    function _qbpQuestionHtml(q) {
+        var type = _qbpTypeLabel(q.type);
+        var imgHtml = '';
+        if (q.images && q.images.length) imgHtml += '<div style="margin:8px 0;text-align:center;">' + q.images.map(function(tk) { return photoTag({ t: tk }, 320, 240); }).join('') + '</div>';
+        if (q.videos && q.videos.length) imgHtml += '<div style="margin:8px 0;text-align:center;">' + videoTags(q.videos, 360, 260) + '</div>';
+        if (q.screenshot) imgHtml += '<div style="margin:8px 0;text-align:center;">' + photoTag(q.screenshot, 320, 240) + '</div>';
+        var optsHtml = '';
+        if (q.type === 'judge') {
+            optsHtml = '<div class="qbp-options">' +
+                '<button type="button" class="qbp-opt" data-key="正确"><span class="qbp-key">✅</span><span>正确</span></button>' +
+                '<button type="button" class="qbp-opt" data-key="错误"><span class="qbp-key">❌</span><span>错误</span></button>' +
+                '</div>';
+        } else {
+            optsHtml = '<div class="qbp-options">' + (q.options || []).map(function(o, i) {
+                var k = _qbpOptionKey(o, i);
+                var im = optImages(o).map(function(tk) { return photoTag({ t: tk }, 80, 70); }).join('') + videoTags(optVideos(o), 110, 90);
+                return '<button type="button" class="qbp-opt" data-key="' + escapeHtml(k) + '">' +
+                    '<span class="qbp-key">' + escapeHtml(k) + '</span><span>' + escapeHtml(optText(o)) + im + '</span></button>';
+            }).join('') + '</div>';
+        }
+        return '<div style="margin-bottom:10px;"><span class="qb-tag qb-tag-choice">' + type + '</span><span class="qb-tag" style="background:#f1f5f9;color:#5e6f8d;">' + escapeHtml(q.category || '未分类') + '</span></div>' +
+            '<div style="font-size:1rem;font-weight:700;color:#1f3a6b;line-height:1.7;white-space:pre-wrap;">' + escapeHtml(q.question) + '</div>' +
+            imgHtml + optsHtml;
+    }
+    function _qbpResultHtml(q, correct, selected) {
+        var ans = _qbpAnswerText(q);
+        var html = '<div style="margin-top:14px;border-radius:14px;padding:14px;border:1px solid ' + (correct ? '#bbf7d0' : '#fecaca') + ';background:' + (correct ? '#f0fdf4' : '#fff5f5') + ';">' +
+            '<div style="font-weight:700;font-size:0.9rem;color:' + (correct ? '#166534' : '#c0392b') + ';margin-bottom:6px;">' + (correct ? '✅ 答对了' : '❌ 答错了') + '</div>' +
+            '<div style="font-size:0.82rem;color:#334155;margin-bottom:4px;"><b>正确答案：</b>' + escapeHtml(ans || '暂无') + '</div>';
+        if (!correct && selected && selected.length) {
+            var own = q.type === 'judge' ? selected.join('') : selected.slice().sort().join('');
+            html += '<div style="font-size:0.78rem;color:#94a3b8;margin-bottom:4px;">你的选择：' + escapeHtml(own) + '</div>';
+        }
+        if (q.explanation) html += '<div style="font-size:0.82rem;color:#5e6f8d;line-height:1.7;white-space:pre-wrap;margin-top:8px;"><b>💡 解析：</b>' + escapeHtml(q.explanation) + '</div>';
+        if (q.analysisImages && q.analysisImages.length) html += '<div style="margin-top:8px;text-align:center;">' + q.analysisImages.map(function(tk) { return photoTag({ t: tk }, 240, 180); }).join('') + '</div>';
+        if (q.analysisVideos && q.analysisVideos.length) html += '<div style="margin-top:8px;text-align:center;">' + videoTags(q.analysisVideos, 300, 220) + '</div>';
+        html += '</div>';
+        return html;
+    }
+    function _qbpSubmit() {
+        var st = _qbpState;
+        if (!st || st.answered) return;
+        var q = st.qs[st.idx];
+        if (!q) return;
+        var correct = false;
+        var correctKeys = _qbpCorrectKeys(q);
+        if (q.type === 'multi') {
+            var sel = st.selected.slice().sort().join('');
+            var ck = correctKeys.split('').sort().join('');
+            correct = !!sel && sel === ck;
+        } else {
+            correct = st.selected[0] === correctKeys;
+        }
+        st.answered = true;
+        if (correct) { st.correct++; _qbpSetWrong(q, false); }
+        else { st.wrong.push(q); _qbpSetWrong(q, true); }
+        var ov = document.getElementById('qbPracticeOverlay');
+        if (!ov) return;
+        ov.querySelectorAll('.qbp-opt').forEach(function(btn) {
+            var k = btn.getAttribute('data-key');
+            var isCorrect = q.type === 'judge' ? (k === correctKeys) : (correctKeys.indexOf(k) >= 0);
+            var isSelected = st.selected.indexOf(k) >= 0;
+            btn.disabled = true;
+            if (isCorrect) btn.classList.add('qbp-correct');
+            else if (isSelected) btn.classList.add('qbp-wrong');
+        });
+        var result = document.getElementById('qbpResult');
+        if (result) result.innerHTML = _qbpResultHtml(q, correct, st.selected);
+        var submit = document.getElementById('qbpSubmitBtn');
+        if (submit) submit.style.display = 'none';
+        var next = document.getElementById('qbpNextBtn');
+        if (next) {
+            next.style.display = 'inline-block';
+            next.textContent = st.idx >= st.qs.length - 1 ? '看结果 →' : '下一题 →';
+        }
+    }
+    function _qbpNext() {
+        var st = _qbpState;
+        if (!st) return;
+        if (st.idx >= st.qs.length - 1) { _qbpFinish(); return; }
+        st.idx++;
+        st.answered = false;
+        st.selected = [];
+        _qbpRender();
+    }
+    function _qbpFinish() {
+        var st = _qbpState;
+        if (!st) return;
+        var total = st.qs.length, pct = total ? Math.round(st.correct / total * 100) : 0;
+        var ov = document.getElementById('qbPracticeOverlay');
+        if (!ov) return;
+        var wrongHtml = st.wrong.length ? '<div style="margin-top:12px;max-height:260px;overflow-y:auto;border-top:1px solid #eef2f6;padding-top:10px;">' +
+            '<div style="font-size:0.82rem;font-weight:700;color:#c0392b;margin-bottom:6px;">本次错题（' + st.wrong.length + '）</div>' +
+            st.wrong.map(function(q) {
+                return '<div style="padding:8px 0;border-bottom:1px dashed #eef2f6;font-size:0.78rem;color:#475569;"><div style="font-weight:600;color:#1e2a3a;">' + escapeHtml(q.question) + '</div><div style="color:#166534;margin-top:2px;">正确答案：' + escapeHtml(_qbpAnswerText(q)) + '</div></div>';
+            }).join('') + '</div>' : '';
+        ov.innerHTML = '<div class="modal-container" style="max-width:560px;"><div class="modal-header"><span>🎯 刷题结果</span><button class="modal-close-btn" id="qbpFinishClose">✕</button></div>' +
+            '<div class="modal-body" style="padding:22px;max-height:80vh;overflow-y:auto;text-align:center;">' +
+                '<div style="font-size:2.2rem;margin-bottom:6px;">' + (st.wrong.length ? '📘' : '🎉') + '</div>' +
+                '<div style="font-size:1.1rem;font-weight:800;color:#1f3a6b;">' + (st.wrong.length ? '刷完了' : '全部答对') + '</div>' +
+                '<div style="font-size:0.82rem;color:#64748b;margin:8px 0 14px;">答对 ' + st.correct + ' / ' + total + ' 题 · 正确率 ' + pct + '%</div>' +
+                '<div style="height:8px;background:#eef2f6;border-radius:6px;overflow:hidden;"><div style="height:100%;width:' + pct + '%;background:#8b5cf6;"></div></div>' +
+                wrongHtml +
+                '<div style="display:flex;gap:8px;margin-top:18px;flex-wrap:wrap;">' +
+                    (st.wrong.length ? '<button id="qbpRetryWrong" style="flex:1;min-width:120px;padding:9px;border:1px solid #f59e0b;border-radius:10px;background:#fffbeb;color:#b45309;cursor:pointer;font-size:0.8rem;font-weight:600;">只刷本次错题</button>' : '') +
+                    '<button id="qbpAgain" style="flex:1;min-width:120px;padding:9px;border:none;border-radius:10px;background:#8b5cf6;color:#fff;cursor:pointer;font-size:0.8rem;font-weight:600;">再来一轮</button>' +
+                    '<button id="qbpFinishClose2" style="flex:1;min-width:120px;padding:9px;border:1px solid #cbd5e1;border-radius:10px;background:#f8fafc;color:#475569;cursor:pointer;font-size:0.8rem;">关闭</button>' +
+                '</div>' +
+            '</div></div>';
+        document.getElementById('qbpFinishClose').onclick = _qbpClose;
+        document.getElementById('qbpFinishClose2').onclick = _qbpClose;
+        document.getElementById('qbpAgain').onclick = function() {
+            var cat = st.category === '错题本' ? '__random__' : st.category;
+            _qbpBegin(cat, st.requestedCount || 30);
+        };
+        var rw = document.getElementById('qbpRetryWrong');
+        if (rw) rw.onclick = function() { _qbpBegin('错题本', st.wrong.length, _qbpShuffle(st.wrong)); };
+    }
+    function _qbpRender() {
+        var st = _qbpState;
+        if (!st) return;
+        var q = st.qs[st.idx];
+        if (!q) { _qbpFinish(); return; }
+        var old = document.getElementById('qbPracticeOverlay');
+        if (old) old.remove();
+        var ov = document.createElement('div');
+        ov.id = 'qbPracticeOverlay'; ov.className = 'modal-overlay'; ov.style.zIndex = '3500';
+        ov.innerHTML = '<style>' +
+            '.qbp-options{display:flex;flex-direction:column;gap:8px;margin-top:12px;}' +
+            '.qbp-opt{display:flex;align-items:flex-start;gap:10px;width:100%;text-align:left;padding:11px 14px;border:1px solid #dbe3ee;border-radius:12px;background:#fff;color:#1e2a3a;font-size:0.88rem;line-height:1.6;cursor:pointer;transition:.15s;}' +
+            '.qbp-opt:hover{border-color:#8b5cf6;background:#faf8ff;}' +
+            '.qbp-opt.selected{border-color:#8b5cf6;background:#f5f3ff;}' +
+            '.qbp-opt.qbp-correct{border-color:#22c55e;background:#f0fdf4;}' +
+            '.qbp-opt.qbp-wrong{border-color:#ef4444;background:#fff5f5;}' +
+            '.qbp-opt:disabled{cursor:default;opacity:1;}' +
+            '.qbp-key{display:inline-flex;align-items:center;justify-content:center;min-width:24px;height:24px;border-radius:7px;background:#eef2ff;color:#2a5298;font-weight:700;font-size:0.75rem;flex-shrink:0;}' +
+            '.qbp-opt.qbp-correct .qbp-key{background:#dcfce7;color:#166534;}' +
+            '.qbp-opt.qbp-wrong .qbp-key{background:#fee2e2;color:#991b1b;}' +
+            '</style>' +
+            '<div class="modal-container" style="max-width:760px;max-height:90vh;display:flex;flex-direction:column;">' +
+                '<div class="modal-header"><span>🎯 刷题 · 第 ' + (st.idx + 1) + ' / ' + st.qs.length + ' 题</span><button class="modal-close-btn" id="qbpClose">✕</button></div>' +
+                '<div style="height:5px;background:#eef2f6;flex-shrink:0;"><div style="height:100%;width:' + Math.round((st.idx / st.qs.length) * 100) + '%;background:#8b5cf6;transition:.2s;"></div></div>' +
+                '<div class="modal-body" style="padding:20px;overflow-y:auto;">' +
+                    _qbpQuestionHtml(q) +
+                    '<div id="qbpResult"></div>' +
+                    '<div style="margin-top:16px;display:flex;justify-content:flex-end;gap:8px;">' +
+                        '<button id="qbpSubmitBtn" style="display:' + (q.type === 'multi' ? 'inline-block' : 'none') + ';padding:9px 24px;border:none;border-radius:10px;background:#8b5cf6;color:#fff;cursor:pointer;font-weight:600;">提交答案</button>' +
+                        '<button id="qbpNextBtn" style="display:none;padding:9px 24px;border:none;border-radius:10px;background:#1f3a6b;color:#fff;cursor:pointer;font-weight:600;">下一题 →</button>' +
+                    '</div>' +
+                '</div>' +
+            '</div>';
+        document.body.appendChild(ov);
+        document.getElementById('qbpClose').onclick = _qbpClose;
+        var submit = document.getElementById('qbpSubmitBtn');
+        if (submit) submit.onclick = _qbpSubmit;
+        document.getElementById('qbpNextBtn').onclick = _qbpNext;
+        ov.querySelectorAll('.qbp-opt').forEach(function(btn) {
+            btn.onclick = function() {
+                if (!_qbpState || _qbpState.answered) return;
+                var key = btn.getAttribute('data-key');
+                if (q.type === 'multi') {
+                    var i = _qbpState.selected.indexOf(key);
+                    if (i >= 0) _qbpState.selected.splice(i, 1);
+                    else _qbpState.selected.push(key);
+                    btn.classList.toggle('selected', _qbpState.selected.indexOf(key) >= 0);
+                } else {
+                    _qbpState.selected = [key];
+                    _qbpSubmit();
+                }
+            };
+        });
     }
 
     // 2026-09-13 热读点：返回冻结数组。调用方只做 .filter/.find 等只读操作（见 openQBDetailModal：
@@ -17018,6 +17422,7 @@ URL.revokeObjectURL(url);
                         '<div class="qb-cat-count">' + count + ' 题</div>' +
                         '<div class="qb-cat-actions">' +
                             '<button class="qb-card-btn qb-card-view" onclick="event.stopPropagation();openQBDetailModal(\'' + safeCat + '\', getAllQBQuestions().filter(q=>q.category===\'' + safeCat + '\'))">👁️ 查看</button>' +
+                            '<button class="qb-card-btn qb-card-practice" onclick="event.stopPropagation();openQBPracticeForCategory(\'' + safeCat + '\')">🎯 刷题</button>' +
                         '</div></div>';
                 }).join('');
             }
@@ -17025,6 +17430,7 @@ URL.revokeObjectURL(url);
                 '<div class="qb-cat-icon">📋</div><div class="qb-cat-name">全部题目</div><div class="qb-cat-count">' + uniqueQBQuestions.length + ' 题</div>' +
                 '<div class="qb-cat-actions">' +
                     '<button class="qb-card-btn qb-card-view-all" onclick="event.stopPropagation();openQBDetailModal(\'全部题目\', window._uniqueQBQuestions||[])">👁️ 查看</button>' +
+                    '<button class="qb-card-btn qb-card-practice" onclick="event.stopPropagation();openQBPracticePicker()">🎯 刷题</button>' +
                 '</div></div>' + catCards;
             return;
         }
