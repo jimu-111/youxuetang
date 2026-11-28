@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <!-- 版本行：每次部署新代码必须 bump 此 content（YYYYMMDD.N），旧设备靠它自检静默升级 -->
-    <meta name="yxt-ver" content="20261128.9">
+    <meta name="yxt-ver" content="20261128.13">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
     <title>优学堂</title>
     <script src="https://cdn.sheetjs.com/xlsx-0.20.2/package/dist/xlsx.full.min.js" defer></script>
@@ -557,6 +557,7 @@
         <div class="nav-buttons" id="navAccordion" style="display:flex; flex-direction:column; gap:2px; flex-wrap:nowrap;"></div>
         <div style="margin-top:auto;padding:8px 12px;border-top:1px solid rgba(255,255,255,0.08);display:flex;flex-direction:column;gap:4px;">
             <button id="adminLoginBtn" class="nav-btn" style="font-size:0.75rem;text-align:center;padding:8px;background:rgba(255,255,255,0.12);border:1px solid rgba(255,255,255,0.25);color:#fff;border-radius:10px;cursor:pointer;font-weight:600;">🔒 游客模式</button>
+            <div id="authUserBadge" style="font-size:0.66rem;color:#94a3b8;text-align:center;line-height:1.4;min-height:14px;"></div>
             <div style="display:flex;align-items:stretch;gap:6px;">
                 <button class="nav-btn" data-nav="admin" style="font-size:0.72rem;flex:1;text-align:center;padding:6px 8px;display:flex;align-items:center;justify-content:center;">⚙️ 管理后台</button>
                 <span id="sidebarSyncBadge" class="nav-btn" style="font-size:0.72rem;flex:1;text-align:center;padding:6px 8px;display:flex;align-items:center;justify-content:center;cursor:pointer;min-width:0;overflow:hidden;text-overflow:ellipsis;" title="点击手动同步">☁️ 未同步</span>
@@ -589,6 +590,555 @@
 </div>
 
 <script>
+    // ==================== 飞书扫码门禁（2026-11-28，前端尽力版）====================
+    // 说明：GitHub Pages 是静态站点，没有服务端会话；这里是“前端门禁”：
+    //   - 飞书 OAuth 换 user_access_token（app_secret 由 Cloudflare 代理注入，页面不存密钥）
+    //   - 用 user_info + 通讯录接口校验是否在质量管理部白名单
+    //   - 登录态存 localStorage，7 天；过期/校验失败回扫码页
+    //   - 仍可被改前端绕过；真正的收口要等第二阶段把数据接口移到 Worker 后面
+    (function () {
+        'use strict';
+        var AUTH_SESSION_KEY = 'yxtAuthSessionV1';
+        var AUTH_STATE_KEY = 'yxtAuthStateV1';
+        var AUTH_RETURN_KEY = 'yxtAuthReturnV1';
+        var AUTH_PROXY = 'https://yxt-feishu.pages.dev';
+        // 必须和飞书后台「重定向 URL」完全一致；固定用生产地址，避免本地打开/换域名时 20029
+        var AUTH_REDIRECT_URI = 'https://jimu-111.github.io/youxuetang/';
+        var AUTH_SUPABASE_URL = 'https://zfxwnixlvdxawoylhgxj.supabase.co';
+        var AUTH_SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InpmeHduaXhsdmR4YXdveWxoZ3hqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODIyMDEyNzIsImV4cCI6MjA5Nzc3NzI3Mn0.aPfO4Ry_LzoOColCVx64JQPF-BWga-_J2fX9hg-E4G8';
+        var AUTH_APP_ID = 'cli_aab1fa4e87bbdbd3';
+        var AUTH_SCOPE = 'sheets:spreadsheet:readonly drive:drive:readonly wiki:wiki:readonly';
+        var AUTH_CONFIG_KEY = 'authConfigData';
+        var AUTH_FALLBACK_UNTIL = 'yxtAuthFallbackUntil';
+        var AUTH_FAIL_COUNT = 'yxtAuthFailCount';
+        var AUTH_FALLBACK_PWD_HASH = '92925488b28ab12584ac8fcaa8a27a0f497b2c62940c8f4fbc8ef19ebc87c43e';
+        var VERIFY_MS = 12 * 60 * 60 * 1000;
+        // 质量管理部 + 五个下级部门（含质量运营组）；许伟明按邮箱单独放行
+        var AUTH_DEPT_OPTIONS = [
+            { id: 'od-b9b6ffb82f64f6fd06f3822de07effe4', name: '质量管理部（直属）' },
+            { id: 'od-7f1cce53e2d3665f802f0af655e8830d', name: '青岛复核组' },
+            { id: 'od-28d91ee3386bef869da88882a4daadb0', name: '深圳复核组' },
+            { id: 'od-8e338e2a4dda72409687b0192a4f160d', name: '成都复核组' },
+            { id: 'od-f092b4a31b047cf95e4db462c112bd47', name: '郑州复核组' },
+            { id: 'od-9862282cc4145e5738083636d6ef97b6', name: '质量运营组' }
+        ];
+        var DEFAULT_AUTH_CONFIG = {
+            version: 1,
+            admins: [
+                { name: '徐行', email: 'xuhang02@zhuanzhuan.com', role: 'super' },
+                { name: '唐洲', email: 'tangzhou@zhuanzhuan.com', role: 'super' },
+                { name: '周金山', email: 'zhoujinshan@zhuanzhuan.com', role: 'global' },
+                { name: '孙伟', email: 'sunwei02@zhuanzhuan.com', role: 'global' },
+                { name: '苏超跃', email: 'suchaoyue01@zhuanzhuan.com', role: 'global' },
+                { name: '孙俊', email: 'sunjun01@zhuanzhuan.com', role: 'global' },
+                { name: '邹文文', email: 'zouwenwen@zhuanzhuan.com', role: 'global' },
+                { name: '许伟明', email: 'xuweiming01@zhuanzhuan.com', role: 'global' },
+                { name: '陈佳鹏', email: 'chenjiapeng@zhuanzhuan.com', role: 'global' },
+                { name: '李玥', email: 'liyue52@zhuanzhuan.com', role: 'global' },
+                { name: '吴尧飞', email: 'wuyaofei@zhuanzhuan.com', role: 'global' },
+                { name: '张振珀', email: 'zhangzhenpo@zhuanzhuan.com', role: 'global' }
+            ],
+            extraEmails: ['xuweiming01@zhuanzhuan.com'],
+            allowDepts: AUTH_DEPT_OPTIONS.map(function (d) { return d.id; }),
+            sessionDays: 7
+        };
+        var authConfig = null;
+        function normalizeAuthConfig(raw) {
+            var c = (raw && typeof raw === 'object') ? raw : {};
+            var d = DEFAULT_AUTH_CONFIG;
+            var admins = Array.isArray(c.admins) ? c.admins.filter(function (a) {
+                return a && (a.email || a.name);
+            }).map(function (a) {
+                return {
+                    name: String(a.name || '').trim(),
+                    email: String(a.email || '').trim().toLowerCase(),
+                    role: a.role === 'super' ? 'super' : 'global'
+                };
+            }) : d.admins.slice();
+            var extras = Array.isArray(c.extraEmails) ? c.extraEmails.map(function (e) {
+                return String(e || '').trim().toLowerCase();
+            }).filter(Boolean) : d.extraEmails.slice();
+            var allow = Array.isArray(c.allowDepts) ? c.allowDepts.filter(function (id) {
+                return typeof id === 'string' && id.indexOf('od-') === 0;
+            }) : d.allowDepts.slice();
+            var days = parseInt(c.sessionDays, 10);
+            if (!days || days < 1 || days > 30) days = d.sessionDays;
+            return { version: 1, admins: admins, extraEmails: extras, allowDepts: allow, sessionDays: days };
+        }
+        function getAuthConfig() {
+            if (!authConfig) authConfig = normalizeAuthConfig(DEFAULT_AUTH_CONFIG);
+            return authConfig;
+        }
+        async function loadAuthConfig() {
+            try {
+                var r = await Promise.race([
+                    fetch(AUTH_SUPABASE_URL + '/rest/v1/app_data?select=value&key=eq.' + encodeURIComponent(AUTH_CONFIG_KEY), {
+                        headers: { apikey: AUTH_SUPABASE_KEY, Authorization: 'Bearer ' + AUTH_SUPABASE_KEY }
+                    }),
+                    new Promise(function(_, reject) { setTimeout(function() { reject(new Error('timeout')); }, 8000); })
+                ]);
+                var rows = await r.json();
+                if (Array.isArray(rows) && rows[0] && rows[0].value) authConfig = normalizeAuthConfig(JSON.parse(rows[0].value));
+            } catch (e) {}
+            return getAuthConfig();
+        }
+        function sessionMs() { return getAuthConfig().sessionDays * 24 * 60 * 60 * 1000; }
+        function isExtraEmail(email) {
+            return getAuthConfig().extraEmails.indexOf(String(email || '').toLowerCase()) >= 0;
+        }
+        function failCount() {
+            try { return parseInt(sessionStorage.getItem(AUTH_FAIL_COUNT) || '0', 10) || 0; } catch (e) { return 0; }
+        }
+        function markAuthFail() {
+            var n = failCount() + 1;
+            try { sessionStorage.setItem(AUTH_FAIL_COUNT, String(n)); } catch (e) {}
+            return n;
+        }
+        function clearAuthFail() {
+            try { sessionStorage.removeItem(AUTH_FAIL_COUNT); } catch (e) {}
+        }
+        async function sha256Hex(text) {
+            if (!(window.crypto && window.crypto.subtle)) return '';
+            var buf = await window.crypto.subtle.digest('SHA-256', new TextEncoder().encode(String(text)));
+            return Array.from(new Uint8Array(buf)).map(function (b) { return b.toString(16).padStart(2, '0'); }).join('');
+        }
+        async function tryFallback(pwd) {
+            var hash = await sha256Hex(pwd);
+            if (hash !== AUTH_FALLBACK_PWD_HASH) return false;
+            try {
+                sessionStorage.setItem(AUTH_FALLBACK_UNTIL, String(Date.now() + 10 * 60 * 1000));
+            } catch (e) {}
+            clearAuthFail();
+            location.reload();
+            return true;
+        }
+
+        function authInvalid(msg) {
+            var e = new Error(msg || '登录已失效');
+            e.authInvalid = true;
+            return e;
+        }
+        function readSession() {
+            try {
+                var s = JSON.parse(localStorage.getItem(AUTH_SESSION_KEY) || 'null');
+                return (s && s.v === 1 && s.user) ? s : null;
+            } catch (e) { return null; }
+        }
+        function writeSession(s) {
+            try { localStorage.setItem(AUTH_SESSION_KEY, JSON.stringify(s)); } catch (e) {}
+        }
+        function clearSession() {
+            try { localStorage.removeItem(AUTH_SESSION_KEY); } catch (e) {}
+        }
+        function cleanUrl() {
+            try {
+                var u = new URL(location.href);
+                u.searchParams.delete('code');
+                u.searchParams.delete('state');
+                u.searchParams.delete('error');
+                return u.toString();
+            } catch (e) { return location.origin + location.pathname; }
+        }
+        function roleOf(email, name) {
+            email = String(email || '').toLowerCase();
+            var list = getAuthConfig().admins;
+            var hit = null;
+            if (email) {
+                for (var i = 0; i < list.length; i++) {
+                    if (list[i].email && list[i].email === email) { hit = list[i]; break; }
+                }
+            }
+            if (!hit && name) {
+                for (var j = 0; j < list.length; j++) {
+                    if (!list[j].email && list[j].name === name) { hit = list[j]; break; }
+                }
+            }
+            if (hit) return hit.role === 'super' ? { key: 'super', label: '超级管理员' } : { key: 'global', label: '全局管理员' };
+            return { key: 'guest', label: '普通成员' };
+        }
+        function allowedOf(contact, info) {
+            var email = String((contact && (contact.email || contact.enterprise_email)) || (info && (info.email || info.enterprise_email)) || '').toLowerCase();
+            if (isExtraEmail(email)) return { ok: true, email: email, deptIds: [] };
+            var deps = (contact && contact.department_ids) || [];
+            var allow = getAuthConfig().allowDepts;
+            var ok = deps.some(function (id) { return allow.indexOf(id) >= 0; });
+            return { ok: ok, email: email, deptIds: deps };
+        }
+        async function authProxy(path, opts) {
+            opts = opts || {};
+            var headers = {
+                'x-target-url': 'https://open.feishu.cn/open-apis' + path,
+                'x-target-method': opts.method || 'GET'
+            };
+            if (opts.token) headers['x-target-auth'] = 'Bearer ' + opts.token;
+            var body;
+            if (opts.body) {
+                headers['x-target-content-type'] = 'application/json';
+                body = JSON.stringify(opts.body);
+            }
+            var resp = await fetch(AUTH_PROXY, { method: 'POST', headers: headers, body: body });
+            var text = await resp.text();
+            var json = null;
+            try { json = JSON.parse(text); } catch (e) {}
+            if (!json) throw new Error('飞书代理返回异常（HTTP ' + resp.status + '）');
+            return json;
+        }
+        async function appToken() {
+            var j = await authProxy('/auth/v3/app_access_token/internal', {
+                method: 'POST', body: { app_id: AUTH_APP_ID, app_secret: '' }
+            });
+            if (!j.app_access_token) throw new Error(j.msg || '获取应用凭证失败');
+            return j.app_access_token;
+        }
+        async function tenantToken() {
+            var j = await authProxy('/auth/v3/tenant_access_token/internal', {
+                method: 'POST', body: { app_id: AUTH_APP_ID, app_secret: '' }
+            });
+            if (!j.tenant_access_token) throw new Error(j.msg || '获取应用身份失败');
+            return j.tenant_access_token;
+        }
+        async function exchangeCode(code) {
+            var app = await appToken();
+            var j = await authProxy('/authen/v1/oidc/access_token', {
+                method: 'POST', token: app, body: { grant_type: 'authorization_code', code: code }
+            });
+            if (j.code !== 0 || !j.data || !j.data.access_token) throw new Error(j.msg || '授权码兑换失败');
+            return j.data;
+        }
+        async function userInfo(accessToken) {
+            var j = await authProxy('/authen/v1/user_info', { token: accessToken });
+            if (j.code !== 0 || !j.data) throw authInvalid(j.msg || '登录凭证已失效');
+            return j.data;
+        }
+        async function contactUser(openId, tk) {
+            if (!openId) return null;
+            var j = await authProxy('/contact/v3/users/' + encodeURIComponent(openId) + '?user_id_type=open_id', { token: tk });
+            if (j.code !== 0 || !j.data || !j.data.user) throw new Error(j.msg || '读取通讯录失败');
+            return j.data.user;
+        }
+        async function refreshSession(session) {
+            if (!session.refresh_token) throw authInvalid('登录已过期');
+            var app = await appToken();
+            var j = await authProxy('/authen/v1/oidc/refresh_access_token', {
+                method: 'POST', token: app,
+                body: { grant_type: 'refresh_token', refresh_token: session.refresh_token }
+            });
+            if (j.code !== 0 || !j.data || !j.data.access_token) throw authInvalid(j.msg || '刷新登录失败');
+            session.access_token = j.data.access_token;
+            session.refresh_token = j.data.refresh_token || session.refresh_token;
+            session.accessExpiresAt = Date.now() + (Number(j.data.expires_in) || 7200) * 1000;
+            writeSession(session);
+            return session;
+        }
+        function drawQr(box, url) {
+            var tries = 0;
+            function draw() {
+                if (!document.body.contains(box)) return;
+                if (window.QRCode) {
+                    try {
+                        box.innerHTML = '';
+                        new window.QRCode(box, { text: url, width: 200, height: 200, correctLevel: window.QRCode.CorrectLevel.M });
+                        return;
+                    } catch (e) {}
+                }
+                if (++tries > 25) {
+                    box.innerHTML = '<a href="' + url.replace(/"/g, '&quot;') + '" target="_blank" rel="noopener" style="padding:12px;font-size:.75rem;color:#2a5298;text-decoration:underline;">二维码加载失败，点这里在飞书打开</a>';
+                    return;
+                }
+                setTimeout(draw, 250);
+            }
+            draw();
+        }
+        function makeAuthUrl() {
+            var state = 'yxtlogin_' + Date.now() + '_' + Math.random().toString(36).slice(2);
+            try {
+                sessionStorage.setItem(AUTH_STATE_KEY, state);
+                sessionStorage.setItem(AUTH_RETURN_KEY, cleanUrl());
+            } catch (e) {}
+            return {
+                url: 'https://open.feishu.cn/open-apis/authen/v1/authorize?app_id=' + encodeURIComponent(AUTH_APP_ID) +
+                    '&redirect_uri=' + encodeURIComponent(AUTH_REDIRECT_URI) +
+                    '&response_type=code&scope=' + encodeURIComponent(AUTH_SCOPE) +
+                    '&state=' + encodeURIComponent(state),
+                state: state
+            };
+        }
+        function relayKey(state) { return 'yxtAuthRelay_' + state; }
+        function writeRelay(state, user) {
+            var key = relayKey(state);
+            var val = JSON.stringify({ v: 1, user: user, ts: Date.now() });
+            return fetch(AUTH_SUPABASE_URL + '/rest/v1/app_data', {
+                method: 'POST',
+                headers: {
+                    apikey: AUTH_SUPABASE_KEY,
+                    Authorization: 'Bearer ' + AUTH_SUPABASE_KEY,
+                    'Content-Type': 'application/json',
+                    Prefer: 'resolution=merge-duplicates'
+                },
+                body: JSON.stringify({ key: key, value: val, updated_at: new Date().toISOString() })
+            }).then(function (r) { if (!r.ok) throw new Error('登录结果回传失败（HTTP ' + r.status + '）'); });
+        }
+        function deleteRelay(state) {
+            try {
+                fetch(AUTH_SUPABASE_URL + '/rest/v1/app_data?key=eq.' + encodeURIComponent(relayKey(state)), {
+                    method: 'DELETE',
+                    headers: { apikey: AUTH_SUPABASE_KEY, Authorization: 'Bearer ' + AUTH_SUPABASE_KEY }
+                }).catch(function () {});
+            } catch (e) {}
+        }
+        function startRelayPoll(state) {
+            if (window._yxtAuthPoll) { clearInterval(window._yxtAuthPoll); window._yxtAuthPoll = null; }
+            var tries = 0;
+            window._yxtAuthPoll = setInterval(async function () {
+                tries++;
+                var detail = document.getElementById('yxtAuthDetail');
+                if (detail) detail.textContent = '等待手机确认…（' + (tries * 3) + 's）';
+                try {
+                    var key = relayKey(state);
+                    var r = await fetch(AUTH_SUPABASE_URL + '/rest/v1/app_data?select=value&key=eq.' + encodeURIComponent(key), {
+                        headers: { apikey: AUTH_SUPABASE_KEY, Authorization: 'Bearer ' + AUTH_SUPABASE_KEY }
+                    });
+                    var rows = await r.json();
+                    if (Array.isArray(rows) && rows[0] && rows[0].value) {
+                        var relay = null;
+                        try { relay = JSON.parse(rows[0].value); } catch (e) {}
+                        if (relay && relay.v === 1 && relay.user && Date.now() - relay.ts < 5 * 60 * 1000) {
+                            clearInterval(window._yxtAuthPoll); window._yxtAuthPoll = null;
+                            try { await loadAuthConfig(); } catch (e) {}
+                            var session = {
+                                v: 1, user: relay.user,
+                                access_token: '', refresh_token: '',
+                                accessExpiresAt: 0,
+                                sessionUntil: Date.now() + sessionMs(),
+                                lastVerifiedAt: Date.now(), loginAt: Date.now(),
+                                relay: true
+                            };
+                            writeSession(session);
+                            try {
+                                sessionStorage.removeItem('yxtAdminOptOut');
+                                if (relay.user.role === 'super' || relay.user.role === 'global') sessionStorage.setItem('adminMode', '1');
+                            } catch (e) {}
+                            deleteRelay(state);
+                            location.reload();
+                            return;
+                        }
+                    }
+                } catch (e) {}
+                if (tries >= 40) {
+                    clearInterval(window._yxtAuthPoll); window._yxtAuthPoll = null;
+                    var st = document.getElementById('yxtAuthStatus');
+                    if (st) st.textContent = '二维码已超时';
+                    if (detail) detail.textContent = '请点「刷新二维码」重试';
+                }
+            }, 3000);
+        }
+        function showGate(opts) {
+            opts = opts || {};
+            if (window._yxtAuthPoll) { clearInterval(window._yxtAuthPoll); window._yxtAuthPoll = null; }
+            var old = document.getElementById('yxtAuthGate');
+            if (old) old.remove();
+            var gate = document.createElement('div');
+            gate.id = 'yxtAuthGate';
+            gate.style.cssText = 'position:fixed;inset:0;z-index:2147483647;display:flex;align-items:center;justify-content:center;padding:20px;background:linear-gradient(135deg,#eef4ff 0%,#f8fbff 55%,#eaf7f1 100%);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei",sans-serif;';
+            gate.innerHTML = '<div style="width:min(92vw,430px);background:#fff;border:1px solid #e2e8f0;border-radius:22px;box-shadow:0 24px 70px rgba(15,23,42,.18);padding:28px 26px 22px;text-align:center;">' +
+                '<div style="font-size:1.55rem;font-weight:800;color:#1f3a6b;letter-spacing:.5px;">📚 优学堂</div>' +
+                '<div style="font-size:.8rem;color:#64748b;margin:6px 0 20px;">请用飞书扫码登录后使用</div>' +
+                '<div id="yxtAuthQrBox" style="width:220px;height:220px;margin:0 auto 14px;display:flex;align-items:center;justify-content:center;border:1px solid #e2e8f0;border-radius:14px;background:#fff;overflow:hidden;"></div>' +
+                '<div id="yxtAuthStatus" style="font-size:.92rem;font-weight:700;color:#1f3a6b;line-height:1.5;"></div>' +
+                '<div id="yxtAuthDetail" style="font-size:.72rem;color:#94a3b8;line-height:1.5;margin-top:6px;min-height:18px;"></div>' +
+                '<div style="display:flex;gap:8px;margin-top:18px;' + (opts.actions === false ? 'display:none;' : '') + '">' +
+                    '<button id="yxtAuthRetry" style="flex:1;padding:9px 12px;border:1px solid #cbd5e1;background:#f8fafc;color:#475569;border-radius:10px;cursor:pointer;font-size:.78rem;">🔄 刷新二维码</button>' +
+                    '<a id="yxtAuthOpen" href="#" target="_blank" rel="noopener" style="flex:1;padding:9px 12px;border:1px solid #2a5298;background:#2a5298;color:#fff;border-radius:10px;text-decoration:none;font-size:.78rem;display:flex;align-items:center;justify-content:center;">📱 在飞书打开</a>' +
+                '</div>' +
+                '<div id="yxtAuthFallbackBox" style="display:none;margin-top:12px;padding:10px;background:#fff7ed;border:1px solid #fed7aa;border-radius:10px;text-align:left;">' +
+                    '<div style="font-size:.68rem;color:#9a3412;margin-bottom:6px;">飞书登录连续失败，可用管理密码临时进入（10 分钟，到期自动退出）</div>' +
+                    '<div style="display:flex;gap:6px;">' +
+                        '<input id="yxtAuthFallbackPwd" type="password" placeholder="管理密码" style="flex:1;padding:7px 8px;border:1px solid #fdba74;border-radius:8px;font-size:.75rem;">' +
+                        '<button id="yxtAuthFallbackBtn" style="padding:7px 12px;border:none;border-radius:8px;background:#c0392b;color:#fff;cursor:pointer;font-size:.72rem;font-weight:600;">临时进入</button>' +
+                    '</div>' +
+                    '<div id="yxtAuthFallbackMsg" style="font-size:.65rem;color:#c0392b;margin-top:4px;"></div>' +
+                '</div>' +
+                '<div style="font-size:.65rem;color:#b0bac6;margin-top:14px;line-height:1.5;">仅限质量管理部成员；登录一次 ' + getAuthConfig().sessionDays + ' 天内有效。<br>如无法扫码，请联系管理员。</div>' +
+                '<div id="yxtAuthFallbackToggle" style="font-size:.65rem;color:#94a3b8;margin-top:8px;cursor:pointer;text-decoration:underline;' + (opts.actions === false ? 'display:none;' : '') + '">飞书无法登录？用管理密码临时进入</div>' +
+                '</div>';
+            document.body.appendChild(gate);
+            document.body.style.overflow = 'hidden';
+            var status = document.getElementById('yxtAuthStatus');
+            var detail = document.getElementById('yxtAuthDetail');
+            status.textContent = opts.status || '请用飞书扫码登录';
+            detail.textContent = opts.detail || '';
+            var auth = opts.auth || null;
+            var open = document.getElementById('yxtAuthOpen');
+            if (auth && auth.url) open.href = auth.url; else open.style.display = 'none';
+            var box = document.getElementById('yxtAuthQrBox');
+            if (opts.showQr && auth && auth.url) {
+                drawQr(box, auth.url);
+                startRelayPoll(auth.state);
+            } else {
+                box.style.display = 'none';
+            }
+            document.getElementById('yxtAuthRetry').onclick = function () {
+                try { history.replaceState({}, '', cleanUrl()); } catch (e) {}
+                location.reload();
+            };
+            var fbBox = document.getElementById('yxtAuthFallbackBox');
+            if (fbBox && opts.actions !== false && failCount() >= 3) fbBox.style.display = 'block';
+            var fbToggle = document.getElementById('yxtAuthFallbackToggle');
+            if (fbToggle) fbToggle.onclick = function () {
+                if (fbBox) fbBox.style.display = 'block';
+                fbToggle.style.display = 'none';
+            };
+            var fbBtn = document.getElementById('yxtAuthFallbackBtn');
+            if (fbBtn) fbBtn.onclick = async function () {
+                var pwd = document.getElementById('yxtAuthFallbackPwd').value;
+                var msg = document.getElementById('yxtAuthFallbackMsg');
+                if (!pwd) { if (msg) msg.textContent = '请输入管理密码'; return; }
+                fbBtn.disabled = true; fbBtn.textContent = '验证中...';
+                var ok = await tryFallback(pwd);
+                if (!ok) {
+                    if (msg) msg.textContent = '密码错误';
+                    fbBtn.disabled = false; fbBtn.textContent = '临时进入';
+                }
+            };
+        }
+        async function handleCallback(code, state) {
+            var sameDevice = false;
+            try { sameDevice = sessionStorage.getItem(AUTH_STATE_KEY) === state; } catch (e) {}
+            showGate({ status: '正在验证飞书登录…', detail: '请稍候，不要关闭页面', showQr: false });
+            try {
+                await loadAuthConfig();
+                var token = await exchangeCode(code);
+                var info = await userInfo(token.access_token);
+                var email = String(info.email || info.enterprise_email || '').toLowerCase();
+                var contact = null;
+                if (!isExtraEmail(email)) {
+                    var tk = await tenantToken();
+                    contact = await contactUser(info.open_id, tk);
+                }
+                var allowed = allowedOf(contact, info);
+                if (!allowed.ok) throw new Error('你的飞书账号不在质量管理部白名单内');
+                var name = (contact && contact.name) || info.name || '飞书用户';
+                var role = roleOf(allowed.email || email, name);
+                var user = {
+                    open_id: info.open_id || '',
+                    name: name,
+                    email: allowed.email || email,
+                    avatar: (contact && contact.avatar && contact.avatar.avatar_240) || info.avatar_url || '',
+                    deptIds: allowed.deptIds || [],
+                    role: role.key,
+                    roleLabel: role.label
+                };
+                var session = {
+                    v: 1, user: user,
+                    access_token: token.access_token,
+                    refresh_token: token.refresh_token || '',
+                    accessExpiresAt: Date.now() + (Number(token.expires_in) || 7200) * 1000,
+                    sessionUntil: Date.now() + sessionMs(),
+                    lastVerifiedAt: Date.now(),
+                    loginAt: Date.now()
+                };
+                writeSession(session);
+                clearAuthFail();
+                try {
+                    sessionStorage.removeItem('yxtAdminOptOut');
+                    if (user.role === 'super' || user.role === 'global') sessionStorage.setItem('adminMode', '1');
+                } catch (e) {}
+                try { sessionStorage.removeItem(AUTH_STATE_KEY); } catch (e) {}
+                // 手机扫码时，手机把“已登录的是谁”写回云端，电脑轮询取走；不传 token
+                var relayOk = true;
+                try { await writeRelay(state, user); } catch (e) { relayOk = false; }
+                if (sameDevice) {
+                    var ret = '';
+                    try { ret = sessionStorage.getItem(AUTH_RETURN_KEY) || ''; sessionStorage.removeItem(AUTH_RETURN_KEY); } catch (e) {}
+                    var target = cleanUrl();
+                    if (ret) {
+                        try {
+                            var ru = new URL(ret);
+                            var basePath = location.pathname.replace(/index\.html$/i, '');
+                            if (ru.origin === location.origin && ru.pathname.indexOf(basePath) === 0) target = ret;
+                        } catch (e) {}
+                    }
+                    location.replace(target);
+                } else {
+                    if (!relayOk) throw new Error('登录成功，但结果回传电脑失败，请重新扫码');
+                    try { history.replaceState({}, '', cleanUrl()); } catch (e) {}
+                    showGate({ status: '✅ 登录成功', detail: '请回到电脑继续，页面会自动进入', showQr: false, actions: false });
+                }
+            } catch (e) {
+                markAuthFail();
+                try { history.replaceState({}, '', cleanUrl()); } catch (e2) {}
+                showGate({ status: '登录失败', detail: e.message || '请重试', showQr: true, auth: makeAuthUrl() });
+            }
+        }
+        async function verifySession(session) {
+            if (session.relay) return; // 扫码中转的电脑端没有 token，登录时已校验过身份
+            try {
+                await loadAuthConfig();
+                if (session.accessExpiresAt < Date.now() + 60000) await refreshSession(session);
+                var info = await userInfo(session.access_token);
+                var email = String(info.email || info.enterprise_email || '').toLowerCase();
+                if (!isExtraEmail(email)) {
+                    var tk = await tenantToken();
+                    var contact;
+                    try { contact = await contactUser(info.open_id, tk); }
+                    catch (e) { return; } // 通讯录暂时读不到：先不踢人，等下次再验
+                    var allowed = allowedOf(contact, info);
+                    if (!allowed.ok) throw authInvalid('账号已不在质量管理部白名单');
+                    session.user.deptIds = allowed.deptIds || [];
+                    if (contact && contact.name) session.user.name = contact.name;
+                    if (allowed.email) session.user.email = allowed.email;
+                }
+                var role = roleOf(session.user.email, session.user.name);
+                session.user.role = role.key;
+                session.user.roleLabel = role.label;
+                session.lastVerifiedAt = Date.now();
+                writeSession(session);
+                window.YXT_AUTH = session.user;
+            } catch (e) {
+                if (e && e.authInvalid) {
+                    clearSession();
+                    location.reload();
+                }
+            }
+        }
+        function boot() {
+            var params = new URLSearchParams(location.search);
+            var code = params.get('code');
+            var state = params.get('state') || '';
+            // 门禁自己的回调：state 前缀区分于页面原有的表格授权回调
+            if (code && state.indexOf('yxtlogin_') === 0) {
+                handleCallback(code, state);
+                return true;
+            }
+            var session = readSession();
+            if (session && session.sessionUntil > Date.now() && session.user) {
+                window.YXT_AUTH = session.user;
+                try {
+                    if (sessionStorage.getItem('yxtAdminOptOut') !== '1' && (session.user.role === 'super' || session.user.role === 'global')) {
+                        sessionStorage.setItem('adminMode', '1');
+                    }
+                } catch (e) {}
+                if (Date.now() - (session.lastVerifiedAt || 0) > VERIFY_MS) verifySession(session);
+                return false;
+            }
+            if (session) clearSession();
+            var fbUntil = 0;
+            try { fbUntil = parseInt(sessionStorage.getItem(AUTH_FALLBACK_UNTIL) || '0', 10) || 0; } catch (e) {}
+            if (fbUntil > Date.now()) {
+                window.YXT_AUTH = { name: '临时密码用户', role: 'guest', roleLabel: '临时进入（飞书异常）' };
+                setTimeout(function () {
+                    try { sessionStorage.removeItem(AUTH_FALLBACK_UNTIL); } catch (e) {}
+                    location.reload();
+                }, Math.min(fbUntil - Date.now(), 10 * 60 * 1000));
+                return false;
+            }
+            var auth = makeAuthUrl();
+            showGate({ status: '请用飞书扫码登录', detail: '扫码后手机会提示确认，电脑会自动进入', showQr: true, auth: auth });
+            return true;
+        }
+        if (boot()) throw new Error('YXT_AUTH_REQUIRED');
+    })();
+
     // ==================== KV 兜底暂存（2026-09-04）====================
     // 机制：Supabase 挂断期间，写 app_data 自动镜像到 CF KV（sync_ 前缀，带时间戳防旧覆盖），
     // 读 app_data 失败自动转 KV；Supabase 恢复后自动回灌（KV 比 Supabase 新才覆盖）并清空中转。
@@ -1212,10 +1762,13 @@
     function loginAdmin(user, pass) {
         if (user !== ADMIN_ACCOUNT.user || pass !== ADMIN_ACCOUNT.pass) return false;
         sessionStorage.setItem(ADMIN_MODE_KEY, '1');
+        sessionStorage.removeItem('yxtAdminOptOut');
         return true;
     }
     function logoutAdmin() {
         sessionStorage.removeItem(ADMIN_MODE_KEY);
+        // 名单内管理员默认每次打开自动进管理员；手动退出后本标签页保持游客
+        sessionStorage.setItem('yxtAdminOptOut', '1');
     }
     function logAdminAction(action, target, details) {
         var log = getAuditLog();
@@ -1355,6 +1908,12 @@
         if (btn) {
             btn.textContent = isAdminMode() ? '🔓 管理员模式' : '🔒 游客模式';
             btn.style.background = isAdminMode() ? 'rgba(39,174,96,0.25)' : 'rgba(255,255,255,0.12)';
+        }
+        var authBadge = document.getElementById('authUserBadge');
+        if (authBadge) {
+            var au = window.YXT_AUTH;
+            authBadge.textContent = au ? ('👤 ' + au.name + ' · ' + au.roleLabel) : '';
+            authBadge.title = au ? ('飞书登录：' + (au.email || au.name) + '（' + au.roleLabel + '）') : '';
         }
         if (isAdminMode()) { document.body.classList.remove('guest-mode'); }
         else { document.body.classList.add('guest-mode'); }
@@ -2576,7 +3135,10 @@
         {
             id: 'permission', title: '权限规则', icon: '🔐',
             jumps: [{ label: '去完整权限页', target: 'featureGuide' }],
-            body: `<p>系统只分两级：<span class="ym-pill g">游客</span> 和 <span class="ym-pill a">管理员</span>。游客以浏览为主，管理员多出编辑、推送、同步、备份等操作。</p>
+            body: `<p><b>进入方式：</b>打开优学堂先飞书扫码，仅质量管理部（含所有下级部门）和许伟明可进；登录一次 7 天内有效。飞书登录失败时，扫码页可点「飞书无法登录？用管理密码临时进入」，10 分钟后自动退出。</p>
+<p>系统只分两级：<span class="ym-pill g">游客</span> 和 <span class="ym-pill a">管理员</span>。游客以浏览为主，管理员多出编辑、推送、同步、备份等操作。</p>
+<p><b>管理员名单内的人</b>扫码后直接进管理员模式；<b>名单外成员</b>扫码后是游客，可以输管理密码进管理员，关掉页面就退出。一次扫码默认保持 <b>7 天</b>，超级管理员可在「权限管理」改成 1–30 天。</p>
+<p>超级管理员可在管理后台「权限管理」修改管理员名单、允许进入的部门、额外白名单邮箱和登录有效期；保存后下一次扫码生效。</p>
 <table class="ym-table"><thead><tr><th>页面</th><th>游客</th><th>管理员</th><th>说明</th></tr></thead><tbody>
 <tr><td>仪表盘</td><td>只读</td><td>只读</td><td>看培训进度、完成率、人员分布</td></tr>
 <tr><td>新人进度</td><td>只读</td><td>编辑</td><td>管理员可录入、改阶段、归档、退回</td></tr>
@@ -2589,7 +3151,7 @@
 <tr><td>反馈中心</td><td>读写</td><td>读写</td><td>游客可提交并查看自己的反馈</td></tr>
 <tr><td>管理后台</td><td>不可进</td><td>读写</td><td>游客点击会被拦截</td></tr>
 </tbody></table>
-<div class="ym-note">管理员通过侧边栏底部的「游客模式」按钮登录；登录只影响当前浏览器。</div>`
+<div class="ym-note">管理员通过侧边栏底部的「游客模式」按钮登录；登录只影响当前浏览器。扫码门禁是前端尽力版，能挡普通访问，但挡不住改前端代码的人；真正的数据接口收口在第二阶段。</div>`
         },
         {
             id: 'newhire', title: '新人培养', icon: '🎓',
@@ -2714,8 +3276,8 @@
             id: 'log', title: '维护约定与更新记录', icon: '📌',
             jumps: [{ label: '功能与权限', target: 'featureGuide' }, { label: '文档与云端', target: 'admin:docsDetail' }],
             body: `<p><b>维护约定：</b>每次修改功能、规则、阈值或权限，必须同步更新本手册对应章节，并更新“最后核对”日期；功能简介和权限页也要一起改。</p>
-<ul><li><b>2026-11-28：</b>手册第一版；周红绿灯改为考试≥5、培训≥7、学习≥11；新增功能与权限合并页；管理后台新增文档与云端入口；邮箱改为飞书通讯录每周一/四/日 10:00 同步；人员变动标记离职会联动删除邮箱和人员站点，入职记录保留；管理后台点卡片展开后自动滚到详情。</li><li>写规则时统一写“触发条件 → 数据来源 → 执行时间 → 结果 → 失败处理”。</li><li>手册不写密码、密钥和完整 token。</li></ul>
-<div class="ym-note">最后核对：2026-11-28 · 适用版本：20261128.9。遇到代码与手册不一致，以当前代码为准，并回来改手册。</div>`
+<ul><li><b>2026-11-28：</b>手册第一版；周红绿灯改为考试≥5、培训≥7、学习≥11；新增功能与权限合并页；管理后台新增文档与云端入口；邮箱改为飞书通讯录每周一/四/日 10:00 同步；人员变动标记离职会联动删除邮箱和人员站点，入职记录保留；管理后台点卡片展开后自动滚到详情；新增飞书扫码门禁（质量管理部白名单，7 天登录态，前端尽力版）；新增超级管理员「权限管理」；飞书登录失败可用管理密码临时进入 10 分钟；管理员名单内扫码直接进管理员，名单外输密码进管理员只保留到关页。</li><li>写规则时统一写“触发条件 → 数据来源 → 执行时间 → 结果 → 失败处理”。</li><li>手册不写密码、密钥和完整 token。</li></ul>
+<div class="ym-note">最后核对：2026-11-28 · 适用版本：20261128.13。遇到代码与手册不一致，以当前代码为准，并回来改手册。</div>`
         }
     ];
 
@@ -2749,7 +3311,7 @@
         }).join('');
         document.getElementById('mainContent').innerHTML =
             '<div class="ym-wrap">' +
-                '<div class="ym-topbar"><button class="ym-back" onclick="switchNav(\'admin\')">← 返回管理后台</button><span class="ym-version">适用版本 20261128.9 · 最后核对 2026-11-28</span></div>' +
+                '<div class="ym-topbar"><button class="ym-back" onclick="switchNav(\'admin\')">← 返回管理后台</button><span class="ym-version">适用版本 20261128.13 · 最后核对 2026-11-28</span></div>' +
                 '<div class="yxg-hero"><div class="yxg-kicker">优学堂 · 全功能手册</div><h1>使用手册</h1><p>把每一个功能、规则、云端任务和计算口径写在一处。左边目录可直接跳转，章节里的按钮可跳到对应模块。</p><div class="yxg-stats"><span>' + YXT_MANUAL_SECTIONS.length + ' 个章节</span><span>11 个功能页</span><span>规则 + 推送 + 云端</span><span>随功能同步更新</span></div></div>' +
                 '<div class="ym-layout"><aside class="ym-toc"><h3>📖 目录</h3>' + toc + '<div class="ym-note" style="margin-top:10px;font-size:.68rem;">功能 / 规则 / 权限有改动，本手册同步更新。</div></aside><div class="ym-main">' + body + '</div></div>' +
             '</div>';
@@ -2835,6 +3397,15 @@
                     </div>
                     <div class="stat-card-value" id="emailCount">--</div>
                     <div class="stat-card-label">邮箱地址管理</div>
+                </div>
+                <!-- 权限管理卡片（仅超级管理员可见） -->
+                <div class="stat-card" id="authConfigCard" style="cursor:pointer;display:none;" onclick="toggleAdminDetail('authConfigDetail')">
+                    <div class="stat-card-header">
+                        <div class="stat-card-icon" style="background:#f5f3ff;">🔐</div>
+                        <span class="stat-card-trend up" id="authConfigBadge">仅超管</span>
+                    </div>
+                    <div class="stat-card-value" id="authConfigCount">--</div>
+                    <div class="stat-card-label">权限管理</div>
                 </div>
                 <!-- 审计日志卡片 -->
                 <div class="stat-card" id="auditCard" style="cursor:pointer;" onclick="toggleAdminDetail('auditDetail')">
@@ -2931,6 +3502,12 @@
                 <div style="max-height:350px;overflow-y:auto;">
                 <table id="adminEmailTable" style="width:100%;border-collapse:collapse;border:1px solid #e2e8f0;"><thead><tr style="background:#f8fafc;"><th style="text-align:center;padding:8px;font-size:0.8rem;color:#5e6f8d;width:80px;border:1px solid #e2e8f0;">姓名</th><th style="text-align:center;padding:8px;font-size:0.8rem;color:#5e6f8d;border:1px solid #e2e8f0;">邮箱</th><th style="text-align:center;padding:8px;font-size:0.8rem;color:#5e6f8d;width:110px;border:1px solid #e2e8f0;">站点</th><th style="text-align:center;width:50px;border:1px solid #e2e8f0;">修改</th><th style="text-align:center;width:50px;border:1px solid #e2e8f0;">删除</th></tr></thead><tbody id="adminEmailBody"><tr><td colspan="5" style="text-align:center;color:#94a3b8;padding:20px;">加载中...</td></tr></tbody></table>
                 </div>
+            </div>
+            <!-- 权限管理详情 -->
+            <div id="authConfigDetail" class="report-box" style="display:none;margin-top:16px;">
+                <div class="report-title" style="display:flex;justify-content:space-between;align-items:center;">🔐 权限管理 <span style="font-size:0.7rem;color:#94a3b8;cursor:pointer;" onclick="toggleAdminDetail('authConfigDetail')">收起 ▲</span></div>
+                <p style="color:#64748b;font-size:0.85rem;margin:8px 0 12px;">仅超级管理员可修改。保存后下一次扫码生效；管理员模式仍然使用原来的管理密码。</p>
+                <div id="authConfigBody"><div style="text-align:center;color:#94a3b8;padding:20px;">加载中...</div></div>
             </div>
             <!-- 审计日志详情 -->
             <div id="auditDetail" class="report-box" style="display:none;margin-top:16px;">
@@ -3042,12 +3619,13 @@
             var el = document.getElementById(id);
             if (!el) return;
             // 先收起其他详情
-            ['hrDetail','emailDetail','auditDetail','panzeDetail','siteDetail','siteConfigDetail','deadlineConfigDetail','docsDetail'].forEach(function(d){
+            ['hrDetail','emailDetail','authConfigDetail','auditDetail','panzeDetail','siteDetail','siteConfigDetail','deadlineConfigDetail','docsDetail'].forEach(function(d){
                 if (d !== id) { var other = document.getElementById(d); if (other) other.style.display = 'none'; }
             });
             var opening = el.style.display === 'none';
             el.style.display = opening ? 'block' : 'none';
             if (id === 'emailDetail' && el.style.display === 'block') refreshEmailTable();
+            if (id === 'authConfigDetail' && el.style.display === 'block') renderAuthConfigDetail();
             if (id === 'hrDetail' && el.style.display === 'block') refreshHRCombinedList();
             if (id === 'auditDetail' && el.style.display === 'block') refreshAuditLog();
             if (id === 'panzeDetail' && el.style.display === 'block') refreshPanzeStatus();
@@ -3370,7 +3948,155 @@
                 dcc.textContent = dn || '0';
                 if (dcb) dcb.textContent = '项';
             }
+            var authCard = document.getElementById('authConfigCard');
+            if (authCard) authCard.style.display = isSuperAuthUser() ? '' : 'none';
             refreshPanzeStatus();
+        }
+        // ===== 权限管理（超级管理员）=====
+        const YXT_AUTH_CONFIG_KEY = 'authConfigData';
+        const YXT_AUTH_DEPTS = [
+            { id: 'od-b9b6ffb82f64f6fd06f3822de07effe4', name: '质量管理部（直属）' },
+            { id: 'od-7f1cce53e2d3665f802f0af655e8830d', name: '青岛复核组' },
+            { id: 'od-28d91ee3386bef869da88882a4daadb0', name: '深圳复核组' },
+            { id: 'od-8e338e2a4dda72409687b0192a4f160d', name: '成都复核组' },
+            { id: 'od-f092b4a31b047cf95e4db462c112bd47', name: '郑州复核组' },
+            { id: 'od-9862282cc4145e5738083636d6ef97b6', name: '质量运营组' }
+        ];
+        const YXT_AUTH_DEFAULT = {
+            version: 1,
+            admins: [
+                { name: '徐行', email: 'xuhang02@zhuanzhuan.com', role: 'super' },
+                { name: '唐洲', email: 'tangzhou@zhuanzhuan.com', role: 'super' },
+                { name: '周金山', email: 'zhoujinshan@zhuanzhuan.com', role: 'global' },
+                { name: '孙伟', email: 'sunwei02@zhuanzhuan.com', role: 'global' },
+                { name: '苏超跃', email: 'suchaoyue01@zhuanzhuan.com', role: 'global' },
+                { name: '孙俊', email: 'sunjun01@zhuanzhuan.com', role: 'global' },
+                { name: '邹文文', email: 'zouwenwen@zhuanzhuan.com', role: 'global' },
+                { name: '许伟明', email: 'xuweiming01@zhuanzhuan.com', role: 'global' },
+                { name: '陈佳鹏', email: 'chenjiapeng@zhuanzhuan.com', role: 'global' },
+                { name: '李玥', email: 'liyue52@zhuanzhuan.com', role: 'global' },
+                { name: '吴尧飞', email: 'wuyaofei@zhuanzhuan.com', role: 'global' },
+                { name: '张振珀', email: 'zhangzhenpo@zhuanzhuan.com', role: 'global' }
+            ],
+            extraEmails: ['xuweiming01@zhuanzhuan.com'],
+            allowDepts: YXT_AUTH_DEPTS.map(function(d) { return d.id; }),
+            sessionDays: 7
+        };
+        var _yxtAuthConfigCache = null;
+        function isSuperAuthUser() { return !!(window.YXT_AUTH && window.YXT_AUTH.role === 'super'); }
+        function normalizeYxtAuthConfig(raw) {
+            var c = (raw && typeof raw === 'object') ? raw : {};
+            var admins = Array.isArray(c.admins) ? c.admins.filter(function(a) { return a && (a.email || a.name); }).map(function(a) {
+                return { name: String(a.name || '').trim(), email: String(a.email || '').trim().toLowerCase(), role: a.role === 'super' ? 'super' : 'global' };
+            }) : YXT_AUTH_DEFAULT.admins.slice();
+            var extras = Array.isArray(c.extraEmails) ? c.extraEmails.map(function(e) { return String(e || '').trim().toLowerCase(); }).filter(Boolean) : YXT_AUTH_DEFAULT.extraEmails.slice();
+            var allow = Array.isArray(c.allowDepts) ? c.allowDepts.filter(function(id) { return typeof id === 'string' && id.indexOf('od-') === 0; }) : YXT_AUTH_DEFAULT.allowDepts.slice();
+            var days = parseInt(c.sessionDays, 10);
+            if (!days || days < 1 || days > 30) days = YXT_AUTH_DEFAULT.sessionDays;
+            return { version: 1, admins: admins, extraEmails: extras, allowDepts: allow, sessionDays: days };
+        }
+        async function fetchYxtAuthConfig() {
+            if (_yxtAuthConfigCache) return _yxtAuthConfigCache;
+            try {
+                var r = await Promise.race([
+                    fetch(SUPABASE_URL + '/rest/v1/app_data?select=value&key=eq.' + encodeURIComponent(YXT_AUTH_CONFIG_KEY), {
+                        headers: { apikey: SUPABASE_KEY, Authorization: 'Bearer ' + SUPABASE_KEY }
+                    }),
+                    new Promise(function(_, reject) { setTimeout(function() { reject(new Error('timeout')); }, 8000); })
+                ]);
+                var rows = await r.json();
+                if (Array.isArray(rows) && rows[0] && rows[0].value) {
+                    _yxtAuthConfigCache = normalizeYxtAuthConfig(JSON.parse(rows[0].value));
+                    return _yxtAuthConfigCache;
+                }
+            } catch (e) {}
+            _yxtAuthConfigCache = normalizeYxtAuthConfig(YXT_AUTH_DEFAULT);
+            return _yxtAuthConfigCache;
+        }
+        async function saveYxtAuthConfig(cfg) {
+            var val = JSON.stringify(cfg);
+            var r = await fetch(SUPABASE_URL + '/rest/v1/app_data', {
+                method: 'POST',
+                headers: { apikey: SUPABASE_KEY, Authorization: 'Bearer ' + SUPABASE_KEY, 'Content-Type': 'application/json', Prefer: 'resolution=merge-duplicates' },
+                body: JSON.stringify({ key: YXT_AUTH_CONFIG_KEY, value: val, updated_at: new Date().toISOString() })
+            });
+            if (!r.ok) throw new Error('保存失败 HTTP ' + r.status);
+            _yxtAuthConfigCache = normalizeYxtAuthConfig(cfg);
+        }
+        function addAuthAdminRow(admin) {
+            var tb = document.getElementById('acAdminRows');
+            if (!tb) return;
+            admin = admin || { name: '', email: '', role: 'global' };
+            var tr = document.createElement('tr');
+            tr.innerHTML = '<td style="padding:4px;"><input class="ac-name" value="' + escapeHtml(admin.name || '') + '" placeholder="姓名" style="width:100%;padding:5px;border:1px solid #cbd5e1;border-radius:6px;font-size:0.75rem;text-align:center;"></td>' +
+                '<td style="padding:4px;"><input class="ac-email" value="' + escapeHtml(admin.email || '') + '" placeholder="邮箱" style="width:100%;padding:5px;border:1px solid #cbd5e1;border-radius:6px;font-size:0.75rem;text-align:center;"></td>' +
+                '<td style="padding:4px;"><select class="ac-role" style="width:100%;padding:5px;border:1px solid #cbd5e1;border-radius:6px;font-size:0.75rem;"><option value="super"' + (admin.role === 'super' ? ' selected' : '') + '>超级管理员</option><option value="global"' + (admin.role !== 'super' ? ' selected' : '') + '>全局管理员</option></select></td>' +
+                '<td style="padding:4px;text-align:center;"><button class="ac-del" style="background:#ffedea;color:#c0392b;border:none;padding:3px 9px;border-radius:6px;cursor:pointer;font-size:0.7rem;">🗑️</button></td>';
+            tb.appendChild(tr);
+            tr.querySelector('.ac-del').onclick = function() { tr.remove(); };
+        }
+        async function renderAuthConfigDetail() {
+            var body = document.getElementById('authConfigBody');
+            if (!body) return;
+            if (!isSuperAuthUser()) {
+                body.innerHTML = '<div style="color:#c0392b;padding:12px;">仅超级管理员（徐行 / 唐洲）可编辑权限配置。</div>';
+                return;
+            }
+            body.innerHTML = '<div style="text-align:center;color:#94a3b8;padding:20px;">加载中...</div>';
+            var cfg = await fetchYxtAuthConfig();
+            var count = document.getElementById('authConfigCount');
+            if (count) count.textContent = cfg.admins.length;
+            body.innerHTML =
+                '<div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:14px;">' +
+                    '<div style="flex:0 0 180px;"><label style="font-size:.78rem;font-weight:600;color:#1f3a6b;display:block;margin-bottom:4px;">登录有效期（天）</label><input id="acSessionDays" type="number" min="1" max="30" value="' + cfg.sessionDays + '" style="width:100%;padding:7px 10px;border:1px solid #cbd5e1;border-radius:8px;font-size:.8rem;"></div>' +
+                    '<div style="flex:1;min-width:220px;"><label style="font-size:.78rem;font-weight:600;color:#1f3a6b;display:block;margin-bottom:4px;">额外白名单邮箱（每行一个）</label><textarea id="acExtraEmails" style="width:100%;height:70px;padding:7px 10px;border:1px solid #cbd5e1;border-radius:8px;font-size:.78rem;">' + escapeHtml(cfg.extraEmails.join('\n')) + '</textarea></div>' +
+                '</div>' +
+                '<div style="display:flex;justify-content:space-between;align-items:center;margin:14px 0 6px;"><b style="font-size:.85rem;color:#1f3a6b;">管理员</b><button id="acAddAdmin" style="background:#eef2ff;border:1px solid #2a5298;color:#2a5298;padding:5px 12px;border-radius:8px;cursor:pointer;font-size:.72rem;">➕ 添加管理员</button></div>' +
+                '<div style="overflow-x:auto;"><table style="width:100%;border-collapse:collapse;font-size:.78rem;"><thead><tr style="background:#f8fafc;"><th style="padding:6px;border:1px solid #e2e8f0;">姓名</th><th style="padding:6px;border:1px solid #e2e8f0;">邮箱</th><th style="padding:6px;border:1px solid #e2e8f0;">角色</th><th style="padding:6px;border:1px solid #e2e8f0;width:50px;">操作</th></tr></thead><tbody id="acAdminRows"></tbody></table></div>' +
+                '<div style="margin:14px 0 6px;"><b style="font-size:.85rem;color:#1f3a6b;">允许进入的部门</b></div>' +
+                '<div style="display:flex;gap:10px 18px;flex-wrap:wrap;background:#f8fafc;border:1px solid #eef2f6;border-radius:10px;padding:10px 12px;">' +
+                    YXT_AUTH_DEPTS.map(function(d) { return '<label style="font-size:.78rem;color:#475569;cursor:pointer;"><input type="checkbox" class="ac-dept" value="' + d.id + '"' + (cfg.allowDepts.indexOf(d.id) >= 0 ? ' checked' : '') + '> ' + escapeHtml(d.name) + '</label>'; }).join('') +
+                '</div>' +
+                '<div style="margin-top:16px;display:flex;align-items:center;gap:10px;"><button id="acSaveBtn" class="primary" style="background:#27ae60;border-radius:20px;padding:8px 22px;">💾 保存权限配置</button><span id="acSaveMsg" style="font-size:.75rem;color:#94a3b8;"></span></div>';
+            cfg.admins.forEach(function(a) { addAuthAdminRow(a); });
+            var addAdminBtn = document.getElementById('acAddAdmin');
+            if (addAdminBtn) addAdminBtn.onclick = function() { addAuthAdminRow(); };
+            var saveBtn = document.getElementById('acSaveBtn');
+            if (saveBtn) saveBtn.onclick = async function() {
+                var btn = this, msg = document.getElementById('acSaveMsg');
+                if (!isSuperAuthUser()) { if (msg) msg.textContent = '仅超级管理员可保存'; return; }
+                try {
+                    var admins = [], seen = {};
+                    document.querySelectorAll('#acAdminRows tr').forEach(function(tr) {
+                        var name = tr.querySelector('.ac-name').value.trim();
+                        var email = tr.querySelector('.ac-email').value.trim().toLowerCase();
+                        var role = tr.querySelector('.ac-role').value === 'super' ? 'super' : 'global';
+                        if (!name && !email) return;
+                        if (!email || email.indexOf('@') <= 0) throw new Error('管理员邮箱不合法：' + (name || email));
+                        if (seen[email]) throw new Error('管理员邮箱重复：' + email);
+                        seen[email] = 1;
+                        admins.push({ name: name, email: email, role: role });
+                    });
+                    if (!admins.some(function(a) { return a.role === 'super' && a.email; })) throw new Error('至少要保留一个超级管理员邮箱');
+                    var extras = document.getElementById('acExtraEmails').value.split(/[\n,，;；\s]+/).map(function(e) { return e.trim().toLowerCase(); }).filter(Boolean);
+                    for (var i = 0; i < extras.length; i++) if (extras[i].indexOf('@') <= 0) throw new Error('额外白名单邮箱不合法：' + extras[i]);
+                    var depts = Array.prototype.slice.call(document.querySelectorAll('.ac-dept:checked')).map(function(cb) { return cb.value; });
+                    if (!depts.length && !extras.length) throw new Error('至少保留一个允许部门或额外邮箱');
+                    var days = parseInt(document.getElementById('acSessionDays').value, 10);
+                    if (!days || days < 1 || days > 30) throw new Error('登录有效期应为 1–30 天');
+                    btn.disabled = true; btn.textContent = '⏳ 保存中...';
+                    await saveYxtAuthConfig({ version: 1, admins: admins, extraEmails: extras, allowDepts: depts, sessionDays: days, updatedAt: new Date().toISOString() });
+                    var count = document.getElementById('authConfigCount'); if (count) count.textContent = admins.length;
+                    logAdminAction('权限管理', '保存权限配置', admins.length + ' 管理员 / ' + depts.length + ' 部门');
+                    if (msg) { msg.textContent = '✅ 已保存，下次扫码生效'; msg.style.color = '#27ae60'; }
+                    else showToast('✅ 权限配置已保存，下次扫码生效', 'success');
+                } catch (e) {
+                    if (msg) { msg.textContent = '❌ ' + e.message; msg.style.color = '#c0392b'; }
+                    else alert('❌ ' + e.message);
+                } finally {
+                    btn.disabled = false; btn.textContent = '💾 保存权限配置';
+                }
+            };
         }
         var _auditPage = 0, _auditPageSize = 50;
         function refreshAuditLog(page) {
@@ -15412,7 +16138,7 @@ URL.revokeObjectURL(url);
             { name: '反馈中心', desc: '收集日常使用中的问题与建议，管理员处理修复后回传结果与状态确认。', features: ['提交问题/建议', '管理员处理并回传', '反馈状态跟踪'], guest: '读写', admin: '读写', detail: '游客可提交、查看自己的反馈；管理员可处理和回传。' }
         ]},
         { icon: '⚙️', name: '管理后台', pages: [
-            { name: '管理后台', desc: '数据备份、人员变动、邮箱管理、站点配置、判责同步与系统日志；邮箱名单由飞书通讯录每周一/四/日定时同步，离职会联动删除邮箱和人员站点。', features: ['数据备份/恢复', '邮箱通讯录同步 / 人员 / 站点 / 纳期配置', '离职联动清理与审计日志'], guest: '不可进', admin: '读写', detail: '游客点击会被拦截；管理员可备份、配置、查看日志；邮箱名单以飞书通讯录为准，标记离职会删除邮箱和人员站点，入职记录保留。' }
+            { name: '管理后台', desc: '数据备份、人员变动、邮箱管理、站点配置、判责同步与系统日志；打开优学堂先飞书扫码（质量管理部白名单，7 天登录态）；邮箱名单由飞书通讯录每周一/四/日定时同步，离职会联动删除邮箱和人员站点。', features: ['飞书扫码门禁 / 身份识别 / 超级管理员权限管理', '邮箱通讯录同步 / 人员 / 站点 / 纳期配置', '离职联动清理与审计日志'], guest: '不可进', admin: '读写', detail: '游客点击会被拦截；管理员可备份、配置、查看日志；超级管理员可在「权限管理」改管理员、允许部门、额外邮箱和登录时长；飞书登录失败可用管理密码临时进入 10 分钟。' }
         ]}
     ];
 
